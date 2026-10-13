@@ -18,8 +18,14 @@ directories:
 # HyperFrames, node-pty and the bundled Claude Code binary are spawned from disk
 asar: false
 
+# platform-specific exclusions are added in electron-builder.config.cjs (a platform
+# "files" list with only exclusions would make electron-builder include everything)
 files:
   - out/**
+  - package.json
+  # everything below ships through extraResources (per OS/CPU) or is dev-only
+  - '!{resources,tests,poc,src,scripts,docs,build,release,.github}/**'
+  - '!*.{md,ts,cjs,mjs,json,tsbuildinfo,yml,yaml}'
   - package.json
   - '!**/node_modules/**/{test,tests,__tests__,example,examples,docs}/**'
   - '!**/node_modules/**/*.{md,map,ts,tsx}'
@@ -56,9 +62,6 @@ mac:
   extendInfo:
     CFBundleDisplayName: 모션스튜디오
     LSHasLocalizedDisplayName: true
-  files:
-    - '!**/node_modules/@anthropic-ai/claude-agent-sdk-win32-*/**'
-    - '!**/node_modules/node-pty/prebuilds/win32-*/**'
 
 dmg:
   title: 모션스튜디오 ${version}
@@ -68,9 +71,6 @@ win:
   executableName: MotionStudio
   # rcedit/signing need Windows (or Wine); keep unsigned internal builds simple
   signAndEditExecutable: false
-  files:
-    - '!**/node_modules/@anthropic-ai/claude-agent-sdk-darwin-*/**'
-    - '!**/node_modules/node-pty/prebuilds/darwin-*/**'
 
 nsis:
   oneClick: false

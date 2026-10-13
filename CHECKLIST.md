@@ -39,11 +39,11 @@
   - Claude 로그인 확인
 - [x] 플랫폼별 바이너리를 `resources/bin/<os>-<arch>/`로 관리 (mac-x64, mac-arm64, win-x64) + SHA-256 고정
 - [x] 바이너리 경로 처리를 OS와 칩에 무관하게 만들기 (개발 모드와 설치본 모두)
-- [~] 설치 파일 빌드: Mac Intel용 설치본 실행 검증 완료 (환경 점검→프로젝트→브리프→편집→Claude 세션). M칩·Windows는 CI 또는 각 OS에서 (prepare-target으로 교차 빌드 준비)
+- [~] 설치 파일 빌드: Mac M칩·Intel 서명·공증 설치본 완료, Intel 설치본 실행 검증 (환경 점검→프로젝트→브리프→편집→Claude 세션). Windows는 CI 또는 Windows PC에서
 - [x] 설치본 앱 이름은 영문(MotionStudio) 필수 — 한글 번들 이름은 macOS에서 실행 직후 충돌. 화면 표시 이름은 "모션스튜디오" 유지
 - [x] `DEVELOPMENT.md`: 개발자가 Intel, M칩, Windows에서 바로 시작하는 방법
 - [x] `INSTALL.md`: 팀원용 설치·로그인 가이드 (디자이너 눈높이)
-- [~] (선택) GitHub 자동 빌드(CI) 설정 작성 완료 (.github/workflows/build.yml) — 저장소 생성·푸시는 사용자 확인 필요
+- [~] (선택) GitHub 자동 빌드(CI): 미서명 설치본 3종 (.github/workflows/build.yml). 비공개 저장소에 올림, 실행은 아직 안 함
 - [ ] M칩 Mac에서 `npm run setup` → `npm run dev` 동작 확인 (사용자 협조 필요)
 
 ---
@@ -229,15 +229,18 @@
 ## Phase 5 — 배포
 
 ### 계획
-- [~] 배포 방식: 서명 자동 선택(Developer ID → 서명+공증 / Apple Development → 테스트 서명 / 없음 → 미서명). 현재 Apple Development만 있어 Developer ID 발급 대기
+- [x] 배포 방식: Mac은 Developer ID 서명 + Apple 공증(미니미광장과 같은 서명 자산·임시 키체인), Windows는 우선 미서명
 
 ### 진행
-- [ ] Mac 설치 파일 (dmg), Windows 설치 파일 (exe)
+- [x] Mac 설치 파일: M칩용·Intel용 dmg/zip 각각 (서명·공증·스테이플)
+- [ ] Windows 설치 파일 (exe) — Windows PC에서 빌드 필요
 - [ ] 첫 실행 안내와 환경 점검
 - [ ] 사용 설명서 (디자이너용)
 
 ### 테스트
-- [ ] 깨끗한 환경에 설치해서 실행
+- [x] 공증 확인: 두 앱 모두 `spctl` "Notarized Developer ID", `stapler validate` 통과, Claude 실행 파일은 Anthropic 서명(Q6L2SF6YDW) 유지
+- [x] 공증된 Intel 앱으로 화면 흐름 테스트 통과 (Claude 로그인 인식, 세션 시작, 폴더 신뢰 화면은 자동 응답 없이 안내)
+- [ ] 깨끗한 환경에 설치해서 실행 (M칩 Mac 실기기, Windows)
 
 ### 검수
 - [ ] 최종 점검
@@ -267,4 +270,5 @@
 | 2026-10-13 | 배포 | GitHub 비공개 저장소 kanchoooo/motion-studio 생성·푸시 |
 | 2026-10-13 | 로그인·키체인 | 로그인을 앱 안 터미널(Claude Code 자체 로그인)로, CLAUDE_CODE_OAUTH_TOKEN·ANTHROPIC_* 무시, 키체인 잠김·로그인 방식 점검, Electron 키체인 미사용, 유휴 세션 정리 |
 | 2026-10-13 | 서명 | 하드닝 런타임 + entitlements, Claude 바이너리 Anthropic 서명 유지. Apple Development 서명 앱에서 세션·렌더 검증. 컴파일 캐시 제외로 서명 시간 12분+ → 3분 47초 |
+| 2026-10-13 | 배포 | Developer ID 서명·공증 빌드(scripts/build-mac.mjs): M칩·Intel dmg/zip. 설치본 크기 1.4GB → 794~868MB(개발 파일 제외). 릴리스 퓨즈 때문에 설치본 E2E는 디버깅 포트로 연결 |
 | 2026-10-13 | 배포 준비 | setup 스크립트, prepare-target(교차 아키텍처), electron-builder, CI, DEVELOPMENT/INSTALL 문서. Intel 설치본 실행 검증 (한글 번들명 충돌 → 영문으로 해결), Claude 권한 규칙 Read/Edit로 정리 |

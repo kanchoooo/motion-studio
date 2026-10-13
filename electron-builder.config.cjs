@@ -24,18 +24,40 @@ function identities() {
 const ids = identities()
 const developerId = ids.find((n) => n.startsWith('Developer ID Application'))
 const appleDev = ids.find((n) => n.startsWith('Apple Development'))
-const identity = process.env.CSC_NAME || developerId || (process.env.MS_SIGN_DEV === '1' ? appleDev : null) || null
+// scripts/build-mac.mjs passes CSC_NAME (Developer ID from the .p12, without prefix) + CSC_KEYCHAIN
+const explicit = process.env.CSC_NAME
+const identity = explicit || developerId || (process.env.MS_SIGN_DEV === '1' ? appleDev : null) || null
+const isDeveloperId = explicit ? !/^Apple Development/.test(explicit) : !!identity?.startsWith('Developer ID Application')
 const canNotarize =
-  !!identity?.startsWith('Developer ID Application') &&
-  !!((process.env.APPLE_ID && process.env.APPLE_APP_SPECIFIC_PASSWORD && process.env.APPLE_TEAM_ID) ||
+  !!identity &&
+  isDeveloperId &&
+  !!(process.env.APPLE_KEYCHAIN_PROFILE ||
+    (process.env.APPLE_ID && process.env.APPLE_APP_SPECIFIC_PASSWORD && process.env.APPLE_TEAM_ID) ||
     (process.env.APPLE_API_KEY && process.env.APPLE_API_KEY_ID && process.env.APPLE_API_ISSUER))
 
 if (process.platform === 'darwin') console.log(`[sign] identity: ${identity ?? '(unsigned)'} · notarize: ${canNotarize ? 'yes' : 'no'}`)
 
+// Each installer carries only its own OS+CPU native payloads (node_modules may hold
+// several after scripts/prepare-target.mjs). The CPU comes from MS_TARGET_ARCH or
+// the --arm64/--x64 flag of this electron-builder run.
+const arch = process.env.MS_TARGET_ARCH || (process.argv.includes('--arm64') ? 'arm64' : process.argv.includes('--x64') ? 'x64' : process.arch)
+const only = (keepOs) => {
+  const keep = `${keepOs}-${arch}`
+  const all = ['darwin-x64', 'darwin-arm64', 'win32-x64', 'win32-arm64', 'linux-x64', 'linux-arm64', 'linux-arm', 'linux-x64-musl', 'linux-arm64-musl']
+  return [
+    ...base.files,
+    ...all
+      .filter((t) => t !== keep)
+      .flatMap((t) => [`!**/node_modules/@anthropic-ai/claude-agent-sdk-${t}/**`, `!**/node_modules/node-pty/prebuilds/${t}/**`, `!**/node_modules/@img/sharp-${t}/**`, `!**/node_modules/@img/sharp-libvips-${t}/**`]),
+  ]
+}
+
 module.exports = {
   ...base,
+  win: { ...base.win, files: only('win32') },
   mac: {
     ...base.mac,
+    files: only('darwin'),
     identity: identity ? identity.replace(/^(Developer ID Application|Apple Development): /, '') : null,
     hardenedRuntime: !!identity,
     entitlements: 'build/entitlements.mac.plist',

@@ -1,4 +1,5 @@
-# Builds the three installers on their native runners. Trigger manually or on a version tag.
+# Builds unsigned installers (no signing assets on CI). Trigger manually or on a version tag.
+# Signed + notarized Mac releases are built locally with `npm run dist:mac` (DEVELOPMENT.md §6).
 name: build
 on:
   workflow_dispatch:
@@ -11,9 +12,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: macos-13, script: 'dist:mac-x64' } # Intel
-          - { os: macos-14, script: 'dist:mac-arm64' } # Apple Silicon
-          - { os: windows-latest, script: 'dist:win' }
+          # prepare-target fetches the other CPU's native packages, so one Mac runner builds both
+          - { os: macos-15, target: darwin-x64, args: '--mac --x64' } # Intel
+          - { os: macos-15, target: darwin-arm64, args: '--mac --arm64' } # Apple Silicon
+          - { os: windows-latest, target: win32-x64, args: '--win --x64' }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -24,10 +26,13 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
-      - run: npm run ${{ matrix.script }}
+      - run: npm run build
+      - run: node scripts/prepare-target.mjs --target ${{ matrix.target }}
+      - run: node scripts/fetch-binaries.mjs --target ${{ matrix.target }}
+      - run: npx electron-builder --config electron-builder.config.cjs ${{ matrix.args }} --publish never
       - uses: actions/upload-artifact@v4
         with:
-          name: motion-studio-${{ matrix.os }}
+          name: motion-studio-${{ matrix.target }}
           path: |
             release/*.dmg
             release/*.exe

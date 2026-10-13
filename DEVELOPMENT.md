@@ -51,7 +51,8 @@ npm run dev        # 개발 모드 실행
 | `npm run test:e2e` | 화면 흐름 테스트 (Claude 호출 없음, 임시 폴더 사용) |
 | `npm run test:live` | 실제 Claude로 브리프 → 콘티 → 제작까지 (사용량 소모) |
 | `node tests/e2e/variations-quick.mjs` 등 | 기존 프로젝트로 베리에이션·사운드·기능 검수 (`MS_SANDBOX=<live-flow 폴더>`) |
-| `npm run dist:mac-x64` / `dist:mac-arm64` / `dist:win` | 설치 파일 만들기 (`release/`) |
+| `npm run dist:mac` (`dist:mac-arm64`, `dist:mac-x64`) | Mac 설치 파일: 서명·공증 (`release/`, 6장 참고) |
+| `npm run dist:win` | Windows 설치 파일 (미서명) |
 
 E2E 스크린샷은 `tests/e2e/shots*/`에 저장된다. 기존 프로젝트로 검수하려면 다음을 실행한다.
 
@@ -114,25 +115,31 @@ poc/               Phase 0 기술 검증 기록 (RESULTS.md)
 
 ## 6. 코드 서명과 공증 (Mac)
 
-`electron-builder.config.cjs`가 키체인의 인증서를 보고 서명 방식을 자동으로 고른다.
+배포용 빌드는 `npm run dist:mac`(= `node scripts/build-mac.mjs`)으로 한다. M칩용과 Intel용 dmg·zip을 각각 만든다. `--arch arm64` 또는 `--arch x64`로 하나만 만들 수도 있다.
+미니미광장·비둘기모니터와 **같은 서명 자산과 같은 규칙**을 쓴다.
 
-| 상황 | 결과 |
-|---|---|
-| "Developer ID Application" 인증서 있음 + Apple 공증 정보 환경변수 | 서명 + 공증 → 팀원 Mac에서 경고 없이 열림 (배포용) |
-| "Developer ID Application" 인증서만 있음 | 서명만 (공증 안 됨 → 다른 Mac에서는 경고) |
-| `MS_SIGN_DEV=1` + "Apple Development" 인증서 | 개발용 서명 (이 Mac 테스트용, 배포 불가) |
-| 인증서 없음 | 서명 없음 (첫 실행 시 우클릭 → 열기) |
+**서명 자산**
+- 인증서: `~/.minimi-signing/DeveloperID_Application.p12` (+ `p12-password`). 로그인 키체인에는 넣지 않는다.
+- 공증: 키체인 프로필 `minimi-notary` (`xcrun notarytool store-credentials`로 한 번 저장해 둔 것)
 
-**공증 정보** (둘 중 하나):
-- `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`
-- `APPLE_API_KEY`(.p8 경로), `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`
+**빌드 순서**
+1. 공유 잠금 `~/.minimi-signing/.build.lock`을 잡는다. 다른 프로젝트의 서명 빌드가 돌고 있으면 끝날 때까지 기다린다.
+2. 빌드 전용 임시 키체인을 만들어 .p12를 넣는다. 그래서 키체인 "허용" 창이 뜨지 않는다.
+   - 임시 키체인은 검색 목록 **맨 뒤**에 붙이고, 빌드가 끝나면 성공·실패·중단 모두 빼고 지운다.
+   - 로그인 키체인과 기본 키체인은 건드리지 않는다.
+3. 각 CPU용 네이티브 패키지(`prepare-target`)와 FFmpeg(`fetch-binaries`)를 준비한 뒤 electron-builder를 실행한다.
+   - 하드닝 런타임과 `build/entitlements.mac.plist`를 쓴다.
+   - 서명 → 공증 → 스테이플 순서로 진행한다.
+4. 마지막에 `spctl`과 `stapler`로 결과를 검사한다.
 
-**서명 범위**:
-- 하드닝 런타임과 `build/entitlements.mac.plist`(JIT, 네이티브 모듈, yt-dlp용)를 쓴다.
-- 함께 넣은 FFmpeg, yt-dlp, PTY 모듈도 우리 인증서로 서명한다.
-- **Claude Code 실행 파일은 Anthropic 서명을 그대로 유지**한다(`signIgnore`). 원본 그대로 실행해야 하기 때문이다.
+**서명 범위**
+- 함께 넣은 FFmpeg, yt-dlp, PTY·sharp 네이티브 모듈은 우리 Developer ID로 서명한다.
+- **Claude Code 실행 파일은 Anthropic 서명을 그대로 둔다**(`signIgnore`).
 
-Developer ID 인증서는 유료 Apple Developer Program 계정에서 Xcode → Settings → Accounts → Manage Certificates → "+ Developer ID Application"으로 만든다.
+**참고**
+- `electron-builder.config.cjs`는 위 스크립트 없이도 동작한다. 키체인에 Developer ID가 있으면 쓰고, `MS_SIGN_DEV=1`이면 Apple Development로 테스트 서명하고, 둘 다 없으면 서명하지 않는다.
+- 설치본은 Node `--inspect`를 막는 퓨즈가 켜져 있어 Playwright Electron 실행기로 붙을 수 없다. `MS_APP_EXEC=<앱>/Contents/MacOS/MotionStudio node tests/e2e/smoke.mjs`는 Chromium 디버깅 포트로 연결한다.
+- 설치본에는 `out/`, `package.json`, 실행에 필요한 `node_modules`만 들어간다. 다른 OS의 네이티브 파일과 개발용 캐시(`.v8-cache`)는 뺀다. 캐시를 넣으면 codesign이 수천 개 파일을 서명하느라 빌드가 끝나지 않는다.
 
 ## 7. Claude 로그인과 키체인
 
@@ -155,6 +162,6 @@ Developer ID 인증서는 유료 Apple Developer Program 계정에서 Xcode → 
 | 미리보기가 배경만 나옴 | 미리보기 서버가 HyperFrames 런타임을 주입하는지 확인 (`?ms-preview=1`) |
 | 폰트가 명조로 바뀜 | 설치되지 않은 폰트. 환경 점검에서 다시 찾기 → Claude에게 설치된 폰트로 바꾸라고 요청 |
 | 대화창에 내용이 안 보임 | `~/.claude/projects/*/<세션ID>.jsonl`이 생기는지 확인. 생기지 않으면 `CLAUDE*` 환경변수 문제 |
-| Mac에서 "확인되지 않은 개발자" | 서명하지 않은 내부 빌드. 앱을 우클릭 → 열기 |
+| Mac에서 "확인되지 않은 개발자" | `npm run dist:mac` 없이 만든 미서명·테스트 서명 빌드. 배포는 꼭 `dist:mac`으로 (공증 포함) |
 | Mac 설치본이 실행 직후 꺼짐 | 번들 이름에 한글이 들어간 경우. `productName`은 영문(MotionStudio)으로 유지 |
 | 내보낸 영상에 BGM이 없음 | `<audio>`에 `id`가 없으면 렌더러가 무시함. applyAudio가 자동으로 붙임 |

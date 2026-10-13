@@ -1,6 +1,7 @@
 // End-to-end smoke test: launches the built app, walks the main designer flow
 // and saves screenshots to tests/e2e/shots/. Run: npm run build && node tests/e2e/smoke.mjs
-import { _electron as electron } from 'playwright-core'
+import { _electron as electron, chromium } from 'playwright-core'
+import { spawn } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
@@ -13,14 +14,42 @@ const sandbox = mkdtempSync(join(tmpdir(), 'ms-e2e-'))
 const keep = process.argv.includes('--keep')
 const only = process.argv.find((a) => a.startsWith('--until='))?.split('=')[1]
 
-// MS_APP_EXEC=<packaged app binary> runs the same flow against an installed build
+// MS_APP_EXEC=<packaged app binary> runs the same flow against an installed build.
+// Release builds turn off Node's --inspect (fuse), so they are driven over the
+// Chromium debugging port instead of Playwright's Electron launcher.
 const exec = process.env.MS_APP_EXEC
-const app = await electron.launch({
-  ...(exec ? { executablePath: exec, args: [] } : { args: [join(root, 'out', 'main', 'index.js')] }),
-  cwd: exec ? sandbox : root,
-  env: { ...process.env, MS_PROJECTS_DIR: join(sandbox, 'projects'), MS_USER_DATA: join(sandbox, 'userdata') },
-})
+const env = { ...process.env, MS_PROJECTS_DIR: join(sandbox, 'projects'), MS_USER_DATA: join(sandbox, 'userdata') }
+const app = exec ? await attachPackaged(exec) : await electron.launch({ args: [join(root, 'out', 'main', 'index.js')], cwd: root, env })
 const win = await app.firstWindow()
+
+async function attachPackaged(file) {
+  const proc = spawn(file, ['--remote-debugging-port=0'], { cwd: sandbox, env, stdio: ['ignore', 'ignore', 'pipe'] })
+  const ws = await new Promise((resolve, reject) => {
+    let err = ''
+    const timer = setTimeout(() => reject(new Error('app did not open a debugging port')), 60000)
+    proc.stderr.on('data', (d) => {
+      err += d
+      const m = err.match(/DevTools listening on (ws:\/\/\S+)/)
+      if (m) { clearTimeout(timer); resolve(m[1]) }
+    })
+    proc.on('exit', (code) => { clearTimeout(timer); reject(new Error(`app exited (${code})`)) })
+  })
+  const browser = await chromium.connectOverCDP(ws)
+  return {
+    async firstWindow() {
+      for (;;) {
+        const page = browser.contexts().flatMap((c) => c.pages()).find((p) => !p.url().startsWith('devtools:'))
+        if (page) return page
+        await new Promise((r) => setTimeout(r, 200))
+      }
+    },
+    async close() {
+      await browser.close().catch(() => {})
+      proc.kill('SIGTERM')
+      await new Promise((r) => (proc.exitCode !== null ? r() : proc.once('exit', r)))
+    },
+  }
+}
 await win.setViewportSize({ width: 1480, height: 920 }).catch(() => {})
 const shot = async (name) => {
   await win.waitForTimeout(400)
