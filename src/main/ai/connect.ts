@@ -2,14 +2,14 @@
 // and MCP client connections to Higgsfield / Magnific with the active account.
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { app, shell } from 'electron'
+import { app } from 'electron'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { auth, UnauthorizedError, type OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type { OAuthClientInformationMixed, OAuthClientMetadata, OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js'
-import { AI_PROVIDERS, type AiConnectProvider, type AiLoginEvent } from '@shared/ai'
+import { AI_PROVIDERS, type AiConnectProvider, type AiLoginEvent, type LoginWindow } from '@shared/ai'
 import { activeAccount, getAccount, listAccounts, patchAccount, publicInfo, upsertAccount, type StoredAccount } from './accounts'
-import { openPrivate } from './browser'
+import { openLogin } from './browser'
 
 const CALLBACK = '/oauth/callback'
 
@@ -86,7 +86,7 @@ function identity(tokens: OAuthTokens & { id_token?: string }): { email?: string
  * Opens the service's sign-in page in the browser and waits for the redirect.
  * `relogin` signs an existing account in again; otherwise a new account is added.
  */
-export async function login(provider: AiConnectProvider, opts: { label: string; relogin?: string; browser?: string }, emit: (e: AiLoginEvent) => void): Promise<void> {
+export async function login(provider: AiConnectProvider, opts: { label: string; relogin?: string; window?: LoginWindow }, emit: (e: AiLoginEvent) => void): Promise<void> {
   pendingLogin?.cancel()
   const meta = AI_PROVIDERS[provider]
   let server: Server | null = null
@@ -138,10 +138,8 @@ export async function login(provider: AiConnectProvider, opts: { label: string; 
     redirectToAuthorization: async (url) => {
       // a second account: ask the service to show its sign-in page instead of reusing the browser session
       if (another || opts.relogin) url.searchParams.set('prompt', 'login')
-      // a private window does not reuse the browser's signed-in account at all
-      const opened = opts.browser && opts.browser !== 'default' ? openPrivate(opts.browser, url.toString()) : false
-      if (!opened) await shell.openExternal(url.toString())
-      emit({ provider, status: 'waiting', url: url.toString() })
+      const how = await openLogin(opts.window, url.toString())
+      emit({ provider, status: 'waiting', url: url.toString(), copied: how === 'copied' })
     },
     saveCodeVerifier: (v) => {
       verifier = v

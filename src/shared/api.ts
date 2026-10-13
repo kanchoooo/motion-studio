@@ -1,5 +1,5 @@
 import type { Asset, BrandPreset, Brief, OutputFormat, OutputQuality, ReferenceItem } from './brief'
-import type { AiAccountInfo, AiLoginEvent, AiModelInfo, AiModelList, AiSettings, AiVoiceInfo, AudioCandidate, AudioCandidateList, PrivateBrowser } from './ai'
+import type { AiAccountInfo, AiLoginEvent, AiModelInfo, AiModelList, AiSettings, AiVoiceInfo, AudioCandidate, AudioCandidateList, LoginBrowser, LoginWindow } from './ai'
 import type { Overrides } from './overrides'
 import type { FeedbackMark, HistoryEntry, ProjectState, ProjectSummary, RenderRecord } from './project'
 
@@ -318,8 +318,8 @@ export interface StudioApi {
   ai: {
     accounts(): Promise<AiAccountInfo[]>
     /** opens the service's sign-in in the browser; progress arrives through onLogin */
-    /** browser: 'default' or a PrivateBrowser id (opens a private/incognito window) */
-    login(provider: AiAccountInfo['provider'], label: string, opts?: { relogin?: string; browser?: string }): Promise<void>
+    /** window: private (incognito) or normal window of the chosen browser */
+    login(provider: AiAccountInfo['provider'], label: string, opts?: { relogin?: string; window?: LoginWindow }): Promise<void>
     cancelLogin(): Promise<void>
     onLogin(cb: (e: AiLoginEvent) => void): () => void
     setActive(provider: AiAccountInfo['provider'], accountId: string): Promise<AiAccountInfo[]>
@@ -330,8 +330,8 @@ export interface StudioApi {
     voices(provider: AiAccountInfo['provider']): Promise<AiVoiceInfo[]>
     /** a short sample of a voice without a free preview (uses the service's credits, cached on disk); returns a playable URL */
     ttsSample(voice: AiVoiceInfo, text: string): Promise<string>
-    /** browsers that can open the sign-in page in a private window */
-    privateBrowsers(): Promise<PrivateBrowser[]>
+    /** installed browsers the sign-in page can open in */
+    browsers(): Promise<LoginBrowser[]>
     settings(): Promise<AiSettings>
     saveSettings(patch: Partial<AiSettings>): Promise<AiSettings>
     /** media made or imported by AI tools in this project */

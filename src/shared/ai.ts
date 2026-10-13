@@ -39,13 +39,28 @@ export interface AiLoginEvent {
   account?: AiAccountInfo
   /** sign-in page (to copy into any browser's private window) */
   url?: string
+  /** the page could not be opened as asked (e.g. Safari has no private window
+   *  from outside): its address was copied for the designer to paste */
+  copied?: boolean
 }
 
-/** an installed browser that can open a private / incognito window */
-export interface PrivateBrowser {
+/** an installed web browser the sign-in page can be opened in */
+export interface LoginBrowser {
   id: string
-  /** e.g. "Chrome 시크릿 창" */
-  label: string
+  /** e.g. "Chrome" */
+  name: string
+  /** e.g. "시크릿 창" */
+  privateName: string
+  /** false: the app cannot open its private window (Safari): the address is copied instead */
+  canPrivate: boolean
+}
+
+/** how the sign-in page opens: a private window does not reuse the account
+ *  the browser is signed in with (often the company one), a normal one does */
+export interface LoginWindow {
+  mode: 'private' | 'normal'
+  /** a LoginBrowser id, or 'default' (normal: the system's default browser) */
+  browser: string
 }
 
 export type AiMediaKind = 'image' | 'video' | 'audio'

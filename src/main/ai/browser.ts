@@ -1,29 +1,34 @@
-// Opens a sign-in page in a private / incognito window of an installed browser,
-// so a second account (personal vs. company) is not signed in automatically by
-// the browser's existing session. Safari has no command-line private window:
-// the UI offers "copy address" for it.
+// Opens a sign-in page the way the designer chose: in a private / incognito
+// window (the browser's signed-in account, often the company one, is not
+// reused, so another account can sign in) or in a normal window of a chosen
+// browser. Safari has no command-line private window: its address is copied
+// for the designer to paste into one.
+import { clipboard, shell } from 'electron'
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import type { PrivateBrowser } from '@shared/ai'
+import type { LoginBrowser, LoginWindow } from '@shared/ai'
 
 interface Known {
   id: string
-  label: string
+  name: string
+  privateName: string
   /** macOS application name (in /Applications or ~/Applications) */
   mac: string
   /** Windows executable relative to Program Files / Program Files (x86) / LocalAppData */
   win: string[]
-  flag: string
+  /** command-line switch that opens a private window; null: there is none */
+  flag: string | null
 }
 
 const KNOWN: Known[] = [
-  { id: 'chrome', label: 'Chrome 시크릿 창', mac: 'Google Chrome', win: ['Google\\Chrome\\Application\\chrome.exe'], flag: '--incognito' },
-  { id: 'whale', label: '웨일 시크릿 창', mac: 'Whale', win: ['Naver\\Naver Whale\\Application\\whale.exe'], flag: '--incognito' },
-  { id: 'edge', label: 'Edge InPrivate 창', mac: 'Microsoft Edge', win: ['Microsoft\\Edge\\Application\\msedge.exe'], flag: '--inprivate' },
-  { id: 'brave', label: 'Brave 개인 창', mac: 'Brave Browser', win: ['BraveSoftware\\Brave-Browser\\Application\\brave.exe'], flag: '--incognito' },
-  { id: 'firefox', label: 'Firefox 사생활 보호 창', mac: 'Firefox', win: ['Mozilla Firefox\\firefox.exe'], flag: '-private-window' },
+  { id: 'chrome', name: 'Chrome', privateName: '시크릿 창', mac: 'Google Chrome', win: ['Google\\Chrome\\Application\\chrome.exe'], flag: '--incognito' },
+  { id: 'whale', name: '웨일', privateName: '시크릿 창', mac: 'Whale', win: ['Naver\\Naver Whale\\Application\\whale.exe'], flag: '--incognito' },
+  { id: 'edge', name: 'Edge', privateName: 'InPrivate 창', mac: 'Microsoft Edge', win: ['Microsoft\\Edge\\Application\\msedge.exe'], flag: '--inprivate' },
+  { id: 'brave', name: 'Brave', privateName: '개인 창', mac: 'Brave Browser', win: ['BraveSoftware\\Brave-Browser\\Application\\brave.exe'], flag: '--incognito' },
+  { id: 'firefox', name: 'Firefox', privateName: '사생활 보호 창', mac: 'Firefox', win: ['Mozilla Firefox\\firefox.exe'], flag: '-private-window' },
+  { id: 'safari', name: '사파리', privateName: '개인 정보 보호 창', mac: 'Safari', win: [], flag: null },
 ]
 
 function macApp(name: string): string | null {
@@ -40,26 +45,39 @@ function winExe(rel: string[]): string | null {
   return null
 }
 
-export function privateBrowsers(): PrivateBrowser[] {
-  return KNOWN.filter((b) => (process.platform === 'darwin' ? macApp(b.mac) : process.platform === 'win32' ? winExe(b.win) : null)).map(({ id, label }) => ({ id, label }))
+/** where the browser is installed on this computer, or null */
+function installed(b: Known): string | null {
+  return process.platform === 'darwin' ? macApp(b.mac) : process.platform === 'win32' ? winExe(b.win) : null
 }
 
-/** opens url in a private window of the given browser; false if it is not installed */
-export function openPrivate(browserId: string, url: string): boolean {
-  const b = KNOWN.find((x) => x.id === browserId)
-  if (!b) return false
-  if (process.platform === 'darwin') {
-    const app = macApp(b.mac)
-    if (!app) return false
-    // -n: a new window even when the browser is already running
-    spawn('open', ['-na', app, '--args', b.flag, url], { detached: true, stdio: 'ignore' }).unref()
-    return true
+export function loginBrowsers(): LoginBrowser[] {
+  return KNOWN.filter(installed).map(({ id, name, privateName, flag }) => ({ id, name, privateName, canPrivate: !!flag }))
+}
+
+/** fresh: a new instance on mac (open -n), so a private-window switch works even when the browser is already running */
+function launch(path: string, args: string[], fresh: boolean) {
+  if (process.platform === 'darwin') spawn('open', fresh ? ['-na', path, '--args', ...args] : ['-a', path, ...args], { detached: true, stdio: 'ignore' }).unref()
+  else spawn(path, args, { detached: true, stdio: 'ignore' }).unref()
+}
+
+/**
+ * Opens url as chosen. 'copied': a private window could not be opened (Safari,
+ * or no such browser here), so the address is on the clipboard instead; the
+ * normal browser is never used then, it would sign in with its saved account.
+ */
+export async function openLogin(w: LoginWindow | undefined, url: string): Promise<'opened' | 'copied'> {
+  const mode = w?.mode ?? 'normal'
+  const b = KNOWN.find((x) => x.id === w?.browser)
+  const path = b ? installed(b) : null
+  if (mode === 'private') {
+    if (b?.flag && path) {
+      launch(path, [b.flag, url], true)
+      return 'opened'
+    }
+    clipboard.writeText(url)
+    return 'copied'
   }
-  if (process.platform === 'win32') {
-    const exe = winExe(b.win)
-    if (!exe) return false
-    spawn(exe, [b.flag, url], { detached: true, stdio: 'ignore' }).unref()
-    return true
-  }
-  return false
+  if (path) launch(path, [url], false)
+  else await shell.openExternal(url)
+  return 'opened'
 }

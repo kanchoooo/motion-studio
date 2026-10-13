@@ -54,8 +54,8 @@ try {
   check('Artlist sign-in terminal shows artlist in /mcp', /artlist/i.test(screen), screen.slice(-300))
   await win.getByRole('button', { name: '완료' }).click()
   await win.keyboard.press('Escape')
-  const browsers = await win.evaluate(() => window.studio.ai.privateBrowsers())
-  log('private-window browsers:', browsers.map((b) => b.label).join(', ') || '(none)')
+  const browsers = await win.evaluate(() => window.studio.ai.browsers())
+  log('sign-in browsers:', browsers.map((b) => `${b.name}${b.canPrivate ? '' : ' (no private window)'}`).join(', ') || '(none)')
 
   // ---- brand preset can be removed again ----
   await win.evaluate(async () => {

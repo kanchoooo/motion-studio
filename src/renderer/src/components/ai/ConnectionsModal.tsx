@@ -2,12 +2,39 @@
 // and turn Artlist on for Claude (Artlist signs in inside the Claude terminal).
 import { useEffect, useState } from 'react'
 import { Check, Copy, ExternalLink, Loader2, LogIn, Pencil, Plus, SquareTerminal, Trash2 } from 'lucide-react'
-import { AI_PROVIDERS, type AiAccountInfo, type AiConnectProvider, type AiSettings, type PrivateBrowser } from '@shared/ai'
+import { AI_PROVIDERS, type AiAccountInfo, type AiConnectProvider, type AiSettings, type LoginBrowser, type LoginWindow } from '@shared/ai'
 import { studio, useStore } from '../../store'
 import { XTerm } from '../XTerm'
-import { Modal, Toggle } from '../ui'
+import { Modal, Segmented, Toggle } from '../ui'
 
 const CAN_LABEL = { image: '이미지', video: '영상', tts: '음성(TTS)', music: '음악', sfx: '효과음' } as const
+
+// the designer's choice of sign-in window, remembered on this computer
+const WINDOW_KEY = 'ms-login-window'
+function savedWindow(): LoginWindow {
+  try {
+    const w = JSON.parse(localStorage.getItem(WINDOW_KEY) ?? 'null') as LoginWindow | null
+    if (w && (w.mode === 'private' || w.mode === 'normal') && typeof w.browser === 'string') return w
+  } catch {
+    /* storage unavailable */
+  }
+  return { mode: 'private', browser: '' }
+}
+
+/** keeps the chosen browser when it fits the mode, otherwise the best one installed */
+function fitWindow(w: LoginWindow, list: LoginBrowser[]): LoginWindow {
+  const has = list.some((b) => b.id === w.browser)
+  if (w.mode === 'normal') return has || w.browser === 'default' ? w : { mode: 'normal', browser: 'default' }
+  if (has || w.browser === 'copy') return w
+  return { mode: 'private', browser: (list.find((b) => b.canPrivate) ?? list[0])?.id ?? 'copy' }
+}
+
+/** e.g. "Chrome 시크릿 창", "기본 브라우저" */
+function windowName(w: LoginWindow, list: LoginBrowser[]) {
+  const b = list.find((x) => x.id === w.browser)
+  if (w.mode === 'normal') return b ? b.name : '기본 브라우저'
+  return b ? `${b.name} ${b.privateName}` : '시크릿 창'
+}
 
 export function ConnectionsModal({ onClose }: { onClose(): void }) {
   const { toast } = useStore()
@@ -17,25 +44,39 @@ export function ConnectionsModal({ onClose }: { onClose(): void }) {
   const [label, setLabel] = useState('회사')
   const [waiting, setWaiting] = useState<AiConnectProvider | null>(null)
   const [loginUrl, setLoginUrl] = useState<string | null>(null)
-  const [browsers, setBrowsers] = useState<PrivateBrowser[]>([])
-  const [browser, setBrowser] = useState('default')
+  const [copied, setCopied] = useState(false)
+  const [browsers, setBrowsers] = useState<LoginBrowser[]>([])
+  const [win, setWinState] = useState<LoginWindow>(savedWindow)
+  const setWin = (w: LoginWindow) => {
+    const next = fitWindow(w, browsers)
+    setWinState(next)
+    try {
+      localStorage.setItem(WINDOW_KEY, JSON.stringify(next))
+    } catch {
+      /* storage unavailable: asked again next time */
+    }
+  }
   const [artlistTerm, setArtlistTerm] = useState(false)
 
   useEffect(() => {
     void studio.ai.accounts().then(setAccounts)
     void studio.ai.settings().then(setSettings)
-    void studio.ai.privateBrowsers().then((b) => {
+    void studio.ai.browsers().then((b) => {
       setBrowsers(b)
       // a private window by default: the browser's signed-in account (often the company one) is not reused
-      if (b.length) setBrowser(b[0].id)
+      setWinState((w) => fitWindow(w, b))
     })
     return studio.ai.onLogin((e) => {
       if (e.status === 'waiting') {
-        if (e.url) setLoginUrl(e.url)
+        if (e.url) {
+          setLoginUrl(e.url)
+          setCopied(!!e.copied)
+        }
         return setWaiting(e.provider)
       }
       setWaiting(null)
       setLoginUrl(null)
+      setCopied(false)
       if (e.status === 'done') {
         toast(`${AI_PROVIDERS[e.provider].name}에 연결했어요${e.account?.email ? ` (${e.account.email})` : ''}`, 'success')
         setAdding(null)
@@ -47,21 +88,30 @@ export function ConnectionsModal({ onClose }: { onClose(): void }) {
   const start = (provider: AiConnectProvider, relogin?: AiAccountInfo) => {
     setWaiting(provider)
     setLoginUrl(null)
-    void studio.ai.login(provider, relogin ? relogin.label : label.trim() || '계정', { relogin: relogin?.id, browser })
+    setCopied(false)
+    void studio.ai.login(provider, relogin ? relogin.label : label.trim() || '계정', { relogin: relogin?.id, window: win })
   }
+
+  const safari = win.browser === 'safari'
 
   const waitingRow = (
     <div className="col" style={{ gap: 6 }}>
       <div className="row small">
         <Loader2 size={14} className="spin" />
-        <span className="grow">{browser === 'default' ? '브라우저' : browsers.find((b) => b.id === browser)?.label}에서 로그인해 주세요</span>
+        <span className="grow">
+          {copied
+            ? safari
+              ? '로그인 주소를 복사했어요. 사파리에서 ⇧⌘N으로 개인 정보 보호 창을 열고, 주소창에 붙여넣어(⌘V) 로그인해 주세요.'
+              : '로그인 주소를 복사했어요. 원하는 브라우저의 시크릿 창을 열고, 주소창에 붙여넣어 로그인해 주세요.'
+            : `${windowName(win, browsers)}에서 로그인해 주세요`}
+        </span>
         <button className="btn sm" onClick={() => void studio.ai.cancelLogin()}>
           취소
         </button>
       </div>
       {loginUrl && (
         <div className="row tiny muted" style={{ gap: 6 }}>
-          <span className="grow">창이 안 열리거나 다른 브라우저(사파리 개인 정보 보호 창 등)에서 하려면 주소를 복사해 붙여넣으세요.</span>
+          <span className="grow">{copied ? '복사가 안 됐으면 다시 복사해요.' : '창이 안 열리거나 다른 브라우저에서 하려면 주소를 복사해 붙여넣으세요.'}</span>
           <button
             className="btn ghost sm"
             onClick={async () => {
@@ -77,17 +127,36 @@ export function ConnectionsModal({ onClose }: { onClose(): void }) {
     </div>
   )
 
-  const browserPicker = (
-    <div className="row" style={{ gap: 6 }}>
-      <span className="small" style={{ width: 70 }}>로그인 창</span>
-      <select className="select" style={{ height: 28 }} value={browser} onChange={(e) => setBrowser(e.target.value)}>
-        {browsers.map((b) => (
-          <option key={b.id} value={b.id}>
-            {b.label} (추천: 다른 계정으로 로그인)
-          </option>
-        ))}
-        <option value="default">기본 브라우저 (지금 로그인된 계정이 바로 쓰일 수 있어요)</option>
-      </select>
+  const privateOptions = [
+    ...browsers.map((b) => ({ value: b.id, label: b.canPrivate ? `${b.name} ${b.privateName}` : `${b.name} ${b.privateName} (주소를 복사해 직접 열기)` })),
+    { value: 'copy', label: '주소만 복사 (다른 브라우저에서 직접 열기)' },
+  ]
+  const normalOptions = [{ value: 'default', label: '기본 브라우저' }, ...browsers.map((b) => ({ value: b.id, label: b.name }))]
+  const windowPicker = (
+    <div className="col" style={{ gap: 6, padding: 12, borderRadius: 8, background: 'var(--surface-2)', opacity: waiting ? 0.6 : 1, pointerEvents: waiting ? 'none' : undefined }} data-testid="login-window">
+      <div className="row" style={{ gap: 8 }}>
+        <span className="small" style={{ fontWeight: 600, width: 64 }}>로그인 창</span>
+        <Segmented
+          value={win.mode}
+          onChange={(mode) => setWin({ mode, browser: mode === 'normal' ? 'default' : win.browser })}
+          options={[
+            { value: 'private', label: '시크릿 창' },
+            { value: 'normal', label: '일반 창' },
+          ]}
+        />
+        <select className="select grow" style={{ height: 28 }} value={win.browser} onChange={(e) => setWin({ ...win, browser: e.target.value })} data-testid="login-browser">
+          {(win.mode === 'private' ? privateOptions : normalOptions).map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      </div>
+      <span className="tiny muted" style={{ paddingLeft: 72 }}>
+        {win.mode === 'private'
+          ? '브라우저에 로그인된 계정(회사 계정 등)과 상관없이, 원하는 계정으로 새로 로그인해요. 계정 추가·다시 로그인 모두 이 창으로 열려요.'
+          : '브라우저에 이미 로그인된 계정이 있으면 그 계정으로 바로 연결될 수 있어요. 계정 추가·다시 로그인 모두 이 창으로 열려요.'}
+      </span>
     </div>
   )
 
@@ -103,6 +172,7 @@ export function ConnectionsModal({ onClose }: { onClose(): void }) {
       <div className="small muted" style={{ lineHeight: 1.6, marginTop: -4 }}>
         이미지·영상·음성 생성 서비스에 로그인하면 Claude가 대화나 브리프에 맞춰 소재를 만들어요. 서비스마다 회사·개인 계정을 여러 개 저장해 두고 골라 쓸 수 있어요. 사용량(크레딧)은 고른 계정에서 차감돼요.
       </div>
+      {windowPicker}
 
       {(['higgsfield', 'magnific'] as const).map((p) => {
         const meta = AI_PROVIDERS[p]
@@ -131,7 +201,6 @@ export function ConnectionsModal({ onClose }: { onClose(): void }) {
             {mine.map((a) => (
               <AccountRow key={a.id} a={a} busy={!!waiting} onChange={setAccounts} onRelogin={() => start(p, a)} />
             ))}
-            {mine.length > 0 && adding !== p && !waiting && <div className="tiny faint" style={{ marginTop: 4 }}>다시 로그인할 때도 아래 "계정 추가"의 로그인 창 설정(시크릿 창)을 따라요.</div>}
 
             {adding === p && (
               <div className="col" style={{ gap: 8, marginTop: 8, padding: 10, borderRadius: 8, background: 'var(--surface-2)' }}>
@@ -144,7 +213,6 @@ export function ConnectionsModal({ onClose }: { onClose(): void }) {
                   ))}
                   <input className="input grow" style={{ height: 28 }} value={label} onChange={(e) => setLabel(e.target.value)} placeholder="예: 회사 팀 계정" />
                 </div>
-                {browserPicker}
                 {waiting === p ? (
                   waitingRow
                 ) : (

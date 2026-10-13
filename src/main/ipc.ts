@@ -19,8 +19,8 @@ import { cancelExport, exportAll, listRenders, removeRender, startExport, update
 import { createVariations, setFamilyStatus } from './variations'
 import { listBrands, removeBrand, saveBrand } from './brands'
 import { addReferenceFiles, addYoutube, listReferences, removeReference, updateReference } from './references'
-import type { AiConnectProvider, AiLoginEvent, AiMediaKind, AiSettings, AiVoiceInfo, AudioCandidate, AudioCandidateList } from '@shared/ai'
-import { privateBrowsers } from './ai/browser'
+import type { AiConnectProvider, AiLoginEvent, AiMediaKind, AiSettings, AiVoiceInfo, AudioCandidate, AudioCandidateList, LoginWindow } from '@shared/ai'
+import { loginBrowsers } from './ai/browser'
 import { patchAccount, publicInfo, removeAccount, setActive } from './ai/accounts'
 import { clearCatalog, listModels, listVoices } from './ai/catalog'
 import { cancelLogin, login, resetConnections } from './ai/connect'
@@ -236,8 +236,8 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
 
   // ---- AI services ----
   handle('ai:accounts', () => publicInfo())
-  handle('ai:login', (provider: AiConnectProvider, label: string, opts?: { relogin?: string; browser?: string }) => {
-    void login(provider, { label, relogin: opts?.relogin, browser: opts?.browser }, (e: AiLoginEvent) => {
+  handle('ai:login', (provider: AiConnectProvider, label: string, opts?: { relogin?: string; window?: LoginWindow }) => {
+    void login(provider, { label, relogin: opts?.relogin, window: opts?.window }, (e: AiLoginEvent) => {
       if (e.status === 'done') clearCatalog()
       send('ai:login', e)
     })
@@ -265,7 +265,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
     const file = await ttsSample(voice, String(text).slice(0, 200))
     return serveFolderUrl(join(file, '..')) + encodeURIComponent(file.split(/[\\/]/).pop()!)
   })
-  handle('ai:privateBrowsers', () => privateBrowsers())
+  handle('ai:browsers', () => loginBrowsers())
   handle('ai:settings', () => aiSettings())
   handle('ai:saveSettings', (patch: Partial<AiSettings>) => {
     const before = aiSettings()
