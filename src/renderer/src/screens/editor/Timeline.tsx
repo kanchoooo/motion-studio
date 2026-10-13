@@ -445,7 +445,7 @@ export function Timeline() {
               {Math.min(sel.a, sel.b).toFixed(1)}초 ~ {Math.max(sel.a, sel.b).toFixed(1)}초 속도
             </span>
             <div className="grow" />
-            <button className="icon-btn" onClick={() => setSel(null)}>
+            <button className="icon-btn" title="닫기" onClick={() => setSel(null)}>
               <X size={14} />
             </button>
           </div>

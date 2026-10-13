@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Clapperboard, FolderOpen, MoreHorizontal, Plus, Settings2, Sparkles, Trash2 } from 'lucide-react'
 import { ConnectionsModal } from '../components/ai/ConnectionsModal'
 import { OUTPUT_PRESETS, type OutputPresetId } from '@shared/brief'
@@ -107,6 +107,7 @@ export function Home() {
                   </div>
                   <button
                     className="icon-btn"
+                    title="더보기"
                     onClick={(e) => {
                       e.stopPropagation()
                       setMenu(menu === p.id ? null : p.id)
@@ -153,7 +154,11 @@ function NewProject({ onClose }: { onClose: () => void }) {
   const [duration, setDuration] = useState(15)
   const [busy, setBusy] = useState(false)
 
+  const inFlight = useRef(false)
   const create = async () => {
+    // Enter while finishing a Hangul syllable can fire twice (a ref, not state: both fire in the same tick)
+    if (inFlight.current) return
+    inFlight.current = true
     setBusy(true)
     try {
       const p = await studio.projects.create({ name: name.trim() || '새 프로젝트', presetId: preset, duration })
@@ -162,6 +167,7 @@ function NewProject({ onClose }: { onClose: () => void }) {
     } catch (e) {
       toast(e instanceof Error ? e.message : String(e), 'error')
       setBusy(false)
+      inFlight.current = false
     }
   }
 
@@ -183,7 +189,7 @@ function NewProject({ onClose }: { onClose: () => void }) {
     >
       <div className="field">
         <label>프로젝트 이름</label>
-        <input className="input" autoFocus placeholder="예: 봄 시즌 신제품 15초" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && create()} />
+        <input className="input" autoFocus placeholder="예: 봄 시즌 신제품 15초" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && !e.nativeEvent.isComposing && create()} />
       </div>
       <div className="field">
         <label>화면 비율</label>

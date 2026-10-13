@@ -42,15 +42,25 @@ function sendFile(req: IncomingMessage, res: ServerResponse, file: string): void
       return
     }
     res.writeHead(206, { ...headers, 'Content-Range': `bytes ${start}-${end}/${size}`, 'Content-Length': end - start + 1 })
-    createReadStream(file, { start, end }).pipe(res)
+    createReadStream(file, { start, end }).on('error', () => res.destroy()).pipe(res)
     return
   }
   res.writeHead(200, { ...headers, 'Content-Length': size })
   if (req.method === 'HEAD') res.end()
-  else createReadStream(file).pipe(res)
+  else createReadStream(file).on('error', () => res.destroy()).pipe(res)
 }
 
+/** a request error must never reach Electron's main-process error dialog */
 function handle(req: IncomingMessage, res: ServerResponse): void {
+  try {
+    serve(req, res)
+  } catch {
+    if (!res.headersSent) res.writeHead(400).end()
+    else res.destroy()
+  }
+}
+
+function serve(req: IncomingMessage, res: ServerResponse): void {
   const url = new URL(req.url ?? '/', 'http://127.0.0.1')
   const path = decodeURIComponent(url.pathname)
   if (path.startsWith('/mcp/')) {

@@ -120,8 +120,10 @@ export function staticFindings(html: string, brief: Brief, overrides: Overrides,
     if ((w !== o.width || h !== o.height) && !scaled) out.push({ severity: 'error', code: 'ms_canvas_size', message: `화면 크기가 브리프(${o.width}×${o.height})와 달라요.` })
     // a speed-matched variation reaches the brief length through section speed
     const authored = Number.isFinite(attr('data-ms-authored-duration')) ? attr('data-ms-authored-duration') : attr('data-duration')
-    const effective = overrides.keepTotalDuration ? authored : makeTimeMap(authored, overrides.timeRemap).length
-    if (Math.abs(effective - o.duration) > 0.05) out.push({ severity: 'error', code: 'ms_duration', message: `영상 길이가 브리프(${o.duration}초)와 달라요.` })
+    const effective = makeTimeMap(authored, overrides.timeRemap).length
+    // either Claude's own length matches the brief, or the designer's section speed brings it there
+    // (a length the designer changed on purpose with "총 길이 변경 허용" is not Claude's to fix)
+    if (Math.abs(authored - o.duration) > 0.05 && Math.abs(effective - o.duration) > 0.05) out.push({ severity: 'error', code: 'ms_duration', message: `영상 길이가 브리프(${o.duration}초)와 달라요.` })
   }
 
   // 6. required texts (verbatim when locked)

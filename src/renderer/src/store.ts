@@ -34,6 +34,8 @@ interface State {
   /** latest music / sound candidates Claude found for the open project */
   audioCandidates: AudioCandidateList | null
   aiOpen: boolean
+  /** the export dialog is open (otherwise the result is announced with a toast) */
+  exportOpen: boolean
 
   go(screen: Screen): void
   setTab(tab: ProjectTab): void
@@ -48,6 +50,22 @@ interface State {
 }
 
 let toastSeq = 0
+
+/** run before a project is closed or another one opened: pending saves first, then per-project state is cleared */
+const leaveHooks: (() => Promise<void> | void)[] = []
+export const onLeaveProject = (fn: () => Promise<void> | void) => leaveHooks.push(fn)
+async function leaveProject() {
+  for (const fn of leaveHooks) {
+    try {
+      await fn()
+    } catch {
+      /* never block switching projects */
+    }
+  }
+}
+
+/** "Error invoking remote method 'x': Error: …" → "…" (designers see only the message) */
+export const cleanError = (t: string) => t.replace(/^(Error: )?Error invoking remote method '[^']+': (Error: )?/, '')
 
 export const useStore = create<State>((set, get) => ({
   screen: 'update',
@@ -68,6 +86,7 @@ export const useStore = create<State>((set, get) => ({
   toasts: [],
   audioCandidates: null,
   aiOpen: false,
+  exportOpen: false,
 
   go: (screen) => set({ screen }),
   setTab: (tab) => set({ tab }),
@@ -79,6 +98,7 @@ export const useStore = create<State>((set, get) => ({
   },
   refreshProjects: async () => set({ projects: await studio.projects.list() }),
   openProject: async (path) => {
+    await leaveProject()
     const project = await studio.projects.open(path)
     const id = project.meta.id
     set({ project, screen: 'project', tab: project.hasVideo ? 'editor' : 'brief', chat: [], session: { status: 'starting' }, exportProgress: null, audioCandidates: null })
@@ -88,12 +108,15 @@ export const useStore = create<State>((set, get) => ({
   },
   setProject: (project) => set({ project }),
   closeProject: () => {
-    set({ project: null, screen: 'home', chat: [] })
-    void get().refreshProjects()
+    void (async () => {
+      await leaveProject()
+      set({ project: null, screen: 'home', chat: [], audioCandidates: null })
+      void get().refreshProjects()
+    })()
   },
   toast: (text, kind = 'info') => {
     const id = ++toastSeq
-    set({ toasts: [...get().toasts, { id, kind, text }] })
+    set({ toasts: [...get().toasts, { id, kind, text: cleanError(text) }] })
     setTimeout(() => set({ toasts: get().toasts.filter((t) => t.id !== id) }), kind === 'error' ? 7000 : 3500)
   },
   setTerminal: (terminalOpen) => set({ terminalOpen }),
@@ -143,6 +166,8 @@ studio.renders.onProgress((p) => {
   if (p.projectId !== s.project?.meta.id) return
   useStore.setState({ exportProgress: p })
   if (p.phase === 'done') useStore.setState({ historyNonce: s.historyNonce + 1 })
+  if (!s.exportOpen && p.phase === 'done') s.toast(`내보내기를 마쳤어요: ${p.record?.fileName ?? ''} (결과물 탭)`, 'success')
+  if (!s.exportOpen && p.phase === 'error') s.toast(`영상을 내보내지 못했어요. ${p.message ?? ''}`, 'error')
 })
 
 document.documentElement.dataset.theme = useStore.getState().theme

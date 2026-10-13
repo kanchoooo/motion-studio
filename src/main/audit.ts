@@ -20,6 +20,8 @@ export async function auditComposition(projectDir: string, size: { width: number
     webPreferences: { sandbox: true, contextIsolation: true, backgroundThrottling: false, offscreen: true },
   })
   win.webContents.setAudioMuted(true)
+  // a composition whose script hangs must not hold check_video (and a hidden renderer) forever
+  const limit = setTimeout(() => win.destroy(), 20_000)
   try {
     await win.loadURL(`${serveFolder(join(projectDir, 'composition'))}index.html`)
     // the timeline is registered by the composition's own script; wrappers are added after it
@@ -33,6 +35,7 @@ export async function auditComposition(projectDir: string, size: { width: number
   } catch {
     return null
   } finally {
-    win.destroy()
+    clearTimeout(limit)
+    if (!win.isDestroyed()) win.destroy()
   }
 }

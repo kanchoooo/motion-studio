@@ -31,7 +31,8 @@ export function writeText(path: string, text: string): void {
 export function safeName(name: string, fallback = 'untitled'): string {
   const cleaned = name
     .normalize('NFC')
-    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ')
+    // % and # break file URLs (preview server, renderer <img>)
+    .replace(/[\\/:*?"<>|%#\u0000-\u001f]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .replace(/^\.+/, '')

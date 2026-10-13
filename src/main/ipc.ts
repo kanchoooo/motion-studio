@@ -16,7 +16,7 @@ import { projectsDir, serveFolderUrl } from './ipc-helpers'
 import { previewBase } from './preview-server'
 import * as projects from './projects'
 import { cancelExport, exportAll, listRenders, removeRender, startExport, updateRender } from './renders'
-import { createVariations } from './variations'
+import { createVariations, setFamilyStatus } from './variations'
 import { listBrands, removeBrand, saveBrand } from './brands'
 import { addReferenceFiles, addYoutube, listReferences, removeReference, updateReference } from './references'
 import type { AiConnectProvider, AiLoginEvent, AiMediaKind, AiSettings, AiVoiceInfo, AudioCandidate, AudioCandidateList } from '@shared/ai'
@@ -95,7 +95,11 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
   handle('projects:open', (path: string) => projects.openProject(path))
   handle('projects:state', (id: string) => projects.state(id))
   handle('projects:rename', (id: string, name: string) => projects.renameProject(id, name))
-  handle('projects:remove', (path: string) => projects.removeProject(path))
+  handle('projects:remove', (path: string) => {
+    // its Claude session must not keep writing into the Trash
+    for (const id of projects.idsAt(path)) agent.kill(id)
+    return projects.removeProject(path)
+  })
   handle('projects:saveBrief', (id: string, brief: Brief) => projects.saveBrief(id, brief))
   handle('projects:importAssets', (id: string, files: string[], opts?: { psd?: 'flat' | 'layers' }) => projects.importAssets(id, files, opts))
   handle('projects:saveOverrides', (id: string, o: Overrides, summary: string) => projects.saveOverrides(id, o, summary))
@@ -159,12 +163,32 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
     agent.enqueueAdaptations(messages)
     return created
   })
-  handle('variations:family', (id: string) => projects.familyOf(id))
-  handle('variations:exportAll', (id: string, quality: 'draft' | 'standard' | 'high') => exportAll(id, quality, (p) => send('renders:progress', p)))
+  handle('variations:family', (id: string) => {
+    // a re-layout queued or running in an earlier run of the app will not continue by itself
+    const fam = projects.familyOf(id)
+    for (const p of fam) {
+      if ((p.family?.status === 'queued' || p.family?.status === 'working') && !agent.isAdapting(p.id)) {
+        try {
+          setFamilyStatus(p.id, 'error')
+          p.family = { ...p.family, status: 'error' }
+        } catch {
+          /* folder gone */
+        }
+      }
+    }
+    return fam
+  })
+  handle('variations:exportAll', (id: string, quality: 'draft' | 'standard' | 'high') =>
+    exportAll(id, quality, (p) => send('renders:progress', p), (pid) => agent.state(pid).status === 'busy' || agent.isAdapting(pid)))
 
   // ---- history ----
   handle('history:list', (id: string) => history.list(projects.pathOf(id)))
+  // a half-finished Claude edit must not be exported or overwritten
+  const notWhileBusy = (id: string, what: string) => {
+    if (agent.state(id).status === 'busy') throw new Error(`Claude가 영상을 수정하는 중이에요. 끝난 뒤에 ${what}.`)
+  }
   handle('history:restore', async (id: string, entryId: string) => {
+    notWhileBusy(id, '되돌려 주세요')
     const dir = projects.pathOf(id)
     const target = (await history.list(dir)).find((h) => h.id === entryId)
     await history.restore(dir, entryId, `되돌리기: ${target?.versionName ?? target?.summary ?? '이전 상태'}`)
@@ -175,6 +199,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
     return projects.state(id)
   })
   handle('history:restorePartial', async (id: string, entryId: string, scope: history.RestoreScope) => {
+    notWhileBusy(id, '되돌려 주세요')
     const dir = projects.pathOf(id)
     const target = (await history.list(dir)).find((h) => h.id === entryId)
     const what = { composition: '영상', overrides: '직접 수정값', brief: '브리프' }[scope]
@@ -196,7 +221,10 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
   // ---- renders ----
   const progress = (p: ExportProgress) => send('renders:progress', p)
   handle('renders:list', (id: string) => listRenders(projects.pathOf(id)))
-  handle('renders:start', (id: string, opts: ExportOptions) => startExport(id, opts, progress))
+  handle('renders:start', (id: string, opts: ExportOptions) => {
+    notWhileBusy(id, '내보내 주세요')
+    return startExport(id, opts, progress)
+  })
   handle('renders:cancel', (_id: string, renderId: string) => cancelExport(renderId))
   handle('renders:update', (id: string, renderId: string, patch: { starred?: boolean; note?: string }) => updateRender(projects.pathOf(id), renderId, patch))
   handle('renders:remove', (id: string, renderId: string) => removeRender(projects.pathOf(id), renderId))

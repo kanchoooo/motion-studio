@@ -35,7 +35,15 @@ export function Doctor({ embedded }: { embedded?: boolean }) {
 
   const run = async () => {
     useStore.setState({ doctor: null })
-    const report = await studio.app.doctor()
+    let report
+    try {
+      report = await studio.app.doctor()
+    } catch (e) {
+      // never leave every row spinning: show the error and let the designer go on
+      useStore.getState().toast(`환경 점검 중 문제가 생겼어요. ${e instanceof Error ? e.message : String(e)}`, 'error')
+      useStore.setState({ doctor: { ready: true, items: [] } })
+      return
+    }
     useStore.setState({ doctor: report })
     // move on by itself only when everything is fine, so recommendations aren't skipped silently
     if (report.ready && report.items.every((i) => i.status === 'ok') && !embedded && !sessionStorage.getItem('ms-doctor-seen')) {

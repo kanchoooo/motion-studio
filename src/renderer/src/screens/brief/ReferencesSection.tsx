@@ -149,7 +149,9 @@ function ReferenceCard({ item, base }: { item: ReferenceItem; base: string }) {
             {item.ranges.map((r, i) => (
               <span key={i} className="badge accent" style={{ cursor: 'pointer' }} onClick={() => video.current && (video.current.currentTime = r.from)}>
                 {formatTime(r.from)}~{formatTime(r.to)}
-                <X size={11} onClick={(e) => { e.stopPropagation(); void setRanges(item.ranges.filter((_, j) => j !== i)) }} />
+                <button className="icon-btn" title="이 구간 빼기" style={{ width: 18, height: 18 }} onClick={(e) => { e.stopPropagation(); void setRanges(item.ranges.filter((_, j) => j !== i)) }}>
+                  <X size={11} />
+                </button>
               </span>
             ))}
             {!item.ranges.length && mark == null && <span className="tiny faint">비워 두면 Claude가 킥 포인트를 직접 찾아요</span>}

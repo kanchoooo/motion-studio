@@ -75,4 +75,39 @@ describe('length with section speed', () => {
     expect(applyLength(fast, o)).toBe(fast)
     expect(applyLength(fast, emptyOverrides())).toBe(page)
   })
+
+  it('keeps the whole video when "총 길이 유지" is on and a section is slowed down', async () => {
+    const { applyLength } = await import('../../src/main/audio')
+    const { emptyOverrides } = await import('@shared/overrides')
+    const page = '<div id="root" data-composition-id="main" data-start="0" data-duration="8"></div>'
+    const o = emptyOverrides()
+    o.timeRemap = [{ from: 2, to: 4, speed: 0.5 }] // 2s section takes 4s → 10s total
+    const slow = applyLength(page, o)
+    expect(slow).toContain('data-duration="10"')
+    // sped-up sections with "keep total" stay at 8s (the last scene holds)
+    o.timeRemap = [{ from: 2, to: 4, speed: 2 }]
+    expect(applyLength(page, o)).toBe(page)
+  })
+
+  it('moves sound effects, narration and clips with the picture in the file the renderer reads', async () => {
+    const { applyLength } = await import('../../src/main/audio')
+    const { emptyOverrides } = await import('@shared/overrides')
+    const page =
+      '<div id="root" data-composition-id="main" data-start="0" data-duration="8">' +
+      '<audio id="s1" data-ms-id="s1" data-ms-type="sfx" src="a.wav" data-start="6" data-duration="0.5"></audio>' +
+      '<audio id="v1" data-ms-id="v1" data-ms-type="voice" src="v.mp3" data-start="1" data-duration="2"></audio>' +
+      '<audio id="b1" data-ms-id="b1" data-ms-type="bgm" src="m.mp3" data-start="0" data-duration="8"></audio>' +
+      '<video id="c1" data-ms-id="c1" src="c.mp4" data-start="0" data-duration="2" muted></video></div>'
+    const o = emptyOverrides()
+    o.keepTotalDuration = false
+    o.timeRemap = [{ from: 0, to: 2, speed: 2 }] // first 2s twice as fast → everything after moves 1s earlier
+    const out = applyLength(page, o)
+    expect(out).toMatch(/id="s1"[^>]*data-start="5\.0000"/)
+    expect(out).toMatch(/id="v1"[^>]*data-start="0\.5000"[^>]*data-duration="1\.5000"/)
+    expect(out).toMatch(/id="b1"[^>]*data-start="0"/) // music keeps real time
+    expect(out).toMatch(/id="c1"[^>]*data-duration="1\.0000"[^>]*data-playback-rate="2"/)
+    expect(out).toContain('data-ms-authored-rate="none"')
+    expect(applyLength(out, o)).toBe(out) // idempotent
+    expect(applyLength(out, emptyOverrides())).toBe(page) // fully reversible
+  })
 })

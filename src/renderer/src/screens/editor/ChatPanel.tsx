@@ -197,7 +197,7 @@ export function ChatPanel({ onFold }: { onFold?(): void }) {
                   >
                     <ImagePlus size={14} />
                   </button>
-                  <button className="icon-btn" onClick={() => removeMark(m.id)}>
+                  <button className="icon-btn" title="이 표시 지우기" onClick={() => removeMark(m.id)}>
                     <X size={14} />
                   </button>
                 </div>
@@ -457,7 +457,8 @@ function ChatRow({ item, count = 1 }: { item: ChatItem; count?: number }) {
 }
 
 function StoryboardCard({ item }: { item: Extract<ChatItem, { role: 'storyboard' }> }) {
-  const { project } = useStore()
+  const { project, toast } = useStore()
+  const [approving, setApproving] = useState(false)
   const sb: Storyboard = item.storyboard
   return (
     <div className="card fade-in" style={{ padding: 0, overflow: 'hidden', opacity: item.status === 'superseded' ? 0.55 : 1 }}>
@@ -491,7 +492,19 @@ function StoryboardCard({ item }: { item: Extract<ChatItem, { role: 'storyboard'
       </div>
       {item.status === 'pending' && (
         <div className="row" style={{ padding: '0 12px 12px' }}>
-          <button className="btn primary sm grow" onClick={() => studio.agent.approveStoryboard(project!.meta.id, item.id)}>
+          <button
+            className="btn primary sm grow"
+            disabled={approving}
+            onClick={async () => {
+              setApproving(true)
+              try {
+                await studio.agent.approveStoryboard(project!.meta.id, item.id)
+              } catch (e) {
+                toast(errText(e), 'error')
+                setApproving(false)
+              }
+            }}
+          >
             <Check size={13} />
             이대로 만들기
           </button>

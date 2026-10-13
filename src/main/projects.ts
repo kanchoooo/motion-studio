@@ -30,8 +30,13 @@ export const openIds = () => [...open.keys()]
 export function pathOf(projectId: string): string {
   const dir = open.get(projectId)
   if (!dir) throw new Error('프로젝트가 열려 있지 않아요. 홈에서 다시 열어 주세요.')
+  // moved, renamed or deleted in Finder while open: never recreate an empty copy at the old place
+  if (!existsSync(f.meta(dir))) throw new Error('프로젝트 폴더를 찾을 수 없어요. 옮기거나 이름을 바꿨다면 홈에서 다시 열어 주세요.')
   return dir
 }
+
+/** ids of open projects stored in a folder (to stop their sessions before it goes away) */
+export const idsAt = (dir: string) => [...open.entries()].filter(([, d]) => d === dir).map(([id]) => id)
 
 export const files = f
 
@@ -154,7 +159,17 @@ export async function createProject(input: { name: string; presetId: OutputPrese
 
 export function openProject(dir: string, opts: { remember?: boolean } = {}): ProjectState {
   if (!existsSync(f.meta(dir))) throw new Error('모션스튜디오 프로젝트 폴더가 아니에요.')
-  const meta = readJson<ProjectMeta>(f.meta(dir), null as never)
+  let meta = readJson<ProjectMeta | null>(f.meta(dir), null)
+  if (!meta) throw new Error('프로젝트 정보(project.json)를 읽을 수 없어요.')
+  // a folder duplicated in Finder carries the original's id and Claude conversation: give it its own
+  const other = open.get(meta.id)
+  if ((other && other !== dir && existsSync(f.meta(other))) || listProjects().some((p) => p.id === meta!.id && p.path !== dir && existsSync(p.path))) {
+    const firstSeen = listProjects().find((p) => p.id === meta!.id)?.path
+    if (other ? other !== dir : firstSeen !== dir) {
+      meta = { ...meta, id: newId(), agentSessionId: undefined, family: undefined, updatedAt: nowIso() }
+      writeJson(f.meta(dir), meta)
+    }
+  }
   const brief = readJson<Brief>(f.brief(dir), emptyBrief(meta.name))
   const overrides = normalizeOverrides(readJson<Overrides | null>(f.overrides(dir), null))
   syncManagedFiles(dir, overrides)
@@ -169,7 +184,7 @@ export function state(projectId: string): ProjectState {
   return {
     meta: readJson<ProjectMeta>(f.meta(dir), null as never),
     path: dir,
-    brief: normalizeBrief(readJson<Brief>(f.brief(dir), null as never)),
+    brief: normalizeBrief(readJson<Brief | null>(f.brief(dir), null) ?? emptyBrief(readJson<ProjectMeta | null>(f.meta(dir), null)?.name ?? '')),
     overrides: normalizeOverrides(readJson<Overrides | null>(f.overrides(dir), null)),
     hasVideo: compositionHasVideo(html),
   }
@@ -177,7 +192,9 @@ export function state(projectId: string): ProjectState {
 
 export function touch(projectId: string, patch: Partial<ProjectMeta> = {}): ProjectMeta {
   const dir = pathOf(projectId)
-  const meta = { ...readJson<ProjectMeta>(f.meta(dir), null as never), ...patch, updatedAt: nowIso() }
+  const old = readJson<ProjectMeta | null>(f.meta(dir), null)
+  if (!old) throw new Error('프로젝트 정보(project.json)를 읽을 수 없어요.')
+  const meta = { ...old, ...patch, updatedAt: nowIso() }
   writeJson(f.meta(dir), meta)
   return meta
 }

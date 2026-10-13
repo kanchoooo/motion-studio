@@ -122,7 +122,7 @@ function SceneCard({ n, scene: s, onPatch, onRemove, onDuplicate, onUp, onDown }
                 {t.locked && <Lock size={11} />}
                 원문 고정
               </label>
-              <button className="icon-btn" onClick={() => onPatch({ texts: s.texts.filter((x) => x.id !== t.id) })}>
+              <button className="icon-btn" title="문구 삭제" onClick={() => onPatch({ texts: s.texts.filter((x) => x.id !== t.id) })}>
                 <Trash2 size={13} />
               </button>
             </div>

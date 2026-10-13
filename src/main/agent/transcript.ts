@@ -16,6 +16,11 @@ type Rec = {
   promptId?: string
   toolUseResult?: unknown
   bridgeSessionId?: string
+  /** Claude Code writes a synthetic assistant line when the API call failed (overloaded, usage limit…) */
+  isApiErrorMessage?: boolean
+  /** the summary a compaction leaves (not something the designer typed) */
+  isCompactSummary?: boolean
+  isVisibleInTranscriptOnly?: boolean
   /** queue-operation records: a message typed while Claude was working */
   operation?: string
   content?: unknown
@@ -32,7 +37,8 @@ export interface TranscriptEvents {
   item(item: ChatItem): void
   update(item: ChatItem): void
   busy(busy: boolean): void
-  turnEnd(lastText: string): void
+  /** how the turn ended: done (Claude finished), stopped (designer pressed 멈추기), failed (API error) */
+  turnEnd(lastText: string, how: 'done' | 'stopped' | 'failed'): void
   remoteUrl(url: string): void
 }
 
@@ -152,8 +158,11 @@ export class TranscriptTail {
   private takeQueued(text: string, initial: boolean, at = Date.now()): boolean {
     const item = this.queued.get(text)
     if (!item) {
+      // a second copy of a delivered line (Claude Code repeats some records) is skipped once
       const t = this.delivered.get(text)
-      return t != null && Math.abs(at - t) < 10 * 60_000
+      if (t == null || Math.abs(at - t) > 10 * 60_000) return false
+      this.delivered.delete(text)
+      return true
     }
     this.delivered.set(text, at)
     this.queued.delete(text)
@@ -182,6 +191,10 @@ export class TranscriptTail {
       return
     }
     const at = r.timestamp ?? new Date().toISOString()
+    if (r.type === 'user' && (r.isCompactSummary || r.isVisibleInTranscriptOnly)) {
+      this.emitItem({ id: r.uuid ?? at, at, role: 'notice', text: '대화가 길어져서 앞부분을 요약했어요. 작업은 그대로 이어져요.' }, initial)
+      return
+    }
     if (r.type === 'user' && !r.isMeta) {
       const c = r.message?.content
       if (Array.isArray(c) && c.some((b) => b.type === 'tool_result')) {
@@ -198,8 +211,12 @@ export class TranscriptTail {
       if (t == null) return
       if (/^\[Request interrupted by user/.test(t)) {
         this.closeStatuses(initial)
-        this.setBusy(false)
         this.emitItem({ id: r.uuid ?? at, at, role: 'notice', text: '작업을 멈췄어요.' }, initial)
+        if (!initial) {
+          this.setBusy(false)
+          // a stopped turn still ends: history, pending model change and the variation queue move on
+          this.ev.turnEnd(this.lastText, 'stopped')
+        }
         return
       }
       // already shown when it was queued
@@ -228,8 +245,12 @@ export class TranscriptTail {
     }
     if (r.type === 'assistant' && r.message) {
       const content = Array.isArray(r.message.content) ? r.message.content : []
+      // API failures (overloaded, usage limit, network) end the turn too, or the app would wait forever
+      const failed = !!r.isApiErrorMessage
+      // synthetic lines without an error ("No response requested." after a stop) are not shown
+      const synthetic = (r.message as { model?: string }).model === '<synthetic>'
       for (const b of content) {
-        if (b.type === 'text' && b.text?.trim()) {
+        if (b.type === 'text' && b.text?.trim() && !failed && !synthetic) {
           this.lastText = b.text
           this.emitItem({ id: `${r.uuid}-t`, at, role: 'assistant', text: b.text }, initial)
         } else if (b.type === 'tool_use' && b.id) {
@@ -239,12 +260,18 @@ export class TranscriptTail {
           this.emitItem(item, initial)
         }
       }
-      if (!initial && r.message.stop_reason !== 'end_turn') this.setBusy(true)
-      if (r.message.stop_reason === 'end_turn') {
+      const ended = r.message.stop_reason === 'end_turn' || r.message.stop_reason === 'refusal' || failed
+      if (failed) {
+        const said = content.filter((b) => b.type === 'text').map((b) => b.text ?? '').join(' ')
+        const limit = /limit|usage|quota/i.test(said)
+        this.emitItem({ id: `${r.uuid}-e`, at, role: 'error', text: limit ? 'Claude 사용량 한도에 도달했어요. 터미널에 표시된 시간 이후에 다시 보내 주세요.' : 'Claude가 응답하지 못했어요. 잠시 뒤 다시 보내 주세요.', detail: said.slice(0, 400) || undefined }, initial)
+      }
+      if (!initial && !ended) this.setBusy(true)
+      if (ended) {
         this.closeStatuses(initial)
         if (!initial) {
           this.setBusy(false)
-          this.ev.turnEnd(this.lastText)
+          this.ev.turnEnd(this.lastText, failed ? 'failed' : 'done')
         }
       }
     }

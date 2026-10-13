@@ -1,11 +1,16 @@
 import { RotateCcw, X } from 'lucide-react'
+import { Splitter } from '../../components/Splitter'
 import { TERM_THEMES, XTerm } from '../../components/XTerm'
+import { clampSize, fitLayout, LAYOUT_DEFAULTS, useLayout, useWindowSize } from './layout'
 import { studio, useStore } from '../../store'
 
 /** the live Claude Code terminal; kept mounted so the screen survives tab switches */
 export function TerminalPanel() {
   const { project, terminalOpen, setTerminal, session, theme } = useStore()
   const pid = project?.meta.id
+  const L = useLayout()
+  const win = useWindowSize()
+  const height = fitLayout(L, win, true).terminalH
 
   const attention =
     session.attention === 'trust'
@@ -17,7 +22,10 @@ export function TerminalPanel() {
           : null
 
   return (
-    <div style={{ display: terminalOpen ? 'flex' : 'none', flexDirection: 'column', height: 300, borderTop: '1px solid var(--border)', background: TERM_THEMES[theme].background, flex: 'none' }}>
+    <div style={{ display: terminalOpen ? 'flex' : 'none', flexDirection: 'column', height, borderTop: '1px solid var(--border)', background: TERM_THEMES[theme].background, flex: 'none', position: 'relative' }}>
+      <div style={{ position: 'absolute', left: 0, right: 0, top: 0, display: 'flex', flexDirection: 'column' }}>
+        <Splitter dir="y" invert value={L.terminalH} onChange={(v) => L.set({ terminalH: clampSize('terminalH', v) })} onReset={() => L.set({ terminalH: LAYOUT_DEFAULTS.terminalH })} title="끌어서 터미널 높이 조절" />
+      </div>
       <div className="row" style={{ height: 34, padding: '0 8px 0 14px', borderBottom: '1px solid var(--border)', background: 'var(--surface)' }}>
         <span className="small" style={{ fontWeight: 600 }}>터미널</span>
         <span className="tiny faint">Claude Code 원본 화면 · 키보드로 직접 입력할 수 있어요</span>

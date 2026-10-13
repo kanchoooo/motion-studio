@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { AlignCenter, AlignLeft, AlignRight, ArrowUpLeft, Box, Eye, EyeOff, Image as ImageIcon, Layers, Lock, Redo2, RotateCcw, Type, Undo2 } from 'lucide-react'
 import { FontSelect } from '../../components/FontSelect'
 import { ColorField, NumberField, Segmented } from '../../components/ui'
 import { useStore } from '../../store'
 import { useEditor } from './editorStore'
 import { MotionPanel } from './MotionPanel'
-import { rgbToHex, useOverrides } from './overrides'
+import { lastSaved, rgbToHex, useOverrides } from './overrides'
 import { SoundPanel } from './SoundPanel'
 
 const ICON: Record<string, typeof Type> = { text: Type, image: ImageIcon, shape: Box, video: ImageIcon, group: Layers }
@@ -17,8 +17,10 @@ export function Inspector() {
   const sel = elements.find((e) => e.id === selected)
 
   useEffect(() => {
-    // take the saved overrides unless the designer has unsaved edits (restore, Claude turn, first open)
-    if (project && !useOverrides.getState().dirty) load(project.overrides)
+    // take the saved overrides unless the designer has unsaved edits (restore, Claude turn, first open);
+    // our own save coming back is skipped so the undo history survives
+    if (!project || useOverrides.getState().dirty || project.overrides === lastSaved) return
+    load(project.overrides)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.meta.id, project?.overrides])
   useEffect(() => {
@@ -115,7 +117,12 @@ function ElementEditor({ id }: { id: string; fontsReady: boolean }) {
   const family = s.fontFamily ?? computedFamily
   const fam = fonts.find((f) => f.family === family || f.familyKo === family)
   const [text, setText] = useState(o.text ?? el.text ?? '')
+  const textBox = useRef<HTMLTextAreaElement>(null)
   useEffect(() => setText(o.text ?? el.text ?? ''), [id]) // eslint-disable-line react-hooks/exhaustive-deps
+  // undo, 초기화 or Claude changed the copy: show it (unless the designer is typing right now)
+  useEffect(() => {
+    if (document.activeElement !== textBox.current) setText(o.text ?? el.text ?? '')
+  }, [o.text, el.text]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="col" style={{ gap: 6 }}>
@@ -133,6 +140,7 @@ function ElementEditor({ id }: { id: string; fontsReady: boolean }) {
       {isText && (
         <Section title="텍스트">
           <textarea
+            ref={textBox}
             className="textarea"
             rows={Math.min(12, Math.max(3, text.split('\n').length + 1))}
             value={text}

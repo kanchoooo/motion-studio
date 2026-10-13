@@ -2,7 +2,7 @@
 // debounced save (each save becomes a history entry with a readable summary).
 import { create } from 'zustand'
 import { normalizeOverrides, type AudioEdit, type BgmTrack, type ElementOverride, type MotionOverride, type Overrides, type TimeRemapSection } from '@shared/overrides'
-import { studio, useStore } from '../../store'
+import { onLeaveProject, studio, useStore } from '../../store'
 import { useEditor } from './editorStore'
 import { ask } from './player'
 
@@ -50,28 +50,68 @@ interface OverrideState {
 
 let timer: ReturnType<typeof setTimeout> | undefined
 let summaries: string[] = []
+/** project the pending edits belong to (a debounced save must never land in another project) */
+let pendingProject: string | null = null
+/** bumped by every edit: a save only clears "dirty" if nothing changed while it ran */
+let revision = 0
+/** the overrides object our own last save produced (so it is not re-loaded over the undo history) */
+export let lastSaved: Overrides | null = null
+let saving: Promise<void> | null = null
 
 async function flush() {
   const st = useOverrides.getState()
-  const project = useStore.getState().project
-  if (!st.value || !project) return
+  const pid = pendingProject
+  if (!st.value || !pid) return
   const summary = summaries.slice(-3).join(', ') || '직접 수정'
   summaries = []
   const reload = st.reload
+  const rev = revision
   useOverrides.setState({ reload: false })
-  const next = await studio.projects.saveOverrides(project.meta.id, st.value, summary)
-  useOverrides.setState({ dirty: false })
-  useStore.getState().setProject(next)
-  if (reload) useStore.setState({ previewNonce: useStore.getState().previewNonce + 1 })
-  useStore.setState({ historyNonce: useStore.getState().historyNonce + 1 })
+  try {
+    const next = await studio.projects.saveOverrides(pid, st.value, summary)
+    lastSaved = next.overrides
+    if (rev === revision) {
+      useOverrides.setState({ dirty: false })
+      pendingProject = null
+    }
+    if (useStore.getState().project?.meta.id === pid) {
+      useStore.getState().setProject(next)
+      if (reload) useStore.setState({ previewNonce: useStore.getState().previewNonce + 1 })
+      useStore.setState({ historyNonce: useStore.getState().historyNonce + 1 })
+    }
+  } catch (e) {
+    useStore.getState().toast(`직접 수정한 내용을 저장하지 못했어요. ${e instanceof Error ? e.message : String(e)}`, 'error')
+    useOverrides.setState({ dirty: false })
+    pendingProject = null
+  }
+}
+
+/** saves pending edits now (before closing or switching projects) */
+export async function flushOverrides() {
+  clearTimeout(timer)
+  if (saving) await saving
+  if (useOverrides.getState().dirty) await flush()
+}
+
+/** a different project: start from its own edits with an empty undo history */
+export function resetOverrides() {
+  clearTimeout(timer)
+  summaries = []
+  pendingProject = null
+  lastSaved = null
+  useOverrides.setState({ value: null, past: [], future: [], dirty: false, reload: false })
 }
 
 function schedule(keys: string[], summary: string) {
+  revision++
+  pendingProject = useStore.getState().project?.meta.id ?? pendingProject
   useOverrides.setState({ dirty: true })
   summaries = [...summaries.filter((s) => s !== summary), summary]
   if (keys.some((k) => NEEDS_RELOAD.has(k))) useOverrides.setState({ reload: true })
   clearTimeout(timer)
-  timer = setTimeout(() => void flush(), keys.some((k) => NEEDS_RELOAD.has(k)) ? 350 : 700)
+  timer = setTimeout(() => {
+    saving = flush().finally(() => (saving = null))
+  }, keys.some((k) => NEEDS_RELOAD.has(k)) ? 350 : 700)
 }
 
 async function livePreview(o: Overrides) {
@@ -193,3 +233,8 @@ export function rgbToHex(c: string): string {
   if (!m) return c.startsWith('#') ? c : '#000000'
   return `#${[m[1], m[2], m[3]].map((x) => Number(x).toString(16).padStart(2, '0')).join('')}`
 }
+
+onLeaveProject(async () => {
+  await flushOverrides()
+  resetOverrides()
+})

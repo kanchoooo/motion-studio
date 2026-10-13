@@ -171,7 +171,9 @@ export function VariationModal({ onClose }: { onClose: () => void }) {
             .map((s) => (
               <span key={`${s.width}x${s.height}`} className="badge accent">
                 {s.width}×{s.height}
-                <X size={11} style={{ cursor: 'pointer' }} onClick={() => toggleSize(s)} />
+                <button className="icon-btn" title="이 크기 빼기" style={{ width: 18, height: 18 }} onClick={() => toggleSize(s)}>
+                  <X size={11} />
+                </button>
               </span>
             ))}
         </div>

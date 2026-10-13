@@ -24,7 +24,8 @@ export function App() {
           </div>
         )}
         {screen === 'home' && <Home />}
-        {screen === 'project' && <Project />}
+        {/* keyed: drafts and panel state of one project never carry over to another */}
+        {screen === 'project' && project && <Project key={project.meta.id} />}
       </div>
       {/* the live terminal belongs to the open project and survives tab switches */}
       {screen === 'project' && project && <TerminalPanel key={project.meta.id} />}

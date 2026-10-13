@@ -86,8 +86,21 @@ async function headOid(dir: string): Promise<string | null> {
   }
 }
 
+// One history write at a time per project: isomorphic-git reads the parent commit
+// before locking, so two overlapping commits would drop one entry.
+const chains = new Map<string, Promise<unknown>>()
+function serial<T>(dir: string, fn: () => Promise<T>): Promise<T> {
+  const run = (chains.get(dir) ?? Promise.resolve()).catch(() => {}).then(fn)
+  chains.set(dir, run)
+  return run
+}
+
 /** Records the current project state. Returns null when nothing changed (unless forced). */
-export async function record(
+export function record(dir: string, input: Parameters<typeof recordNow>[1]): Promise<HistoryEntry | null> {
+  return serial(dir, () => recordNow(dir, input))
+}
+
+async function recordNow(
   dir: string,
   input: { actor: HistoryActor; summary: string; versionName?: string; restoredFrom?: string; force?: boolean },
 ): Promise<HistoryEntry | null> {
@@ -147,9 +160,13 @@ export async function readFileAt(dir: string, oid: string, filepath: string): Pr
 }
 
 /** Writes the tracked files of `oid` back into the project and records that as a new entry. */
-export async function restore(dir: string, oid: string, summary: string): Promise<HistoryEntry | null> {
+export function restore(dir: string, oid: string, summary: string): Promise<HistoryEntry | null> {
+  return serial(dir, () => restoreNow(dir, oid, summary))
+}
+
+async function restoreNow(dir: string, oid: string, summary: string): Promise<HistoryEntry | null> {
   // capture anything unsaved first so the restore itself can be undone
-  await record(dir, { actor: 'app', summary: '되돌리기 전 자동 저장' })
+  await recordNow(dir, { actor: 'app', summary: '되돌리기 전 자동 저장' })
   const head = await headOid(dir)
   const targetFiles = (await git.listFiles({ ...repo(dir), ref: oid })).filter(isTracked)
   const headFiles = head ? (await git.listFiles({ ...repo(dir), ref: head })).filter(isTracked) : []
@@ -163,15 +180,19 @@ export async function restore(dir: string, oid: string, summary: string): Promis
     fs.mkdirSync(join(abs, '..'), { recursive: true })
     fs.writeFileSync(abs, Buffer.from(blob))
   }
-  return record(dir, { actor: 'designer', summary, restoredFrom: oid, force: true })
+  return recordNow(dir, { actor: 'designer', summary, restoredFrom: oid, force: true })
 }
 
 export type RestoreScope = 'composition' | 'overrides' | 'brief'
 const inScope = (f: string, scope: RestoreScope) => (scope === 'composition' ? f.startsWith('composition/') : f === `${scope}.json`)
 
 /** brings back only part of an earlier state (the video, the direct edits or the brief) */
-export async function restorePartial(dir: string, oid: string, scope: RestoreScope, summary: string): Promise<HistoryEntry | null> {
-  await record(dir, { actor: 'app', summary: '되돌리기 전 자동 저장' })
+export function restorePartial(dir: string, oid: string, scope: RestoreScope, summary: string): Promise<HistoryEntry | null> {
+  return serial(dir, () => restorePartialNow(dir, oid, scope, summary))
+}
+
+async function restorePartialNow(dir: string, oid: string, scope: RestoreScope, summary: string): Promise<HistoryEntry | null> {
+  await recordNow(dir, { actor: 'app', summary: '되돌리기 전 자동 저장' })
   const head = await headOid(dir)
   const targetFiles = (await git.listFiles({ ...repo(dir), ref: oid })).filter((f) => isTracked(f) && inScope(f, scope))
   const headFiles = head ? (await git.listFiles({ ...repo(dir), ref: head })).filter((f) => isTracked(f) && inScope(f, scope)) : []
@@ -182,7 +203,7 @@ export async function restorePartial(dir: string, oid: string, scope: RestoreSco
     fs.mkdirSync(join(dir, f, '..'), { recursive: true })
     fs.writeFileSync(join(dir, f), Buffer.from(blob))
   }
-  return record(dir, { actor: 'designer', summary, restoredFrom: oid, force: true })
+  return recordNow(dir, { actor: 'designer', summary, restoredFrom: oid, force: true })
 }
 
 export function setStar(dir: string, oid: string, starred: boolean): void {

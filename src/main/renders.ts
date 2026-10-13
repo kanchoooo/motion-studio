@@ -52,12 +52,13 @@ export async function startExport(projectId: string, opts: ExportOptions, emit: 
   const send = (p: Omit<ExportProgress, 'projectId' | 'renderId'>) => emit({ projectId, renderId, ...p })
 
   void (async () => {
-    const { brief } = projects.state(projectId)
-    const rendersDir = join(dir, 'renders')
-    mkdirSync(rendersDir, { recursive: true })
-    const name = safeName(opts.fileName || defaultFileName(brief, listRenders(dir))).replace(/\s+/g, '-')
-    const out = uniquePath((n) => join(rendersDir, `${name}${n ? `-${n + 1}` : ''}${EXT[opts.format]}`))
+    let out = ''
     try {
+      const { brief } = projects.state(projectId)
+      const rendersDir = join(dir, 'renders')
+      mkdirSync(rendersDir, { recursive: true })
+      const name = safeName(opts.fileName || defaultFileName(brief, listRenders(dir))).replace(/\s+/g, '-')
+      out = uniquePath((n) => join(rendersDir, `${name}${n ? `-${n + 1}` : ''}${EXT[opts.format]}`))
       send({ phase: 'preparing', percent: 1, message: '영상을 준비하고 있어요' })
       projects.refreshFontCss(dir)
       projects.applyAudioEdits(dir)
@@ -165,8 +166,9 @@ export async function startExport(projectId: string, opts: ExportOptions, emit: 
 }
 
 /** exports a project and all its variations one after another with each one's own settings */
-export async function exportAll(projectId: string, quality: ExportOptions['quality'], emit: (p: ExportProgress) => void): Promise<number> {
-  const members = projects.familyOf(projectId).filter((m) => m.hasVideo)
+export async function exportAll(projectId: string, quality: ExportOptions['quality'], emit: (p: ExportProgress) => void, busy: (id: string) => boolean = () => false): Promise<number> {
+  // variations Claude has not re-laid out yet still hold the original's composition: never export those
+  const members = projects.familyOf(projectId).filter((m) => m.hasVideo && (!m.family || m.family.status === 'done') && !busy(m.id))
   void (async () => {
     for (const m of members) {
       projects.openProject(m.path, { remember: false })
@@ -205,3 +207,9 @@ export function removeRender(dir: string, renderId: string): void {
 }
 
 export { safeName }
+
+/** exports still running (the quit warning lists them; quitting cancels them) */
+export const runningExports = () => running.size
+export function cancelAllExports() {
+  for (const a of running.values()) a.abort()
+}

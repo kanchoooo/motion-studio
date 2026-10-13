@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { AudioClipInfo } from '@shared/api'
 import type { FeedbackMark } from '@shared/project'
+import { onLeaveProject } from '../../store'
 import type { ElementTiming, MsPlayer, RuntimeElement, RuntimeMotion } from './player'
 
 export type Tool = 'select' | 'box' | 'pin'
@@ -99,3 +100,27 @@ export function elementsUnder(els: RuntimeElement[], r: { x: number; y: number; 
     .sort((a, b) => a.rect.w * a.rect.h - b.rect.w * b.rect.h)
     .map((e) => ({ id: e.id, label: e.label }))
 }
+
+// nothing of one project's editor may show up in the next one
+onLeaveProject(() => {
+  useEditor.getState().player?.pause()
+  useEditor.setState({
+    player: null,
+    time: 0,
+    duration: 0,
+    playing: false,
+    ready: false,
+    elements: [],
+    selected: null,
+    audio: [],
+    timing: [],
+    motions: [],
+    staleMotions: [],
+    selectedMotion: null,
+    openLayers: [],
+    selectedAudio: null,
+    tool: 'select',
+    marks: [],
+    markTime: null,
+  })
+})

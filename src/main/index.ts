@@ -1,6 +1,8 @@
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { app, BrowserWindow, dialog, nativeTheme, session, shell } from 'electron'
 import { registerIpc } from './ipc'
+import { cancelAllExports, runningExports } from './renders'
 import { isDev } from './paths'
 import { startPreviewServer } from './preview-server'
 
@@ -32,8 +34,10 @@ function createWindow(previewBase: string) {
     if (/^https:\/\//.test(url)) void shell.openExternal(url)
     return { action: 'deny' }
   })
+  // the window only ever shows the app itself (a dropped file must not replace it)
+  const appPage = pathToFileURL(join(import.meta.dirname, '../renderer/index.html')).href
   win.webContents.on('will-navigate', (e, url) => {
-    const allowed = isDev ? url.startsWith(process.env.ELECTRON_RENDERER_URL ?? '') : url.startsWith('file://')
+    const allowed = isDev && process.env.ELECTRON_RENDERER_URL ? url.startsWith(process.env.ELECTRON_RENDERER_URL) : url.split('#')[0] === appPage
     if (!allowed) e.preventDefault()
   })
   if (isDev && process.env.ELECTRON_RENDERER_URL) void win.loadURL(process.env.ELECTRON_RENDERER_URL)
@@ -72,14 +76,15 @@ app.whenReady().then(async () => {
   let confirmedQuit = false
   app.on('before-quit', (e) => {
     const busy = sessions.busyProjects()
-    if (busy.length && !confirmedQuit) {
+    const exporting = runningExports()
+    if ((busy.length || exporting) && !confirmedQuit) {
       const choice = dialog.showMessageBoxSync({
         type: 'warning',
         buttons: ['계속 작업하기', '종료하기'],
         defaultId: 0,
         cancelId: 0,
-        message: 'Claude가 아직 작업 중이에요',
-        detail: '지금 종료하면 진행 중인 작업이 멈춰요. 대화 내용은 남아 있어서 다음에 이어서 할 수 있어요.',
+        message: exporting && busy.length ? 'Claude 작업과 내보내기가 아직 진행 중이에요' : exporting ? '영상을 내보내는 중이에요' : 'Claude가 아직 작업 중이에요',
+        detail: `지금 종료하면 진행 중인 작업이 멈춰요.${exporting ? ' 내보내던 영상은 취소돼요.' : ''} 대화 내용은 남아 있어서 다음에 이어서 할 수 있어요.`,
       })
       if (choice === 0) {
         e.preventDefault()
@@ -87,6 +92,7 @@ app.whenReady().then(async () => {
       }
       confirmedQuit = true
     }
+    cancelAllExports()
     sessions.killAll()
   })
   app.on('activate', () => {

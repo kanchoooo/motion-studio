@@ -25,12 +25,17 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
   const [fileName, setFileName] = useState('')
   const [versionName, setVersionName] = useState('')
   const [copyTo, setCopyTo] = useState<string | null>(null)
-  const [renderId, setRenderId] = useState<string | null>(null)
+  // an export still running when the dialog is opened again is shown, not hidden behind a new form
+  const live = exportProgress && exportProgress.projectId === pid && !['done', 'error', 'cancelled'].includes(exportProgress.phase) ? exportProgress : null
+  const [renderId, setRenderId] = useState<string | null>(live?.renderId ?? null)
+  const [starting, setStarting] = useState(false)
 
   useEffect(() => {
     void studio.renders.list(pid).then((r) => setFileName(defaultName(r.length)))
-    useStore.setState({ exportProgress: null })
-  }, [pid])
+    if (!live) useStore.setState({ exportProgress: null })
+    useStore.setState({ exportOpen: true })
+    return () => useStore.setState({ exportOpen: false })
+  }, [pid]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const p = exportProgress && exportProgress.renderId === renderId ? exportProgress : null
   const running = !!renderId && (!p || !['done', 'error', 'cancelled'].includes(p.phase))
@@ -38,11 +43,15 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
   const stepLabel = { preparing: '준비', capturing: '프레임 만들기', encoding: '영상 파일로 묶기', finishing: '마무리' }
 
   const start = async () => {
+    if (starting) return
+    setStarting(true)
     try {
       const id = await studio.renders.start(pid, { format, quality, fileName, versionName: versionName.trim() || undefined, copyTo: copyTo ?? undefined })
       setRenderId(id)
     } catch (e) {
       toast(e instanceof Error ? e.message : String(e), 'error')
+    } finally {
+      setStarting(false)
     }
   }
 
@@ -57,7 +66,7 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
             <button className="btn" onClick={onClose}>
               취소
             </button>
-            <button className="btn primary" onClick={start} disabled={!fileName.trim()}>
+            <button className="btn primary" onClick={start} disabled={!fileName.trim() || starting}>
               내보내기 시작
             </button>
           </>

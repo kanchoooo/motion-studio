@@ -6,21 +6,28 @@ import { HistoryPanel } from '../history/HistoryPanel'
 import { ChatPanel } from './ChatPanel'
 import { useEditor } from './editorStore'
 import { Inspector } from './Inspector'
-import { clampSize, LAYOUT_DEFAULTS, useLayout } from './layout'
+import { clampSize, fitLayout, LAYOUT_DEFAULTS, useLayout, useWindowSize } from './layout'
 import { Preview } from './Preview'
 import { useOverrides } from './overrides'
 import { Timeline } from './Timeline'
 
 export function EditorTab({ active }: { active: boolean }) {
-  const { project } = useStore()
-  const L = useLayout()
+  const { project, terminalOpen } = useStore()
+  const stored = useLayout()
+  const win = useWindowSize()
+  // sizes that fit this window (what was chosen on a big monitor shrinks on a laptop)
+  const L = { ...stored, ...fitLayout(stored, win, terminalOpen) }
 
   // designer shortcuts (ignored while typing)
   useEffect(() => {
     if (!active) return
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement
-      if (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName) || t.closest('.xterm')) return
+      // typing in a text field, the terminal, or a dialog over the editor: not for the editor
+      const typing = t.isContentEditable || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || (t.tagName === 'INPUT' && !['range', 'checkbox', 'radio', 'color', 'button'].includes((t as HTMLInputElement).type))
+      if (typing || t.closest('.xterm') || document.querySelector('.scrim')) return
+      // a focused slider would otherwise eat Space/←/→
+      if (t.tagName === 'INPUT') (t as HTMLInputElement).blur()
       const ed = useEditor.getState()
       const fps = project?.brief.output.fps ?? 30
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
@@ -46,8 +53,20 @@ export function EditorTab({ active }: { active: boolean }) {
       else if (e.key === 'm' || e.key === 'M') useEditor.setState({ tool: 'box' })
       else if (e.key === 'p' || e.key === 'P') useEditor.setState({ tool: 'pin' })
     }
+    // clicking the canvas or timeline while a text field still has focus: commit the text first
+    // (the field's editor goes away with the new selection before its blur would run)
+    const onDown = (e: PointerEvent) => {
+      const a = document.activeElement as HTMLElement | null
+      const t = e.target as HTMLElement
+      if (!a || !['INPUT', 'TEXTAREA'].includes(a.tagName) || a.contains(t)) return
+      if (t.closest('[data-preview-host], [data-testid="timeline"]')) a.blur()
+    }
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    document.addEventListener('pointerdown', onDown, true)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      document.removeEventListener('pointerdown', onDown, true)
+    }
   }, [active, project?.brief.output.fps])
 
   return (

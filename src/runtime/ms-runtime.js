@@ -301,7 +301,12 @@
         var o = EL[id]
         if (!o) return
         if (o.animSpeed && o.animSpeed !== 1) tw.timeScale(o.animSpeed)
-        if (o.timing && o.timing.shift && tw.parent === tl) tw.startTime(Math.max(0, tw.startTime() + o.timing.shift))
+        if (o.timing && o.timing.shift) {
+          // tweens inside scene sub-timelines move too (in their parent's time units)
+          var k = 1
+          for (var p = tw.parent; p && p !== tl; p = p.parent) k *= p.timeScale() || 1
+          tw.startTime(Math.max(0, tw.startTime() + o.timing.shift * k))
+        }
       })
     })
   }
@@ -332,6 +337,8 @@
     for (var i = 0; i < nodes.length; i++) {
       var el = nodes[i]
       if (el.hasAttribute('data-composition-id')) continue
+      // the app already wrote the remapped timing into the file (the renderer reads it from there)
+      if (el.hasAttribute('data-ms-authored-start')) continue
       // music keeps real time; sound effects and narration stay locked to the picture they accompany
       var at = el.getAttribute('data-ms-type')
       if (el.tagName === 'AUDIO' && at !== 'sfx' && at !== 'voice') continue
@@ -393,6 +400,8 @@
     applyElementTiming(tl)
     try { collectTiming(tl) } catch (e) { /* timing bars are best effort */ }
     wrapEditables()
+    // registered twice: designer edits must not be applied twice
+    tl.__msWrapped = true
     if (!REMAP.length) return tl
     var rootEl = document.querySelector('[data-composition-id="' + esc(id) + '"]')
     // when section speed changes the length, the app writes the output length into

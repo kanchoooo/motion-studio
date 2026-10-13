@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { Bookmark, Bot, ChevronsRight, MoreHorizontal, RotateCcw, Sparkles, Star, User } from 'lucide-react'
 import type { HistoryEntry } from '@shared/project'
+import { NameModal } from '../../components/NameModal'
 import { Menu, relativeTime } from '../../components/ui'
 import { studio, useStore } from '../../store'
 
@@ -44,25 +45,33 @@ export function HistoryPanel({ onClose }: { onClose(): void }) {
   const restorePart = async (e: HistoryEntry, scope: 'composition' | 'overrides' | 'brief') => {
     const what = { composition: '영상', overrides: '직접 수정값', brief: '브리프' }[scope]
     if (!confirm(`"${e.versionName ?? e.summary}" 시점의 ${what}만 되돌릴까요?\n나머지는 지금 상태 그대로 두고, 지금 상태도 이력에 남아요.`)) return
-    setProject(await studio.history.restorePartial(pid, e.id, scope))
-    toast(`${what}만 되돌렸어요`, 'success')
-    void load()
+    try {
+      setProject(await studio.history.restorePartial(pid, e.id, scope))
+      toast(`${what}만 되돌렸어요`, 'success')
+      void load()
+    } catch (err) {
+      toast(err instanceof Error ? err.message : String(err), 'error')
+    }
   }
-  const saveVersion = async () => {
-    const name = prompt('이 상태를 어떤 이름으로 저장할까요?', '광고주 1차 시안')
-    if (!name?.trim()) return
-    await studio.history.saveVersion(pid, name.trim())
-    toast(`"${name.trim()}"(으)로 저장했어요`, 'success')
-    void load()
+  const [naming, setNaming] = useState(false)
+  const saveVersion = async (name: string) => {
+    try {
+      await studio.history.saveVersion(pid, name)
+      toast(`"${name}"(으)로 저장했어요`, 'success')
+      void load()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), 'error')
+    }
   }
 
   const shown = entries.filter((e) => filter === 'all' || (filter === 'starred' ? e.starred : !!e.versionName))
 
   return (
     <div className="col" style={{ height: '100%', gap: 0, background: 'var(--surface)', borderLeft: '1px solid var(--border)', minWidth: 0 }} data-testid="history-panel">
+      {naming && <NameModal title="지금 상태 저장" label="나중에 이 이름으로 찾아서 되돌릴 수 있어요." initial="광고주 1차 시안" onSubmit={saveVersion} onClose={() => setNaming(false)} />}
       <div className="row" style={{ height: 40, padding: '0 6px 0 14px', borderBottom: '1px solid var(--border)', flex: 'none' }}>
         <span style={{ fontWeight: 650 }} className="grow">작업 이력</span>
-        <button className="btn ghost sm" onClick={saveVersion} title="지금 상태에 이름을 붙여 저장해요">
+        <button className="btn ghost sm" onClick={() => setNaming(true)} title="지금 상태에 이름을 붙여 저장해요">
           <Bookmark size={13} />
           저장
         </button>

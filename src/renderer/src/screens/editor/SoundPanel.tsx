@@ -10,13 +10,38 @@ import { SoundFinder } from './SoundFinder'
 
 const fileName = (p: string) => p.split('/').pop() ?? p
 
-/** plays a composition-relative file once (single shared element) */
+/** plays a composition-relative file (single shared element); the same file again stops it */
 let preview: HTMLAudioElement | null = null
+let previewRel: string | null = null
+const listeners = new Set<(rel: string | null) => void>()
+const announce = () => listeners.forEach((l) => l(previewRel))
+export function stopPreview() {
+  preview?.pause()
+  preview = null
+  previewRel = null
+  announce()
+}
 export async function playFile(projectId: string, rel: string) {
+  if (previewRel === rel) return stopPreview()
   const url = await studio.projects.fileUrl(projectId, `composition/${rel}`)
   preview?.pause()
   preview = new Audio(url)
-  void preview.play().catch(() => null)
+  previewRel = rel
+  preview.onended = () => stopPreview()
+  void preview.play().catch(() => stopPreview())
+  announce()
+}
+/** which file is playing (for ▶/■ buttons); playback stops when the panel goes away */
+function usePreview() {
+  const [rel, setRel] = useState<string | null>(previewRel)
+  useEffect(() => {
+    listeners.add(setRel)
+    return () => {
+      listeners.delete(setRel)
+      if (!listeners.size) stopPreview()
+    }
+  }, [])
+  return rel
 }
 
 export function SoundPanel() {
@@ -40,7 +65,13 @@ export function SoundPanel() {
   const addBgm = async () => {
     const files = await studio.app.pickFiles('assets')
     if (!files.length) return
-    const added = (await studio.projects.importAssets(pid, files)).filter((a) => a.meta.mime.startsWith('audio/'))
+    let added
+    try {
+      added = (await studio.projects.importAssets(pid, files)).filter((a) => a.meta.mime.startsWith('audio/'))
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), 'error')
+      return
+    }
     if (!added.length) {
       toast('소리 파일(MP3·WAV·M4A 등)을 골라 주세요.', 'error')
       return
@@ -183,6 +214,7 @@ function ClipEditor({ clip, lib, count }: { clip: AudioClipInfo; lib: SfxInfo[];
   const { project } = useStore()
   const pid = project!.meta.id
   const { value: ov, patchAudio, setSfxGroup } = useOverrides()
+  const playing = usePreview()
   const e = ov?.audio[clip.id] ?? {}
   const [all, setAll] = useState(false)
   const [menu, setMenu] = useState(false)
@@ -204,9 +236,9 @@ function ClipEditor({ clip, lib, count }: { clip: AudioClipInfo; lib: SfxInfo[];
         </div>
       </div>
       <div className="row">
-        <button className="btn sm" onClick={() => playFile(pid, clip.src)}>
+        <button className="btn sm" onClick={() => void playFile(pid, clip.src)} title={playing === clip.src ? '멈추기' : '들어보기'}>
           <Volume2 size={13} />
-          들어보기
+          {playing === clip.src ? '멈추기' : '들어보기'}
         </button>
         <div style={{ position: 'relative' }}>
           <button className="btn sm primary" onClick={() => setMenu(!menu)}>
@@ -288,17 +320,27 @@ function BgmEditor({ track }: { track: BgmTrack }) {
   const d = project!.brief.output.duration
   const { value: ov, setBgm } = useOverrides()
   const update = (patch: Partial<BgmTrack>, what: string) => setBgm(ov!.bgm.map((t) => (t.id === track.id ? { ...t, ...patch } : t)), `${track.label}: ${what}`)
+  const playing = usePreview()
+  // the name is saved when typing ends (each save reloads the preview)
+  const [label, setLabel] = useState(track.label)
+  useEffect(() => setLabel(track.label), [track.id]) // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div className="col" style={{ gap: 12 }}>
       <button className="btn ghost sm" style={{ alignSelf: 'flex-start' }} onClick={() => useEditor.setState({ selectedAudio: null })}>
         ← 사운드 목록
       </button>
-      <input className="input" value={track.label} onChange={(e) => update({ label: e.target.value }, '이름')} />
+      <input
+        className="input"
+        value={label}
+        onChange={(e) => setLabel(e.target.value)}
+        onBlur={() => label.trim() && label !== track.label && update({ label: label.trim() }, '이름')}
+        onKeyDown={(e) => e.key === 'Enter' && !e.nativeEvent.isComposing && (e.target as HTMLInputElement).blur()}
+      />
       <div className="tiny faint">{fileName(track.src)}</div>
       <div className="row">
-        <button className="btn sm" onClick={() => playFile(pid, track.src)}>
+        <button className="btn sm" onClick={() => void playFile(pid, track.src)} title={playing === track.src ? '멈추기' : '들어보기'}>
           <Volume2 size={13} />
-          들어보기
+          {playing === track.src ? '멈추기' : '들어보기'}
         </button>
         <button
           className="btn sm"

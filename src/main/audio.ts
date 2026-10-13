@@ -88,20 +88,81 @@ function bgmTag(t: BgmTrack): string {
  * authored length in data-ms-authored-duration (idempotent, reversible).
  */
 export function applyLength(html: string, o: Overrides): string {
-  return html.replace(/<[a-z]+\b[^>]*data-composition-id="[^"]*"[^>]*>/i, (tag) => {
+  const authored = authoredLength(html)
+  const remap = o.timeRemap ?? []
+  const out = html.replace(/<[a-z]+\b[^>]*data-composition-id="[^"]*"[^>]*>/i, (tag) => {
     const authoredAttr = attr(tag, 'data-ms-authored-duration')
-    const authored = parseFloat(authoredAttr ?? attr(tag, 'data-duration') ?? '0')
     if (!authored) return tag
-    const remap = o.timeRemap ?? []
-    if (!o.keepTotalDuration && remap.length) {
-      const len = makeTimeMap(authored, remap).length
+    // "총 길이 유지" keeps the length unless slowed sections make it longer (the end must not be cut)
+    const len = remap.length ? makeTimeMap(authored, remap).length : authored
+    const final = o.keepTotalDuration ? Math.max(authored, len) : len
+    if (Math.abs(final - authored) > 1e-4) {
       let t = setRootAttr(tag, 'data-ms-authored-duration', String(+authored.toFixed(4)))
-      t = setRootAttr(t, 'data-duration', String(+len.toFixed(4)))
+      t = setRootAttr(t, 'data-duration', String(+final.toFixed(4)))
       return t
     }
     if (authoredAttr == null) return tag
     return setRootAttr(setRootAttr(tag, 'data-duration', String(+authored.toFixed(4))), 'data-ms-authored-duration', null)
   })
+  return applyMediaTiming(out, o, authored)
+}
+
+function authoredLength(html: string): number {
+  const tag = html.match(/<[a-z]+\b[^>]*data-composition-id="[^"]*"[^>]*>/i)?.[0] ?? ''
+  return parseFloat(attr(tag, 'data-ms-authored-duration') ?? attr(tag, 'data-duration') ?? '0') || 0
+}
+
+/**
+ * Section speed for media the renderer reads from the static HTML: sound effects
+ * and narration move with the picture, video clips inside one sped-up section
+ * play faster. Authored values are kept in data-ms-authored-* (idempotent;
+ * ms-runtime.js maps from them too, so the preview matches the export).
+ */
+export function applyMediaTiming(html: string, o: Overrides, authoredD = authoredLength(html)): string {
+  const remap = (o.timeRemap ?? []).filter((s) => s.to > s.from && s.speed > 0)
+  const M = remap.length && authoredD ? makeTimeMap(authoredD, remap) : null
+  const finalLen = M ? (o.keepTotalDuration ? Math.max(authoredD, M.length) : M.length) : authoredD
+  return html.replace(/<(audio|video)\b[^>]*>/gi, (tag, kind: string) => {
+    if (attr(tag, 'data-start') == null) return tag
+    if (kind.toLowerCase() === 'audio' && !['sfx', 'voice'].includes(attr(tag, 'data-ms-type') ?? '')) return tag
+    const s0 = parseFloat(attr(tag, 'data-ms-authored-start') ?? attr(tag, 'data-start') ?? '0') || 0
+    const dRaw = attr(tag, 'data-ms-authored-dur') ?? attr(tag, 'data-duration')
+    const d0 = dRaw == null ? NaN : parseFloat(dRaw)
+    // authored playback rate ("none" = the attribute was not there)
+    const r0 = attr(tag, 'data-ms-authored-rate') ?? attr(tag, 'data-playback-rate') ?? 'none'
+    let t = tag
+    if (!M) {
+      // no section speed: back to what Claude wrote
+      if (attr(tag, 'data-ms-authored-start') == null) return tag
+      t = setAttrAny(t, 'data-start', String(s0))
+      if (Number.isFinite(d0)) t = setAttrAny(t, 'data-duration', String(d0))
+      if (attr(tag, 'data-ms-authored-rate') != null) t = setAttrAny(t, 'data-playback-rate', r0 === 'none' ? null : r0)
+      for (const n of ['data-ms-authored-start', 'data-ms-authored-dur', 'data-ms-authored-rate']) t = setAttrAny(t, n, null)
+      return t
+    }
+    const ns = M.toOutput(s0)
+    t = setAttrAny(t, 'data-ms-authored-start', String(s0))
+    t = setAttrAny(t, 'data-start', ns.toFixed(4))
+    if (Number.isFinite(d0)) {
+      const end = s0 + d0 >= authoredD - 1e-3 ? finalLen : M.toOutput(s0 + d0)
+      t = setAttrAny(t, 'data-ms-authored-dur', String(d0))
+      t = setAttrAny(t, 'data-duration', Math.max(0, end - ns).toFixed(4))
+      if (kind.toLowerCase() === 'video') {
+        const seg = M.segs.find((g) => s0 >= g.a - 1e-6 && s0 + d0 <= g.b + 1e-6)
+        t = setAttrAny(t, 'data-ms-authored-rate', r0)
+        const rate = (r0 === 'none' ? 1 : parseFloat(r0) || 1) * (seg ? seg.k : 1)
+        t = setAttrAny(t, 'data-playback-rate', Math.abs(rate - 1) < 1e-6 && r0 === 'none' ? null : String(+rate.toFixed(4)))
+      }
+    }
+    return t
+  })
+}
+
+/** sets / removes an attribute on any opening tag */
+function setAttrAny(tag: string, name: string, value: string | null): string {
+  const re = new RegExp(`\\s${name}="[^"]*"`)
+  if (value == null) return tag.replace(re, '')
+  return re.test(tag) ? tag.replace(re, ` ${name}="${esc(value)}"`) : tag.replace(/\s*\/?>$/, (m) => ` ${name}="${esc(value)}"${m.trim()}`)
 }
 
 function setRootAttr(tag: string, name: string, value: string | null): string {

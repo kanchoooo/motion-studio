@@ -37,7 +37,9 @@ export function BriefTab() {
     clearTimeout(timer.current)
     timer.current = setTimeout(async () => {
       try {
-        setProject(await studio.projects.saveBrief(pid, next))
+        const saved = await studio.projects.saveBrief(pid, next)
+        // the designer may have switched projects meanwhile: never put this one back
+        if (useStore.getState().project?.meta.id === pid) setProject(saved)
         setSaving('saved')
       } catch (e) {
         toast(e instanceof Error ? e.message : String(e), 'error')

@@ -41,7 +41,12 @@ export function updateReference(dir: string, id: string, p: Pick<Partial<Referen
   if (item && p.ranges && item.kind !== 'image' && item.file) void analyze(dir, id, notify)
 }
 
+/** YouTube downloads in progress, by reference id (stopped when the reference is removed) */
+const downloads = new Map<string, ReturnType<typeof spawn>>()
+
 export function removeReference(dir: string, id: string, notify: Notify) {
+  downloads.get(id)?.kill()
+  downloads.delete(id)
   save(dir, listReferences(dir).filter((x) => x.id !== id))
   rmSync(join(dir, 'references', id), { recursive: true, force: true })
   notify()
@@ -97,9 +102,17 @@ export function addYoutube(dir: string, url: string, notify: Notify): ReferenceI
     ],
     { windowsHide: true },
   )
+  downloads.set(id, child)
   let err = ''
   child.stderr.on('data', (d) => (err += d))
+  child.on('error', () => {
+    downloads.delete(id)
+    patch(dir, id, { status: 'error', error: '영상을 내려받지 못했어요. 주소와 인터넷 연결을 확인해 주세요.' }, notify)
+  })
   child.on('close', (code) => {
+    downloads.delete(id)
+    // removed while downloading: nothing left to update
+    if (!existsSync(folder) || !listReferences(dir).some((x) => x.id === id)) return
     const file = readdirSync(folder).find((f) => f.startsWith('source.') && !f.endsWith('.json') && !f.endsWith('.part'))
     if (code !== 0 || !file) {
       patch(dir, id, { status: 'error', error: /duration/.test(err) ? '10분이 넘는 영상은 레퍼런스로 쓸 수 없어요.' : '영상을 내려받지 못했어요. 주소와 인터넷 연결을 확인해 주세요.' }, notify)

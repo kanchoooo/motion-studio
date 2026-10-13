@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Bookmark, Columns2, FolderOpen, HardDrive, MoreHorizontal, Play, RotateCcw, Star, Trash2 } from 'lucide-react'
 import type { RenderRecord } from '@shared/project'
+import { NameModal } from '../../components/NameModal'
 import { formatBytes, Menu, Modal, relativeTime } from '../../components/ui'
 import { CompareModal } from './CompareModal'
 import { StorageModal } from './StorageModal'
@@ -17,6 +18,7 @@ export function ResultsTab() {
   const [comparing, setComparing] = useState(false)
   const [picked, setPicked] = useState<string[]>([])
   const [storage, setStorage] = useState(false)
+  const [naming, setNaming] = useState(false)
   const [usage, setUsage] = useState<number | null>(null)
 
   const load = async () => {
@@ -70,15 +72,7 @@ export function ResultsTab() {
               {comparing ? `비교할 결과물 ${picked.length}/2` : '나란히 비교'}
             </button>
           )}
-          <button className="btn" disabled={saving} onClick={async () => {
-            const name = prompt('이 상태를 어떤 이름으로 저장할까요?', '광고주 1차 시안')
-            if (!name?.trim()) return
-            setSaving(true)
-            await studio.history.saveVersion(pid, name.trim())
-            setSaving(false)
-            toast(`"${name.trim()}"(으)로 저장했어요`, 'success')
-            void load()
-          }}>
+          <button className="btn" disabled={saving} onClick={() => setNaming(true)}>
             <Bookmark size={14} />
             지금 상태 저장
           </button>
@@ -111,7 +105,7 @@ export function ResultsTab() {
                   <button className="icon-btn" title="별표" onClick={() => toggleStar(r)}>
                     <Star size={15} fill={r.starred ? 'var(--warning)' : 'none'} color={r.starred ? 'var(--warning)' : 'currentColor'} />
                   </button>
-                  <button className="icon-btn" onClick={() => setMenu(menu === r.id ? null : r.id)}>
+                  <button className="icon-btn" title="더보기" onClick={() => setMenu(menu === r.id ? null : r.id)}>
                     <MoreHorizontal size={15} />
                   </button>
                 </div>
@@ -153,6 +147,26 @@ export function ResultsTab() {
             setComparing(false)
           }}
           onRestore={(r) => restore(r.historyId, r.versionName ?? r.fileName)}
+        />
+      )}
+      {naming && (
+        <NameModal
+          title="지금 상태 저장"
+          label="나중에 이 이름으로 찾아서 되돌릴 수 있어요."
+          initial="광고주 1차 시안"
+          onClose={() => setNaming(false)}
+          onSubmit={async (name) => {
+            setSaving(true)
+            try {
+              await studio.history.saveVersion(pid, name)
+              toast(`"${name}"(으)로 저장했어요`, 'success')
+              void load()
+            } catch (e) {
+              toast(e instanceof Error ? e.message : String(e), 'error')
+            } finally {
+              setSaving(false)
+            }
+          }}
         />
       )}
       {storage && (

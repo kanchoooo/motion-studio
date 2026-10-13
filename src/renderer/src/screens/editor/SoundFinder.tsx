@@ -2,7 +2,7 @@
 // narration voices (TTS) and audio the AI tools already made for this project.
 import { useEffect, useRef, useState } from 'react'
 import { ExternalLink, Loader2, Mic, Music, Pause, Play, Search, Sparkles } from 'lucide-react'
-import type { AiVoiceInfo, AudioCandidate } from '@shared/ai'
+import { AI_PROVIDERS, type AiVoiceInfo, type AudioCandidate } from '@shared/ai'
 import type { BgmTrack } from '@shared/overrides'
 import { ConnectionsModal } from '../../components/ai/ConnectionsModal'
 import { VoiceBrowser } from '../../components/ai/VoiceBrowser'
@@ -204,8 +204,12 @@ function Narration() {
         onClick={async () => {
           const v = voice!
           const ref = v.provider === 'magnific' ? `매그니픽 audio_tts voiceId ${v.id}, source ${v.source ?? 'catalog'}` : `힉스필드 generate_audio voice_type ${v.voiceType ?? 'preset'}, voice_id ${v.id}`
-          await studio.agent.send({ projectId: project!.meta.id, text: `"${v.name}" 목소리(${ref})로 내레이션을 만들어 영상에 넣어 주세요. 대본은 브리프와 장면에 맞춰 써 주세요.` })
-          toast('Claude에게 내레이션을 부탁했어요', 'success')
+          try {
+            await studio.agent.send({ projectId: project!.meta.id, text: `"${v.name}" 목소리(${ref})로 내레이션을 만들어 영상에 넣어 주세요. 대본은 브리프와 장면에 맞춰 써 주세요.` })
+            toast('Claude에게 내레이션을 부탁했어요', 'success')
+          } catch (e) {
+            toast(errText(e), 'error')
+          }
         }}
       >
         <Mic size={13} />
@@ -239,7 +243,7 @@ function MadeAudio() {
           {it.provider === 'artlist' ? <Music size={12} /> : <Sparkles size={12} />}
           <div className="col grow" style={{ gap: 0, minWidth: 0 }}>
             <span className="small ellipsis">{it.label ?? it.file.split('/').pop()}</span>
-            <span className="tiny faint">{it.provider}</span>
+            <span className="tiny faint">{(AI_PROVIDERS as Record<string, { name: string }>)[it.provider]?.name ?? (it.provider === 'pick' ? '아트리스트' : it.provider)}</span>
           </div>
           <button
             className="btn ghost sm"

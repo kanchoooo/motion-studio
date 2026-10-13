@@ -46,7 +46,9 @@ const ATTENTION: { id: NonNullable<SessionState['attention']>; re: RegExp }[] = 
   { id: 'login', re: /Selectloginmethod|Pleaserun\/login|InvalidAPIkey|OAuthtokenhasexpired|notloggedin/i },
   { id: 'usage', re: /You'vehityour|You'vereachedyour|You'reoutofusage|usagelimitreached/i },
 ]
-const BANNER = /ClaudeCodev\d/
+// the welcome banner, or the input box footer (always drawn in our dontAsk sessions): after --resume
+// of a long conversation the banner scrolls far up, the footer is redrawn at the bottom
+const BANNER = /ClaudeCodev\d|don'taskon|shift\+tabtocycle/
 const toPlain = (d: string) => d.replace(/\x1b\[(\d*)C/g, (_m, n) => ' '.repeat(Math.min(200, Number(n) || 1))).replace(ANSI, '')
 
 interface Live {
@@ -285,8 +287,10 @@ export class SessionManager {
       '--model', meta.agentModel || DEFAULT_MODEL,
       '--effort', meta.agentEffort || DEFAULT_EFFORT,
     ]
-    const cols = existing?.cols ?? 110
-    const rows = existing?.rows ?? 34
+    const kept = this.sizes.get(projectId)
+    this.sizes.delete(projectId)
+    const cols = existing?.cols ?? kept?.cols ?? 110
+    const rows = existing?.rows ?? kept?.rows ?? 34
     const term = pty.spawn(claudeBinary(), args, { name: 'xterm-256color', cols, rows, cwd: dir, env: claudeEnv(), useConpty: true })
 
     const l: Live = {
@@ -307,13 +311,16 @@ export class SessionManager {
       item: (item) => this.emit({ type: 'item', projectId, item }),
       update: (item) => this.emit({ type: 'item-update', projectId, item }),
       busy: (busy) => this.setState(l, { status: busy ? 'busy' : 'ready' }),
-      turnEnd: (lastText) => void this.onTurnEnd(l, lastText),
+      turnEnd: (lastText, how) => void this.onTurnEnd(l, lastText, how),
       remoteUrl: (url) => l.state.remoteUrl !== url && this.setState(l, { remoteUrl: url }),
     })
     this.live.set(projectId, l)
     this.setState(l, l.state)
 
+    // after a restart the killed process may still print or exit: only the current one counts
+    const current = () => this.live.get(projectId) === l
     term.onData((d) => {
+      if (!current()) return
       l.buffer = (l.buffer + d).slice(-REPLAY)
       l.plain = (l.plain + toPlain(d)).slice(-6000)
       this.emit({ type: 'pty-data', projectId, data: d })
@@ -321,9 +328,19 @@ export class SessionManager {
     })
     term.onExit(({ exitCode }) => {
       l.tail.stop()
-      const failedResume = resume && /No conversation found|not found/i.test(l.plain)
+      if (!current()) return
+      this.pendingRestart.delete(projectId) // a fresh start picks the new model/effort anyway
+      // a resume that Claude Code could not find (only while it was still starting)
+      const failedResume = resume && l.state.status === 'starting' && /No conversation found/i.test(l.plain)
       if (failedResume) projects.touch(projectId, { agentSessionId: undefined })
       this.setState(l, { status: 'exited', exitCode, attention: failedResume ? null : l.state.attention })
+      // a variation re-layout that was running here will not finish
+      if (this.adapting === projectId) {
+        this.adapting = null
+        setFamilyStatus(projectId, 'error')
+        this.emit({ type: 'family-changed', projectId })
+        setTimeout(() => void this.pump(), 500)
+      }
     })
     l.tail.start()
     return l.state
@@ -368,12 +385,16 @@ export class SessionManager {
     if (this.adapting || !this.adaptQueue.length) return
     const next = this.adaptQueue.shift()!
     this.adapting = next.projectId
-    setFamilyStatus(next.projectId, 'working')
-    this.emit({ type: 'family-changed', projectId: next.projectId })
     try {
+      setFamilyStatus(next.projectId, 'working')
+      this.emit({ type: 'family-changed', projectId: next.projectId })
       await this.send({ projectId: next.projectId, text: next.text })
     } catch (e) {
-      setFamilyStatus(next.projectId, 'error')
+      try {
+        setFamilyStatus(next.projectId, 'error')
+      } catch {
+        /* the variation was deleted */
+      }
       this.emit({ type: 'family-changed', projectId: next.projectId })
       const l = this.live.get(next.projectId)
       if (l) this.addApp(l, { id: newId(), at: nowIso(), role: 'error', text: '베리에이션을 시작하지 못했어요.', detail: e instanceof Error ? e.message : String(e) })
@@ -399,14 +420,37 @@ export class SessionManager {
     return this.restart(projectId)
   }
 
-  private async onTurnEnd(l: Live, lastText: string) {
+  private async onTurnEnd(l: Live, lastText: string, how: 'done' | 'stopped' | 'failed' = 'done') {
     if (this.adapting === l.projectId) {
-      setFamilyStatus(l.projectId, 'done')
-      this.emit({ type: 'family-changed', projectId: l.projectId })
       this.adapting = null
+      try {
+        // a stopped or failed re-layout is not a finished variation
+        setFamilyStatus(l.projectId, how === 'done' ? 'done' : 'error')
+      } catch {
+        /* folder gone */
+      }
+      this.emit({ type: 'family-changed', projectId: l.projectId })
       setTimeout(() => void this.pump(), 500)
     }
-    if (this.pendingRestart.delete(l.projectId)) setTimeout(() => this.restart(l.projectId), 300)
+    if (this.pendingRestart.has(l.projectId)) {
+      // a message queued during the turn starts right away: restart only once the session is really idle
+      setTimeout(() => {
+        const cur = this.live.get(l.projectId)
+        if (cur !== l || !this.pendingRestart.has(l.projectId)) return
+        if (l.state.status === 'busy') return // the next turn's end tries again
+        this.pendingRestart.delete(l.projectId)
+        this.restart(l.projectId)
+      }, 1500)
+    }
+    try {
+      await this.afterTurn(l, lastText)
+    } catch {
+      /* the project folder was moved or deleted: nothing to record */
+    }
+  }
+
+  private async afterTurn(l: Live, lastText: string) {
+    projects.pathOf(l.projectId) // throws when the folder is gone (never recreate it)
     projects.applyAudioEdits(l.dir)
     const m = this.compMtime(l.dir)
     projects.refreshFontCss(l.dir)
@@ -483,7 +527,13 @@ export class SessionManager {
     if (l.state.attention === 'trust') throw new Error('먼저 터미널에서 이 프로젝트 폴더를 신뢰한다고 선택해 주세요.')
     if (l.state.attention === 'login') throw new Error('Claude 로그인이 필요해요. 환경 점검에서 로그인해 주세요.')
     // wait for the input box after a cold start
-    for (let i = 0; i < 60 && l.state.status === 'starting'; i++) await new Promise((r) => setTimeout(r, 250))
+    for (let i = 0; i < 60 && l.state.status === 'starting' && !l.state.attention; i++) await new Promise((r) => setTimeout(r, 250))
+    // never type into a prompt (folder trust, login) or a session that is not up
+    const now = this.state(projectId)
+    if (now.attention === 'trust') throw new Error('먼저 터미널에서 이 프로젝트 폴더를 신뢰한다고 선택해 주세요.')
+    if (now.attention === 'login') throw new Error('Claude 로그인이 필요해요. 환경 점검에서 로그인해 주세요.')
+    if (now.status === 'starting') throw new Error('Claude가 아직 준비 중이에요. 잠시 뒤 다시 보내 주세요.')
+    if (now.status === 'exited') throw new Error('Claude가 종료됐어요. 터미널의 "다시 시작"을 누른 뒤 보내 주세요.')
 
     const oneLine = input.text.replace(/\s*\n\s*/g, ' ').replace(/[\x00-\x1f\x7f]/g, '').trim()
     const rich = !!(input.marks?.length || input.annotatedFrame || input.attachments?.length) || input.text.includes('\n') || oneLine.length > 300
@@ -514,22 +564,39 @@ export class SessionManager {
       line = `[모션스튜디오 메시지] feedback/msg-${stamp}.md 파일을 Read 도구로 읽고 그 내용대로 진행해 주세요.`
     }
     if (!line) return
-    l.term.write(line)
+    // a line starting with / ! # would be a Claude Code command, not a message
+    if (/^[/!#]/.test(line)) line = ` ${line}`
+    // the session may have been restarted while we waited (model change): type into the current one
+    const cur = this.live.get(projectId)
+    if (!cur || cur.state.status === 'exited') throw new Error('Claude가 다시 연결되는 중이에요. 잠시 뒤 다시 보내 주세요.')
+    cur.term.write(line)
     await new Promise((r) => setTimeout(r, ENTER_DELAY))
-    l.term.write('\r')
+    cur.term.write('\r')
   }
 
   async approveStoryboard(projectId: string, itemId: string) {
+    // approved only once Claude actually got the message
+    await this.send({ projectId, text: '콘티를 승인했어요. 이대로 영상을 만들어 주세요.' })
     const l = this.live.get(projectId)
     const item = l?.appItems.find((x) => x.id === itemId)
     if (l && item?.role === 'storyboard') this.updateApp(l, { ...item, status: 'approved' })
-    await this.send({ projectId, text: '콘티를 승인했어요. 이대로 영상을 만들어 주세요.' })
+  }
+
+  /** a variation still waiting or being re-laid out in this run */
+  isAdapting(projectId: string): boolean {
+    return this.adapting === projectId || this.adaptQueue.some((q) => q.projectId === projectId)
   }
 
   restart(projectId: string): SessionState {
+    // keep the terminal size: kill() forgets the session, start() would fall back to 110×34
+    const size = this.live.get(projectId)
     this.kill(projectId)
+    if (size) this.sizes.set(projectId, { cols: size.cols, rows: size.rows })
     return this.start(projectId)
   }
+
+  /** terminal size to reuse across a restart */
+  private sizes = new Map<string, { cols: number; rows: number }>()
 
   kill(projectId: string) {
     const l = this.live.get(projectId)
