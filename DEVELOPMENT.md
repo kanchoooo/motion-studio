@@ -180,6 +180,9 @@ poc/               Phase 0 기술 검증 기록 (RESULTS.md)
   - 통과하면 앱 데이터 폴더에 `access.json`이 생기고, 다음부터는 묻지 않아요.
 - 저장소에는 **암호 원문이 없고**, 솔트를 넣은 scrypt 해시만 있어요. 소스가 공개라 직접 빌드하면 우회할 수 있으니, 설치 파일을 가진 사람을 거르는 정도의 장치예요.
 - 암호를 바꾸려면 `node scripts/set-access-password.mjs`를 실행하고 다시 빌드하면 돼요.
+- 입력 칸은 **일반 텍스트 칸**이에요. 글자는 투명하게 하고 점(●)을 위에 겹쳐 보여요.
+  - `type="password"`나 `-webkit-text-security`를 쓰면 Chromium이 비밀번호 칸으로 보고 맥에서 영문 입력만 허용해요. 그러면 한글 암호를 칠 수 없어요(0.2.0에서 겪음).
+  - 회귀 테스트: `node tests/e2e/ime-compose.mjs`
 - 테스트는 샌드박스 프로필에 `access.json`을 미리 만들어 통과해요(`tests/e2e/access.mjs`).
   - 실제 암호로 확인하려면 환경변수로 넘겨요: `MS_ACCESS_PASSWORD=… node tests/e2e/smoke.mjs`, `MS_ACCESS_PASSWORD=… npx vitest run`.
 

@@ -708,3 +708,18 @@
   pointer-events: none;
   z-index: 2;
 }
+
+/* caret drawn after masked dots (the real caret sits in transparent text) */
+.fake-caret {
+  display: inline-block;
+  width: 1px;
+  height: 18px;
+  margin-left: 2px;
+  background: var(--text);
+  animation: caret-blink 1s steps(1) infinite;
+}
+@keyframes caret-blink {
+  50% {
+    opacity: 0;
+  }
+}

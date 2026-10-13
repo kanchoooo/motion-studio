@@ -8,6 +8,7 @@ export function LockScreen() {
   const [checking, setChecking] = useState(true)
   const [value, setValue] = useState('')
   const [show, setShow] = useState(false)
+  const [focused, setFocused] = useState(false)
   const [busy, setBusy] = useState(false)
   const [wrong, setWrong] = useState(false)
   const input = useRef<HTMLInputElement>(null)
@@ -47,22 +48,44 @@ export function LockScreen() {
           지인에게만 공유하는 앱이에요. 전달받은 암호를 입력해 주세요. 이 컴퓨터에서는 한 번만 입력하면 돼요.
         </div>
         <div className="row input" style={{ height: 40, padding: '0 6px 0 12px', gap: 6, borderColor: wrong ? 'var(--danger)' : undefined }}>
-          {/* a text field (not type=password) so Korean input methods work; the dots come from CSS */}
-          <input
-            ref={input}
-            value={value}
-            onChange={(e) => {
-              setValue(e.target.value)
-              setWrong(false)
+          {/*
+            A plain text field: type=password and -webkit-text-security both make
+            Chromium treat the field as a password and turn the Korean input method
+            off on macOS. The typed text is drawn transparent and dots are laid over it.
+          */}
+          <div style={{ position: 'relative', flex: 1, alignSelf: 'stretch' }}>
+            <input
+              ref={input}
+              value={value}
+              onChange={(e) => {
+                setValue(e.target.value)
+                setWrong(false)
+              }}
+              onFocus={() => setFocused(true)}
+              onBlur={() => setFocused(false)}
+              onKeyDown={(e) => e.key === 'Enter' && !e.nativeEvent.isComposing && void submit()}
+              placeholder="암호"
+              autoComplete="off"
+              spellCheck={false}
+              aria-label="암호"
+              data-testid="access-input"
+              style={{ position: 'absolute', inset: 0, width: '100%', border: 'none', outline: 'none', background: 'transparent', fontSize: 15, color: show ? 'var(--text)' : 'transparent', caretColor: show ? 'var(--text)' : 'transparent' }}
+            />
+            {!show && value && (
+              <div aria-hidden style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', pointerEvents: 'none', overflow: 'hidden', whiteSpace: 'nowrap', fontSize: 11, letterSpacing: 3, color: 'var(--text)' }}>
+                {'●'.repeat([...value].length)}
+                {focused && <span className="fake-caret" />}
+              </div>
+            )}
+          </div>
+          <button
+            className="icon-btn"
+            title={show ? '암호 숨기기' : '암호 보기'}
+            onClick={() => {
+              setShow(!show)
+              input.current?.focus()
             }}
-            onKeyDown={(e) => e.key === 'Enter' && !e.nativeEvent.isComposing && void submit()}
-            placeholder="암호"
-            autoComplete="off"
-            spellCheck={false}
-            aria-label="암호"
-            style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', color: 'var(--text)', fontSize: 15, WebkitTextSecurity: show ? 'none' : 'disc' } as React.CSSProperties}
-          />
-          <button className="icon-btn" title={show ? '암호 숨기기' : '암호 보기'} onClick={() => setShow(!show)}>
+          >
             {show ? <EyeOff size={15} /> : <Eye size={15} />}
           </button>
         </div>
