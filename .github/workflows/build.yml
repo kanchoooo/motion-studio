@@ -1,10 +1,15 @@
 # Builds unsigned installers (no signing assets on CI). Trigger manually or on a version tag.
-# Signed + notarized Mac releases are built locally with `npm run dist:mac` (DEVELOPMENT.md §6).
+# Signed + notarized Mac releases are built and uploaded from a Mac with
+# `node scripts/build-mac.mjs --release` (DEVELOPMENT.md §6); creating that release
+# pushes the v<version> tag, which runs this and adds the Windows installer to it.
 name: build
 on:
   workflow_dispatch:
   push:
     tags: ['v*']
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -25,6 +30,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      # some unit tests run FFmpeg: this machine's copy
+      - run: node scripts/fetch-binaries.mjs
       - run: npm test
       - run: npm run build
       - run: node scripts/prepare-target.mjs --target ${{ matrix.target }}
@@ -37,3 +44,15 @@ jobs:
             release/*.dmg
             release/*.exe
           if-no-files-found: error
+      # Windows installer + auto-update info (latest.yml) onto the release of this version
+      - name: Publish Windows installer
+        if: matrix.target == 'win32-x64'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v=$(node -p "require('./package.json').version")
+          files="release/MotionStudio-Setup-$v-x64.exe release/MotionStudio-Setup-$v-x64.exe.blockmap release/latest.yml"
+          ls -l $files
+          if gh release view "v$v" >/dev/null 2>&1; then gh release upload "v$v" $files --clobber
+          else gh release create "v$v" $files --title "모션스튜디오 $v" --notes "모션스튜디오 $v"; fi

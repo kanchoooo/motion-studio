@@ -70,5 +70,6 @@ export function downloadUpdate(onProgress: (percent: number) => void): Promise<v
 
 /** quits, installs and starts the new version */
 export function installUpdate() {
-  setImmediate(() => autoUpdater.quitAndInstall(false, true))
+  // Windows: the installer runs silently (no wizard pages mid-update); both then start the new version
+  setImmediate(() => autoUpdater.quitAndInstall(process.platform === 'win32', true))
 }
