@@ -5,6 +5,7 @@ import type { AgentEvent, ExportOptions, ExportProgress, SendMessageInput } from
 import type { Brief } from '@shared/brief'
 import type { Overrides } from '@shared/overrides'
 import { hasAccess, unlock } from './access'
+import { checkUpdate, downloadUpdate, installUpdate } from './updater'
 import { SessionManager } from './agent/pty-session'
 import { parseAudio, sfxLibrary, useBuiltinSfx } from './audio'
 import { fullCheck, lastElements, type EditorElementInfo } from './checks'
@@ -42,6 +43,9 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
     ipcMain.handle(channel, async (_e, ...args) => fn(...(args as A)))
 
   // ---- app ----
+  handle('app:checkUpdate', () => checkUpdate())
+  handle('app:downloadUpdate', () => downloadUpdate((p) => send('app:update-progress', p)))
+  handle('app:installUpdate', () => installUpdate())
   handle('app:hasAccess', () => hasAccess())
   handle('app:unlock', (password: string) => unlock(String(password ?? '').slice(0, 200)))
   handle('app:info', () => ({ version: app.getVersion(), platform: process.platform, arch: process.arch, projectsDir: projectsDir() }))

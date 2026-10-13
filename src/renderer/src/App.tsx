@@ -6,12 +6,14 @@ import { Project } from './screens/Project'
 import { TerminalPanel } from './screens/editor/TerminalPanel'
 import { LoginModal } from './components/LoginModal'
 import { LockScreen } from './screens/LockScreen'
+import { UpdateScreen } from './screens/UpdateScreen'
 
 export function App() {
   const { screen, toasts, project } = useStore()
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'clip' }}>
       <div style={{ flex: 1, minHeight: 0, overflow: 'clip' }}>
+        {screen === 'update' && <UpdateScreen />}
         {screen === 'lock' && <LockScreen />}
         {screen === 'doctor' && (
           <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>

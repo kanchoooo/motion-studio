@@ -12,6 +12,10 @@ function subscribe<T>(channel: string, cb: (payload: T) => void): () => void {
 
 const api: StudioApi & { internal: { previewBase: string } } = {
   app: {
+    checkUpdate: () => invoke('app:checkUpdate'),
+    downloadUpdate: () => invoke('app:downloadUpdate'),
+    onUpdateProgress: (cb) => subscribe<number>('app:update-progress', cb),
+    installUpdate: () => invoke('app:installUpdate'),
     hasAccess: () => invoke('app:hasAccess'),
     unlock: (password) => invoke('app:unlock', password),
     info: () => invoke('app:info'),

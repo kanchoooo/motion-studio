@@ -1,5 +1,6 @@
 // 모션스튜디오 맥 설치 파일: Developer ID 서명 + 공증 (M칩용·Intel용 각각)
-// 사용법: node scripts/build-mac.mjs [--arch arm64|x64|both]   (npm run dist:mac)
+// 사용법: node scripts/build-mac.mjs [--arch arm64|x64|both] [--release [--notes "변경 내용"]]   (npm run dist:mac)
+//   --release: 빌드가 끝나면 GitHub Releases(kanchoooo/motion-studio)에 v<버전>으로 올린다 → 설치된 앱이 다음 실행 때 자동 업데이트
 //
 // 미니미광장(scripts/build-mac.mjs)과 같은 서명 방식·키체인 안전 규칙을 쓴다.
 // 서명: ~/.minimi-signing/DeveloperID_Application.p12 (+ p12-password)
@@ -16,7 +17,8 @@
 //   - Claude Code 실행 파일은 Anthropic 서명을 그대로 둔다 (electron-builder.config.cjs signIgnore)
 import { execFileSync, execSync, spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeSync } from 'node:fs'
+import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs'
+import yaml from 'js-yaml'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -231,7 +233,10 @@ try {
     await run('node', ['scripts/prepare-target.mjs', '--target', target])
     await run('node', ['scripts/fetch-binaries.mjs', '--target', target])
     await run('npx', ['electron-builder', '--config', 'electron-builder.config.cjs', '--mac', 'dmg', 'zip', `--${arch}`, '--publish', 'never'], { ...env, MS_TARGET_ARCH: arch })
+    // each run writes latest-mac.yml for its own CPU: keep it, they are merged below
+    if (existsSync('release/latest-mac.yml')) copyFileSync('release/latest-mac.yml', `release/latest-mac-${arch}.yml`)
   }
+  mergeUpdateInfo()
   // a quick self-check of what we are about to hand out
   for (const app of ['release/mac/MotionStudio.app', 'release/mac-arm64/MotionStudio.app']) {
     if (!existsSync(app)) continue
@@ -251,4 +256,40 @@ try {
   }
 } finally {
   cleanup()
+}
+
+if (process.argv.includes('--release')) publishRelease()
+
+/** one latest-mac.yml listing both CPUs: the updater picks the arm64 or the x64 zip itself */
+function mergeUpdateInfo() {
+  const parts = ['arm64', 'x64'].map((a) => `release/latest-mac-${a}.yml`).filter((f) => existsSync(f))
+  if (!parts.length) return
+  const docs = parts.map((f) => yaml.load(readFileSync(f, 'utf8')))
+  const files = docs.flatMap((d) => d.files ?? [])
+  const main = docs.find((d) => !String(d.path).includes('arm64')) ?? docs[0]
+  writeFileSync('release/latest-mac.yml', yaml.dump({ ...main, files }, { lineWidth: -1 }))
+  console.log(`▶ 업데이트 정보: release/latest-mac.yml (${files.map((f) => f.url).join(', ')})`)
+}
+
+/** GitHub Releases v<version>: dmg (first install) + zip/blockmap/latest-mac.yml (auto-update) */
+function publishRelease() {
+  const version = JSON.parse(readFileSync('package.json', 'utf8')).version
+  const tag = `v${version}`
+  const ni = process.argv.indexOf('--notes')
+  const notes = ni > 0 ? process.argv[ni + 1] : `모션스튜디오 ${version}`
+  const assets = readdirSync('release')
+    .filter((f) => f.startsWith(`MotionStudio-${version}-`) || f === 'latest-mac.yml')
+    .filter((f) => /\.(dmg|zip|blockmap|yml)$/.test(f))
+    .map((f) => `release/${f}`)
+  if (!assets.some((a) => a.endsWith('latest-mac.yml'))) throw new Error('release/latest-mac.yml이 없어요')
+  const repo = 'kanchoooo/motion-studio'
+  let exists = true
+  try {
+    execFileSync('gh', ['release', 'view', tag, '--repo', repo], { stdio: 'ignore' })
+  } catch {
+    exists = false
+  }
+  if (exists) execFileSync('gh', ['release', 'upload', tag, ...assets, '--repo', repo, '--clobber'], { stdio: 'inherit' })
+  else execFileSync('gh', ['release', 'create', tag, ...assets, '--repo', repo, '--title', `모션스튜디오 ${version}`, '--notes', notes, '--latest'], { stdio: 'inherit' })
+  console.log(`\n▶ 배포 완료: https://github.com/${repo}/releases/tag/${tag}`)
 }

@@ -5,7 +5,7 @@ import type { ProjectState, ProjectSummary } from '@shared/project'
 
 export const studio = window.studio
 
-export type Screen = 'lock' | 'doctor' | 'home' | 'project'
+export type Screen = 'update' | 'lock' | 'doctor' | 'home' | 'project'
 export type ProjectTab = 'brief' | 'editor' | 'results'
 
 interface Toast {
@@ -50,7 +50,7 @@ interface State {
 let toastSeq = 0
 
 export const useStore = create<State>((set, get) => ({
-  screen: 'lock',
+  screen: 'update',
   theme: (localStorage.getItem('ms-theme') as 'dark' | 'light') || 'dark',
   doctor: null,
   projects: [],

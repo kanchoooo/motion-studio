@@ -1,7 +1,7 @@
 {
   "name": "motion-studio",
   "productName": "모션스튜디오",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "description": "디자이너용 대화형 모션 영상 제작 도구",
   "main": "./out/main/index.js",
@@ -31,6 +31,7 @@
     "@anthropic-ai/sdk": "0.133.0",
     "@modelcontextprotocol/sdk": "1.32.1",
     "ag-psd": "31.0.3",
+    "electron-updater": "6.8.9",
     "fontkit": "2.0.4",
     "gsap": "3.14.2",
     "hyperframes": "0.8.151",

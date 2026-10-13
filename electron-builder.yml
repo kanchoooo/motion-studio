@@ -49,6 +49,13 @@ extraResources:
     to: sfx
 
 # ELECTRON_RUN_AS_NODE must stay enabled: HyperFrames runs on the app's own Node
+# auto-update: the app reads releases of this (public) repository
+publish:
+  provider: github
+  owner: kanchoooo
+  repo: motion-studio
+  releaseType: release
+
 electronFuses:
   runAsNode: true
   enableNodeCliInspectArguments: false

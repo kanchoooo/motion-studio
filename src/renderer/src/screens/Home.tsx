@@ -5,6 +5,7 @@ import { OUTPUT_PRESETS, type OutputPresetId } from '@shared/brief'
 import type { ProjectSummary } from '@shared/project'
 import { Menu, Modal, NumberField, relativeTime } from '../components/ui'
 import { studio, useStore } from '../store'
+import { AppVersion } from '../components/AppVersion'
 import { ThemeSwitch } from '../components/ThemeSwitch'
 
 export function Home() {
@@ -30,6 +31,7 @@ export function Home() {
       <div className="row drag" style={{ height: 'var(--titlebar)', padding: '0 16px 0 88px', borderBottom: '1px solid var(--border)', flex: 'none' }}>
         <Clapperboard size={18} color="var(--accent)" />
         <div style={{ fontWeight: 700 }}>모션스튜디오</div>
+        <AppVersion />
         <div className="grow" />
         <div className="row no-drag">
           <ThemeSwitch />

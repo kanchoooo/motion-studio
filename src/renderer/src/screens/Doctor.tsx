@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, XCircle } from 'lucide-react'
 import type { DoctorItem } from '@shared/api'
+import { AppVersion } from '../components/AppVersion'
 import { XTerm } from '../components/XTerm'
 import { Modal } from '../components/ui'
 import { studio, useStore } from '../store'
@@ -124,6 +125,10 @@ export function Doctor({ embedded }: { embedded?: boolean }) {
             다시 확인
           </button>
           <div className="grow" />
+          <AppVersion prefix="버전 " />
+          <button className="btn ghost sm" title="새 버전이 있으면 받아서 설치해요" onClick={() => go('update')}>
+            업데이트 확인
+          </button>
           {!embedded && (
             <button className="btn primary lg" disabled={!doctor?.ready} onClick={() => go('home')}>
               시작하기

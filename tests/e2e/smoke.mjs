@@ -19,7 +19,8 @@ const only = process.argv.find((a) => a.startsWith('--until='))?.split('=')[1]
 // Release builds turn off Node's --inspect (fuse), so they are driven over the
 // Chromium debugging port instead of Playwright's Electron launcher.
 const exec = process.env.MS_APP_EXEC
-const env = { ...process.env, MS_PROJECTS_DIR: join(sandbox, 'projects'), MS_USER_DATA: join(sandbox, 'userdata') }
+// MS_NO_UPDATE: a packaged build under test must not update itself from GitHub
+const env = { ...process.env, MS_PROJECTS_DIR: join(sandbox, 'projects'), MS_USER_DATA: join(sandbox, 'userdata'), MS_NO_UPDATE: '1' }
 const app = exec ? await attachPackaged(exec) : await electron.launch({ args: [join(root, 'out', 'main', 'index.js')], cwd: root, env })
 const win = await app.firstWindow()
 

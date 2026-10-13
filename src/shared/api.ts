@@ -136,6 +136,14 @@ export interface DoctorReport {
   ready: boolean
 }
 
+export interface UpdateCheck {
+  status: 'skipped' | 'none' | 'available' | 'error'
+  current: string
+  latest?: string
+  notes?: string
+  message?: string
+}
+
 export interface AppInfo {
   version: string
   platform: NodeJS.Platform
@@ -196,6 +204,13 @@ export interface CheckFinding {
 
 export interface StudioApi {
   app: {
+    /** newer version on GitHub releases? (skipped in development) */
+    checkUpdate(): Promise<UpdateCheck>
+    /** downloads it; progress through onUpdateProgress */
+    downloadUpdate(): Promise<void>
+    onUpdateProgress(cb: (percent: number) => void): () => void
+    /** quits, installs and restarts */
+    installUpdate(): Promise<void>
     /** the access password was entered on this computer before */
     hasAccess(): Promise<boolean>
     unlock(password: string): Promise<boolean>
