@@ -1,6 +1,7 @@
 // Sound flow on an existing project: Claude adds sound effects, the designer
 // swaps a whole effect group and adds two BGM tracks with sections.
 // Run: MS_SANDBOX=<dir> node tests/e2e/sound.mjs
+import { grantAccess, toHome } from './access.mjs'
 import { _electron as electron } from 'playwright-core'
 import { mkdirSync, readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
@@ -12,6 +13,7 @@ mkdirSync(shots, { recursive: true })
 const sandbox = process.env.MS_SANDBOX
 const t0 = Date.now()
 const log = (...a) => console.log(`[${((Date.now() - t0) / 1000).toFixed(0)}s]`, ...a)
+grantAccess(join(sandbox, 'userdata'))
 const app = await electron.launch({ args: [join(root, 'out', 'main', 'index.js')], cwd: root, env: { ...process.env, MS_PROJECTS_DIR: join(sandbox, 'projects'), MS_USER_DATA: join(sandbox, 'userdata') } })
 const win = await app.firstWindow()
 const shot = async (n) => {
@@ -21,7 +23,7 @@ const shot = async (n) => {
 }
 const badge = () => win.evaluate(() => [...document.querySelectorAll('.badge')].map((b) => b.textContent).find((t) => t?.startsWith('Claude')) ?? '')
 try {
-  await win.getByText('브리프를 정리하고 Claude와 대화하면서 영상을 만들어요.').waitFor({ timeout: 90000 })
+  await toHome(win)
   await win.locator('.card').first().click()
   await win.getByText('Claude와 대화').waitFor({ timeout: 20000 })
   for (let i = 0; i < 40 && !/대기 중/.test(await badge()); i++) await win.waitForTimeout(1000)

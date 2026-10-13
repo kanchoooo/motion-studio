@@ -47,4 +47,16 @@ describe('staticFindings', () => {
     const codes = staticFindings(html, brief, emptyOverrides()).map((x) => x.code)
     expect(codes).toEqual(expect.arrayContaining(['ms_canvas_size', 'ms_duration']))
   })
+
+  it('reports group content that cannot be edited on its own, and stale motion edits', () => {
+    const f = staticFindings(page('<div data-ms-id="phone" data-ms-label="폰" data-ms-type="group"><p>9:41</p></div>'), brief, emptyOverrides(), [], {
+      loose: [{ id: 'phone', label: '폰 목업', text: '9:41 주문하기', images: 1 }],
+      stale: ['title#2'],
+    })
+    const g = f.find((x) => x.code === 'ms_group_inner_not_editable')
+    expect(g?.severity).toBe('error')
+    expect(g?.message).toContain('폰 목업')
+    expect(g?.message).toContain('이미지 1개')
+    expect(f.find((x) => x.code === 'ms_motion_edit_stale')?.severity).toBe('info')
+  })
 })

@@ -1,5 +1,6 @@
 // Reviews references, brand kits, timeline bars, compare, storage and partial restore
 // on an existing project. Run: MS_SANDBOX=<dir> node tests/e2e/features.mjs
+import { grantAccess } from './access.mjs'
 import { _electron as electron } from 'playwright-core'
 import { mkdirSync, readdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
@@ -11,6 +12,7 @@ mkdirSync(shots, { recursive: true })
 const sandbox = process.env.MS_SANDBOX
 const t0 = Date.now()
 const log = (...a) => console.log(`[${((Date.now() - t0) / 1000).toFixed(0)}s]`, ...a)
+grantAccess(join(sandbox, 'userdata'))
 const app = await electron.launch({ args: [join(root, 'out', 'main', 'index.js')], cwd: root, env: { ...process.env, MS_PROJECTS_DIR: join(sandbox, 'projects'), MS_USER_DATA: join(sandbox, 'userdata') } })
 const win = await app.firstWindow()
 const shot = async (n) => {
@@ -65,9 +67,9 @@ try {
     if (r.length >= 2) break
     await win.waitForTimeout(1000)
   }
-  await win.getByRole('button', { name: '이력·결과물' }).click()
+  await win.getByRole('button', { name: '결과물', exact: true }).click()
   await win.waitForTimeout(1500)
-  await shot('05-history')
+  await shot('05-results')
   await win.getByRole('button', { name: /나란히 비교/ }).click()
   const thumbs = win.locator('.card [style*="aspect-ratio"]')
   await thumbs.nth(0).click()
@@ -80,6 +82,9 @@ try {
   await win.waitForTimeout(800)
   await shot('07-storage')
   await win.keyboard.press('Escape')
+  // partial restore lives in the editor's history panel
+  await win.locator('.drag .seg').getByRole('button', { name: '편집' }).click()
+  if (!(await win.getByTestId('history-panel').count())) await win.getByTestId('history-toggle').click()
   await win.getByTitle('일부만 되돌리기').first().click()
   await shot('08-partial-restore-menu')
 } catch (e) {

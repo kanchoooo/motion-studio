@@ -488,3 +488,223 @@
   border-radius: 4px;
   background: var(--surface-3);
 }
+
+/* ---- panel splitters ---- */
+.splitter {
+  flex: none;
+  position: relative;
+  z-index: 6;
+  background: transparent;
+}
+.splitter-x {
+  width: 7px;
+  margin: 0 -3px;
+  cursor: col-resize;
+}
+.splitter-y {
+  height: 7px;
+  margin: -3px 0;
+  cursor: row-resize;
+}
+.splitter::after {
+  content: '';
+  position: absolute;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.splitter-x::after {
+  left: 3px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+.splitter-y::after {
+  top: 3px;
+  left: 0;
+  right: 0;
+  height: 1px;
+}
+.splitter:hover::after,
+.splitter.dragging::after {
+  opacity: 1;
+}
+
+/* folded side panel */
+.rail {
+  flex: none;
+  width: 30px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 0;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+}
+.rail-btn {
+  writing-mode: vertical-rl;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  padding: 8px 4px;
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.rail-btn:hover,
+.rail-btn.on {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+/* ---- timeline ---- */
+.tl {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface);
+}
+.tl-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  position: relative;
+}
+.tl-grid {
+  display: grid;
+  position: relative;
+}
+.tl-corner,
+.tl-layer {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+}
+.tl-corner {
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border);
+}
+.tl-ruler {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  height: 24px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+.tl-layer {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-right: 6px;
+  height: 26px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.tl-layer.sel {
+  background: var(--accent-soft);
+}
+.tl-layer.sub {
+  height: 22px;
+  color: var(--text-2);
+  font-size: 11px;
+}
+.tl-track {
+  position: relative;
+  height: 26px;
+  border-bottom: 1px solid var(--border);
+}
+.tl-track.sub {
+  height: 22px;
+  background: color-mix(in srgb, var(--surface-2) 55%, transparent);
+}
+.tl-bar {
+  position: absolute;
+  top: 4px;
+  height: 18px;
+  border-radius: 4px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 10px;
+  line-height: 18px;
+  padding: 0 6px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: grab;
+  user-select: none;
+}
+.tl-bar.sel {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+.tl-motion {
+  position: absolute;
+  top: 3px;
+  height: 16px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--warning) 30%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warning) 70%, transparent);
+  color: var(--text);
+  font-size: 10px;
+  line-height: 14px;
+  padding: 0 5px;
+  overflow: hidden;
+  white-space: nowrap;
+  cursor: grab;
+  user-select: none;
+}
+.tl-motion.sel {
+  background: var(--warning);
+  color: #1c1c1f;
+}
+.tl-motion.off {
+  background: transparent;
+  border-style: dashed;
+  color: var(--text-3);
+}
+.tl-motion .grip {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+}
+.tl-tick {
+  position: absolute;
+  top: 9px;
+  width: 6px;
+  height: 8px;
+  margin-left: -3px;
+  border-radius: 2px;
+  background: var(--warning);
+  opacity: 0.8;
+  pointer-events: none;
+}
+.tl-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--accent);
+  pointer-events: none;
+  z-index: 2;
+}

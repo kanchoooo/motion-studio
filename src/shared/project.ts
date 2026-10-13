@@ -24,6 +24,10 @@ export interface ProjectMeta {
   appVersion: string
   agentSessionId?: string
   family?: FamilyInfo
+  /** Claude model alias for this project's session (undefined = account default) */
+  agentModel?: string
+  /** Claude effort level (undefined = Claude Code default) */
+  agentEffort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 }
 
 export interface ProjectSummary {
@@ -94,6 +98,8 @@ export interface FeedbackMark {
   /** data-ms-id of elements under the mark */
   elements: { id: string; label: string }[]
   resolved: boolean
+  /** reference images for this mark (absolute paths until sent, then project-relative) */
+  refs?: string[]
 }
 
 export interface FeedbackBatch {

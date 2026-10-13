@@ -1,5 +1,6 @@
 // Live end-to-end flow against the real Claude Code session (uses the logged-in
 // account's usage). Run: npm run build && node tests/e2e/live-flow.mjs [--keep]
+import { grantAccess, toHome } from './access.mjs'
 import { _electron as electron } from 'playwright-core'
 import { mkdirSync, mkdtempSync, readFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -13,6 +14,7 @@ const sandbox = process.env.MS_SANDBOX || mkdtempSync(join(tmpdir(), 'ms-live-')
 const t0 = Date.now()
 const log = (...a) => console.log(`[${((Date.now() - t0) / 1000).toFixed(0)}s]`, ...a)
 
+grantAccess(join(sandbox, 'userdata'))
 const app = await electron.launch({
   args: [join(root, 'out', 'main', 'index.js')],
   cwd: root,
@@ -27,7 +29,7 @@ const shot = async (name) => {
 const badge = () => win.evaluate(() => [...document.querySelectorAll('.badge')].map((b) => b.textContent).find((t) => t?.startsWith('Claude')) ?? '')
 
 try {
-  await win.getByText('브리프를 정리하고 Claude와 대화하면서 영상을 만들어요.').waitFor({ timeout: 90000 })
+  await toHome(win)
   await win.getByRole('button', { name: /새 프로젝트/ }).first().click()
   await win.getByPlaceholder('예: 봄 시즌 신제품 15초').fill('모션커피 봄 신메뉴')
   await win.getByRole('button', { name: '만들기', exact: true }).click()

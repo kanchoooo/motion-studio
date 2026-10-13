@@ -42,9 +42,10 @@ function createWindow(previewBase: string) {
 }
 
 app.setName('모션스튜디오')
-// The app itself stores nothing secret, so Chromium must not touch the macOS
-// keychain ("Safe Storage" item): with changing builds/signatures that item
-// triggers repeated keychain prompts. Claude Code keeps its own sign-in there.
+// Chromium must not touch the macOS keychain ("Safe Storage" item): with
+// changing builds/signatures that item triggers repeated keychain prompts.
+// Claude Code keeps its own sign-in there; the app's AI-service tokens live in a
+// user-only file (see ai/accounts.ts).
 if (process.platform === 'darwin') app.commandLine.appendSwitch('use-mock-keychain')
 // isolated profile for automated tests
 if (process.env.MS_USER_DATA) app.setPath('userData', process.env.MS_USER_DATA)
@@ -59,7 +60,7 @@ app.whenReady().then(async () => {
       responseHeaders: {
         ...details.responseHeaders,
         'Content-Security-Policy': [
-          `default-src 'self' ${previewBase}${devSrc}; script-src 'self' ${previewBase}${devSrc}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: ${previewBase}; media-src 'self' blob: ${previewBase}; frame-src ${previewBase}; connect-src 'self' ${previewBase}${devSrc}; font-src 'self' data:`,
+          `default-src 'self' ${previewBase}${devSrc}; script-src 'self' ${previewBase}${devSrc}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: ${previewBase}; media-src 'self' blob: https: ${previewBase}; frame-src ${previewBase}; connect-src 'self' ${previewBase}${devSrc}; font-src 'self' data:`,
         ],
       },
     })

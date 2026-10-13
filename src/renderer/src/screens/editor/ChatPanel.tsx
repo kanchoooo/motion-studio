@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { AlertCircle, ArrowUp, Check, Clapperboard, Info, Loader2, MapPin, Square, SquareDashed, X } from 'lucide-react'
-import type { ChatItem, Storyboard } from '@shared/api'
+import { AlertCircle, ArrowUp, Check, ChevronsLeft, Clapperboard, Cpu, ImagePlus, Info, Loader2, MapPin, Square, SquareDashed, X } from 'lucide-react'
+import type { AgentEffort, AgentModel, ChatItem, Storyboard } from '@shared/api'
 import { Markdown } from '../../components/Markdown'
 import { studio, useStore } from '../../store'
 import { useEditor } from './editorStore'
@@ -8,11 +8,13 @@ import { captureAnnotatedFrame } from './Preview'
 
 const QUICK = ['브리프대로 콘티 먼저 보여줘', '전체적으로 더 경쾌하게', '타이틀이 더 크게 들어왔으면 좋겠어']
 
-export function ChatPanel() {
+export function ChatPanel({ onFold }: { onFold?(): void }) {
   const { project, chat, session, toast, setTerminal } = useStore()
   const { marks, markTime, removeMark, updateMark, clearMarks, player } = useEditor()
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
+  const [attachments, setAttachments] = useState<string[]>([])
+  const [dropping, setDropping] = useState(false)
   const list = useRef<HTMLDivElement>(null)
   const pid = project!.meta.id
   const busy = session.status === 'busy'
@@ -22,9 +24,23 @@ export function ChatPanel() {
     if (el) el.scrollTop = el.scrollHeight
   }, [chat.length, chat[chat.length - 1]])
 
+  /** copies picked/dropped images into the project and returns their project paths */
+  const addImages = async (files: string[]): Promise<string[]> => {
+    const out: string[] = []
+    for (const f of files) {
+      try {
+        out.push(await studio.projects.addFeedbackImage(pid, f))
+      } catch (e) {
+        toast(errText(e), 'error')
+      }
+    }
+    return out
+  }
+  const droppedFiles = (e: React.DragEvent) => [...e.dataTransfer.files].map((f) => studio.app.pathForFile(f)).filter(Boolean)
+
   const send = async (override?: string) => {
     const body = (override ?? text).trim()
-    if (!body && !marks.length) return
+    if (!body && !marks.length && !attachments.length) return
     setSending(true)
     try {
       let annotatedFrame: string | undefined
@@ -34,12 +50,20 @@ export function ChatPanel() {
         await new Promise((r) => setTimeout(r, 250))
         annotatedFrame = await captureAnnotatedFrame()
       }
-      await studio.agent.send({ projectId: pid, text: body || '표시한 부분을 확인하고 고쳐 주세요.', marks: marks.length ? marks : undefined, annotatedFrame, time: markTime ?? undefined })
+      await studio.agent.send({
+        projectId: pid,
+        text: body || (marks.length ? '표시한 부분을 확인하고 고쳐 주세요.' : '첨부한 이미지를 참고해 주세요.'),
+        marks: marks.length ? marks : undefined,
+        annotatedFrame,
+        time: markTime ?? undefined,
+        attachments: attachments.length ? attachments : undefined,
+      })
       setText('')
+      setAttachments([])
       clearMarks()
       useEditor.setState({ tool: 'select' })
     } catch (e) {
-      const msg = e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(e)
+      const msg = errText(e)
       toast(msg, 'error')
       if (/신뢰|터미널/.test(msg)) setTerminal(true)
     } finally {
@@ -48,14 +72,33 @@ export function ChatPanel() {
   }
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', borderRight: '1px solid var(--border)', background: 'var(--surface)' }}>
-      <div className="row" style={{ height: 40, padding: '0 14px', borderBottom: '1px solid var(--border)', flex: 'none' }}>
+    <div
+      style={{ height: '100%', display: 'flex', flexDirection: 'column', borderRight: '1px solid var(--border)', background: 'var(--surface)', position: 'relative' }}
+      onDragOver={(e) => {
+        if (![...e.dataTransfer.types].includes('Files')) return
+        e.preventDefault()
+        setDropping(true)
+      }}
+      onDragLeave={(e) => e.currentTarget === e.target && setDropping(false)}
+      onDrop={async (e) => {
+        e.preventDefault()
+        setDropping(false)
+        const added = await addImages(droppedFiles(e))
+        if (added.length) setAttachments((a) => [...a, ...added])
+      }}
+    >
+      <div className="row" style={{ height: 40, padding: '0 8px 0 14px', borderBottom: '1px solid var(--border)', flex: 'none' }}>
         <span style={{ fontWeight: 650 }}>Claude와 대화</span>
         <div className="grow" />
         {busy && (
           <button className="btn sm" onClick={() => studio.agent.interrupt(pid)} title="지금 하던 작업을 멈춰요 (Esc)">
             <Square size={11} fill="currentColor" />
             멈추기
+          </button>
+        )}
+        {onFold && (
+          <button className="icon-btn" title="대화창 접기" onClick={onFold}>
+            <ChevronsLeft size={15} />
           </button>
         )}
       </div>
@@ -85,29 +128,72 @@ export function ChatPanel() {
 
       <div style={{ padding: 12, borderTop: '1px solid var(--border)', flex: 'none' }} className="col">
         {marks.length > 0 && (
-          <div className="col" style={{ gap: 6 }}>
+          <div className="col" style={{ gap: 6, maxHeight: 260, overflow: 'auto' }}>
             <div className="row tiny muted">
-              <span>{markTime?.toFixed(2)}초 화면에 표시 {marks.length}개</span>
+              <span>{markTime?.toFixed(2)}초 화면에 표시 {marks.length}개 · 표시마다 참고 이미지를 끌어 놓을 수 있어요</span>
               <div className="grow" />
               <button className="btn ghost sm" onClick={clearMarks}>
                 모두 지우기
               </button>
             </div>
             {marks.map((m) => (
-              <div key={m.id} className="row" style={{ gap: 6 }}>
-                <span className="mark-chip">{m.n}</span>
-                <span className="tiny muted" style={{ width: 64, flex: 'none' }} title={m.elements.map((e) => e.label).join(', ')}>
-                  {m.elements[0]?.label ?? (m.kind === 'pin' ? '지점' : '영역')}
-                </span>
-                <input className="input" style={{ height: 28 }} placeholder={`${m.n}번에 대한 요청 (선택)`} value={m.note} onChange={(e) => updateMark(m.id, { note: e.target.value })} />
-                <button className="icon-btn" onClick={() => removeMark(m.id)}>
-                  <X size={14} />
-                </button>
+              <div
+                key={m.id}
+                className="col"
+                style={{ gap: 4 }}
+                data-mark-row={m.n}
+                onDragOver={(e) => {
+                  if (![...e.dataTransfer.types].includes('Files')) return
+                  e.preventDefault()
+                  e.stopPropagation()
+                }}
+                onDrop={async (e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  setDropping(false)
+                  const added = await addImages(droppedFiles(e))
+                  if (added.length) updateMark(m.id, { refs: [...(m.refs ?? []), ...added] })
+                }}
+              >
+                <div className="row" style={{ gap: 6 }}>
+                  <span className="mark-chip">{m.n}</span>
+                  <span className="tiny muted" style={{ width: 64, flex: 'none' }} title={m.elements.map((e) => e.label).join(', ')}>
+                    {m.elements[0]?.label ?? (m.kind === 'pin' ? '지점' : '영역')}
+                  </span>
+                  <input className="input" style={{ height: 28 }} placeholder={`${m.n}번에 대한 요청 (선택)`} value={m.note} onChange={(e) => updateMark(m.id, { note: e.target.value })} />
+                  <button
+                    className="icon-btn"
+                    title="참고 이미지 첨부 (끌어 놓아도 돼요)"
+                    onClick={async () => {
+                      const added = await addImages(await studio.app.pickFiles('images'))
+                      if (added.length) updateMark(m.id, { refs: [...(m.refs ?? []), ...added] })
+                    }}
+                  >
+                    <ImagePlus size={14} />
+                  </button>
+                  <button className="icon-btn" onClick={() => removeMark(m.id)}>
+                    <X size={14} />
+                  </button>
+                </div>
+                {!!m.refs?.length && (
+                  <div className="row" style={{ gap: 4, paddingLeft: 28, flexWrap: 'wrap' }}>
+                    {m.refs.map((r) => (
+                      <Thumb key={r} rel={r} size={40} onRemove={() => updateMark(m.id, { refs: m.refs!.filter((x) => x !== r) })} />
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </div>
         )}
-        <div className="card" style={{ padding: 8, background: 'var(--surface-2)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div className="card" style={{ padding: 8, background: 'var(--surface-2)', display: 'flex', flexDirection: 'column', gap: 6, outline: dropping ? '2px dashed var(--accent)' : 'none' }}>
+          {attachments.length > 0 && (
+            <div className="row" style={{ gap: 4, flexWrap: 'wrap' }}>
+              {attachments.map((r) => (
+                <Thumb key={r} rel={r} size={48} onRemove={() => setAttachments((a) => a.filter((x) => x !== r))} />
+              ))}
+            </div>
+          )}
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
@@ -117,19 +203,117 @@ export function ChatPanel() {
                 void send()
               }
             }}
-            placeholder={marks.length ? '표시한 부분을 어떻게 바꿀지 말해 주세요' : 'Claude에게 요청하기 (Shift+Enter 줄바꿈)'}
+            onPaste={async (e) => {
+              const files = [...e.clipboardData.files].map((f) => studio.app.pathForFile(f)).filter(Boolean)
+              if (!files.length) return
+              e.preventDefault()
+              const added = await addImages(files)
+              if (added.length) setAttachments((a) => [...a, ...added])
+            }}
+            placeholder={marks.length ? '표시한 부분을 어떻게 바꿀지 말해 주세요' : 'Claude에게 요청하기 (Shift+Enter 줄바꿈 · 이미지를 끌어 놓아 첨부)'}
             rows={3}
             style={{ border: 'none', outline: 'none', background: 'transparent', resize: 'none', minHeight: 54 }}
           />
           <div className="row">
             <ToolButtons />
+            <button
+              className="icon-btn"
+              title="참고 이미지 첨부"
+              onClick={async () => {
+                const added = await addImages(await studio.app.pickFiles('images'))
+                if (added.length) setAttachments((a) => [...a, ...added])
+              }}
+            >
+              <ImagePlus size={15} />
+            </button>
             <div className="grow" />
-            <button className="btn primary sm" disabled={sending || (!text.trim() && !marks.length)} onClick={() => send()} style={{ width: 32, padding: 0 }} title="보내기 (Enter)">
+            <button className="btn primary sm" disabled={sending || (!text.trim() && !marks.length && !attachments.length)} onClick={() => send()} style={{ width: 32, padding: 0 }} title="보내기 (Enter)">
               {sending ? <Loader2 size={14} className="spin" /> : <ArrowUp size={15} />}
             </button>
           </div>
         </div>
+        <ModelPicker />
       </div>
+      {dropping && (
+        <div style={{ position: 'absolute', inset: 0, background: 'var(--accent-soft)', border: '2px dashed var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', zIndex: 5 }} className="small">
+          참고 이미지를 놓으면 메시지에 첨부돼요
+        </div>
+      )}
+    </div>
+  )
+}
+
+const errText = (e: unknown) => (e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(e))
+
+const MODELS: { value: AgentModel; label: string }[] = [
+  { value: '', label: '기본 모델' },
+  { value: 'fable', label: 'Fable · 가장 강력' },
+  { value: 'opus', label: 'Opus · 균형' },
+  { value: 'sonnet', label: 'Sonnet · 빠르고 효율적' },
+  { value: 'haiku', label: 'Haiku · 가장 빠름' },
+]
+const EFFORTS: { value: AgentEffort; label: string }[] = [
+  { value: '', label: '기본' },
+  { value: 'low', label: '낮음' },
+  { value: 'medium', label: '보통' },
+  { value: 'high', label: '높음' },
+  { value: 'xhigh', label: '매우 높음' },
+  { value: 'max', label: '최대' },
+]
+
+/** model + reasoning effort for this project's Claude session */
+function ModelPicker() {
+  const { project, session, toast, setProject } = useStore()
+  const pid = project!.meta.id
+  const model = (project!.meta.agentModel ?? '') as AgentModel
+  const effort = (project!.meta.agentEffort ?? '') as AgentEffort
+  const change = async (next: { model: AgentModel; effort: AgentEffort }) => {
+    try {
+      const st = await studio.agent.setModel(pid, next)
+      setProject(await studio.projects.state(pid))
+      toast(st.pendingRestart ? '지금 작업이 끝나면 바꿀게요' : 'Claude를 새 설정으로 다시 연결했어요. 대화는 그대로 이어져요.', 'success')
+    } catch (e) {
+      toast(errText(e), 'error')
+    }
+  }
+  return (
+    <div className="row tiny muted" style={{ gap: 6 }} data-testid="model-picker">
+      <Cpu size={12} />
+      <select className="select" style={{ height: 24, fontSize: 11, padding: '0 6px', width: 'auto' }} value={model} onChange={(e) => change({ model: e.target.value as AgentModel, effort })} title="Claude 모델">
+        {MODELS.map((m) => (
+          <option key={m.value} value={m.value}>
+            {m.label}
+          </option>
+        ))}
+      </select>
+      <span>추론</span>
+      <select className="select" style={{ height: 24, fontSize: 11, padding: '0 6px', width: 'auto' }} value={effort} onChange={(e) => change({ model, effort: e.target.value as AgentEffort })} title="추론 강도: 높을수록 더 깊이 생각하지만 느리고 사용량이 많아요">
+        {EFFORTS.map((m) => (
+          <option key={m.value} value={m.value}>
+            {m.label}
+          </option>
+        ))}
+      </select>
+      {session.pendingRestart && <span style={{ color: 'var(--warning)' }}>작업 후 적용</span>}
+    </div>
+  )
+}
+
+/** project image (feedback/refs/…) as a small thumbnail */
+function Thumb({ rel, size, onRemove }: { rel: string; size: number; onRemove?(): void }) {
+  const { project } = useStore()
+  const [url, setUrl] = useState('')
+  useEffect(() => {
+    void studio.projects.fileUrl(project!.meta.id, rel).then(setUrl)
+  }, [rel, project])
+  return (
+    <div style={{ position: 'relative', width: size, height: size, flex: 'none' }}>
+      {url && <img src={url} style={{ width: size, height: size, objectFit: 'cover', borderRadius: 6, border: '1px solid var(--border)' }} />}
+      {onRemove && (
+        <button className="icon-btn" title="첨부 빼기" onClick={onRemove} style={{ position: 'absolute', right: -6, top: -6, width: 18, height: 18, borderRadius: 9, background: 'var(--surface-3)' }}>
+          <X size={10} />
+        </button>
+      )}
     </div>
   )
 }
@@ -175,14 +359,24 @@ function ChatRow({ item, count = 1 }: { item: ChatItem; count?: number }) {
       return (
         <div className="fade-in" style={{ alignSelf: 'flex-end', maxWidth: '88%' }}>
           <div style={{ background: 'var(--accent)', color: 'var(--accent-text)', padding: '8px 12px', borderRadius: '14px 14px 4px 14px', whiteSpace: 'pre-wrap', userSelect: 'text' }}>{item.text}</div>
-          {(item.marks?.length || frameUrl) && (
+          {(item.marks?.length || frameUrl || item.attachments?.length) && (
             <div className="col" style={{ gap: 4, marginTop: 6, alignItems: 'flex-end' }}>
               {frameUrl && <img src={frameUrl} style={{ width: 200, borderRadius: 8, border: '1px solid var(--border)' }} />}
+              {!!item.attachments?.length && (
+                <div className="row" style={{ gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                  {item.attachments.map((r) => (
+                    <Thumb key={r} rel={r} size={56} />
+                  ))}
+                </div>
+              )}
               {item.marks?.map((m) => (
-                <div key={m.id} className="row tiny muted">
+                <div key={m.id} className="row tiny muted" style={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                   <span className="mark-chip">{m.n}</span>
                   {m.elements[0]?.label ?? '영역'}
                   {m.note ? ` — ${m.note}` : ''}
+                  {m.refs?.map((r) => (
+                    <Thumb key={r} rel={r} size={32} />
+                  ))}
                 </div>
               ))}
             </div>

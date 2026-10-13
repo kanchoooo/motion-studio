@@ -60,7 +60,7 @@ export function OutputSection({ brief, onChange }: { brief: Brief; onChange: (b:
       </Field>
 
       <Field label="파일 형식" hint={transparentOk ? '이 형식은 투명 배경을 지원해요.' : undefined}>
-        <select className="select" value={o.format} onChange={(e) => set({ format: e.target.value as OutputFormat, background: transparentOk ? o.background : 'color' })}>
+        <select className="select" value={o.format} onChange={(e) => set({ format: e.target.value as OutputFormat, background: o.background === 'transparent' && !transparentOk ? 'color' : o.background })}>
           {Object.entries(FORMAT_LABELS).map(([k, v]) => (
             <option key={k} value={k}>
               {v}
@@ -76,12 +76,15 @@ export function OutputSection({ brief, onChange }: { brief: Brief; onChange: (b:
               value={o.background}
               onChange={(background) => set({ background })}
               options={[
+                { value: 'auto', label: 'AI 자율' },
                 { value: 'color', label: '색상' },
                 { value: 'transparent', label: '투명' },
               ]}
             />
             {o.background === 'color' ? (
               <ColorField value={o.backgroundColor} onChange={(backgroundColor) => set({ backgroundColor })} />
+            ) : o.background === 'auto' ? (
+              <div className="small muted">톤앤매너와 장면에 맞춰 Claude가 배경(색·그라데이션·질감·이미지)을 정해요.</div>
             ) : !['mov-prores4444', 'webm-vp9', 'png-sequence'].includes(o.format) ? (
               <div className="small" style={{ color: 'var(--warning)' }}>투명 배경은 MOV(ProRes 4444), WebM, PNG 시퀀스에서만 유지돼요.</div>
             ) : null}

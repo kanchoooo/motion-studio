@@ -10,7 +10,7 @@ import { isDev, appRoot } from './paths'
 
 export interface AudioClip {
   id: string
-  kind: 'sfx' | 'bgm' | 'other'
+  kind: 'sfx' | 'bgm' | 'voice' | 'other'
   /** effect family for sound effects (whoosh, pop…) */
   group?: string
   label: string
@@ -48,7 +48,7 @@ export function parseAudio(html: string): AudioClip[] {
     const type = attr(tag, 'data-ms-type')
     out.push({
       id,
-      kind: type === 'sfx' ? 'sfx' : type === 'bgm' ? 'bgm' : 'other',
+      kind: type === 'sfx' ? 'sfx' : type === 'bgm' ? 'bgm' : type === 'voice' ? 'voice' : 'other',
       group: attr(tag, 'data-ms-sfx'),
       label: attr(tag, 'data-ms-label') ?? id,
       src: attr(tag, 'src') ?? '',

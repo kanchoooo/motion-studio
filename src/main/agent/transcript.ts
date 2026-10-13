@@ -170,8 +170,8 @@ export class TranscriptTail {
       if (m) {
         const side = join(this.projectDir, `${m[1]}.json`)
         try {
-          const data = JSON.parse(readFileSync(side, 'utf8')) as { text: string; marks?: never[]; frame?: string; time?: number }
-          item = { id: r.uuid ?? at, at, role: 'user', text: data.text, marks: data.marks, frame: data.frame, time: data.time }
+          const data = JSON.parse(readFileSync(side, 'utf8')) as { text: string; marks?: never[]; frame?: string; time?: number; attachments?: string[] }
+          item = { id: r.uuid ?? at, at, role: 'user', text: data.text, marks: data.marks, frame: data.frame, time: data.time, attachments: data.attachments }
         } catch {
           item = { id: r.uuid ?? at, at, role: 'user', text: '(첨부된 메시지)' }
         }
@@ -187,7 +187,7 @@ export class TranscriptTail {
           this.lastText = b.text
           this.emitItem({ id: `${r.uuid}-t`, at, role: 'assistant', text: b.text }, initial)
         } else if (b.type === 'tool_use' && b.id) {
-          const label = STUDIO_TOOL_LABELS[b.name ?? ''] ?? '작업하고 있어요'
+          const label = STUDIO_TOOL_LABELS[b.name ?? ''] ?? (b.name?.startsWith('mcp__artlist') ? '아트리스트에서 찾고 있어요' : '작업하고 있어요')
           const item: Extract<ChatItem, { role: 'status' }> = { id: b.id, at, role: 'status', text: label, done: initial }
           this.status.set(b.id, item)
           this.emitItem(item, initial)

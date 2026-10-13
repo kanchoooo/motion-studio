@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { AudioClipInfo } from '@shared/api'
 import type { FeedbackMark } from '@shared/project'
-import type { ElementTiming, MsPlayer, RuntimeElement } from './player'
+import type { ElementTiming, MsPlayer, RuntimeElement, RuntimeMotion } from './player'
 
 export type Tool = 'select' | 'box' | 'pin'
 
@@ -16,8 +16,14 @@ interface EditorState {
   /** audio clips parsed from the composition (Claude's + designer BGM) */
   audio: AudioClipInfo[]
   timing: ElementTiming[]
+  motions: RuntimeMotion[]
+  /** motion edits Claude's latest code no longer matches */
+  staleMotions: string[]
+  selectedMotion: string | null
+  /** layers whose motions are unfolded in the timeline */
+  openLayers: string[]
   selectedAudio: string | null
-  panel: 'elements' | 'sound'
+  panel: 'elements' | 'motion' | 'sound'
   tool: Tool
   marks: FeedbackMark[]
   markTime: number | null
@@ -40,6 +46,10 @@ export const useEditor = create<EditorState>((set, get) => ({
   selected: null,
   audio: [],
   timing: [],
+  motions: [],
+  staleMotions: [],
+  selectedMotion: null,
+  openLayers: [],
   selectedAudio: null,
   panel: 'elements',
   tool: 'select',

@@ -1,4 +1,5 @@
 import type { Asset, BrandPreset, Brief, OutputFormat, OutputQuality, ReferenceItem } from './brief'
+import type { AiAccountInfo, AiLoginEvent, AiModelInfo, AiSettings, AiVoiceInfo, AudioCandidate, AudioCandidateList } from './ai'
 import type { Overrides } from './overrides'
 import type { FeedbackMark, HistoryEntry, ProjectState, ProjectSummary, RenderRecord } from './project'
 
@@ -24,7 +25,7 @@ export interface Storyboard {
 }
 
 export type ChatItem =
-  | { id: string; at: string; role: 'user'; text: string; marks?: FeedbackMark[]; frame?: string; time?: number }
+  | { id: string; at: string; role: 'user'; text: string; marks?: FeedbackMark[]; frame?: string; time?: number; attachments?: string[] }
   | { id: string; at: string; role: 'assistant'; text: string; streaming?: boolean }
   | { id: string; at: string; role: 'status'; text: string; done: boolean }
   | { id: string; at: string; role: 'storyboard'; storyboard: Storyboard; status: 'pending' | 'approved' | 'superseded' }
@@ -42,6 +43,11 @@ export interface SessionState {
   status: 'stopped' | 'starting' | 'ready' | 'busy' | 'exited'
   /** something in the terminal needs the designer (folder trust, login, usage limit) */
   attention?: 'trust' | 'login' | 'usage' | null
+  /** model/effort the running process was started with */
+  model?: string
+  effort?: string
+  /** a model/effort change waits for the current turn to finish */
+  pendingRestart?: boolean
   sessionId?: string
   remoteName?: string
   remoteUrl?: string
@@ -59,6 +65,8 @@ export type AgentEvent =
   /** a variation in the open project's family changed status */
   | { type: 'family-changed'; projectId: string }
   | { type: 'references-changed'; projectId: string }
+  /** Claude found music / sound effects for the designer to audition */
+  | { type: 'audio-candidates'; projectId: string; list: AudioCandidateList }
 
 export interface SendMessageInput {
   projectId: string
@@ -67,13 +75,19 @@ export interface SendMessageInput {
   /** data URL of the annotated frame (from the canvas) */
   annotatedFrame?: string
   time?: number
+  /** reference images for the whole message (project-relative, see projects.addFeedbackImage) */
+  attachments?: string[]
 }
+
+export type AgentModel = '' | 'fable' | 'opus' | 'sonnet' | 'haiku'
+export type AgentEffort = '' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 // ---- audio --------------------------------------------------------------------------
 
 export interface AudioClipInfo {
   id: string
-  kind: 'sfx' | 'bgm' | 'other'
+  /** voice = narration (TTS) */
+  kind: 'sfx' | 'bgm' | 'voice' | 'other'
   group?: string
   label: string
   src: string
@@ -182,6 +196,9 @@ export interface CheckFinding {
 
 export interface StudioApi {
   app: {
+    /** the access password was entered on this computer before */
+    hasAccess(): Promise<boolean>
+    unlock(password: string): Promise<boolean>
     info(): Promise<AppInfo>
     doctor(): Promise<DoctorReport>
     /** opens Claude Code's own sign-in in a terminal session ("__login__") */
@@ -190,7 +207,7 @@ export interface StudioApi {
     installBrowser(): Promise<{ ok: boolean; message: string }>
     openExternal(url: string): Promise<void>
     reveal(path: string): Promise<void>
-    pickFiles(kind: 'assets' | 'any'): Promise<string[]>
+    pickFiles(kind: 'assets' | 'images' | 'any'): Promise<string[]>
     pickFolder(): Promise<string | null>
     /** opens Claude Code once in the projects folder so the designer can trust it (covers every project) */
     trustWorkspace(): Promise<SessionState>
@@ -219,6 +236,8 @@ export interface StudioApi {
     /** copies a built-in sound effect into the project, returns its composition path */
     useSfx(projectId: string, sfxId: string): Promise<string | null>
     fileUrl(projectId: string, rel: string): Promise<string>
+    /** copies a reference image for chat/mark feedback into the project, returns its project-relative path */
+    addFeedbackImage(projectId: string, file: string): Promise<string>
     diskUsage(projectId: string): Promise<Record<'renders' | 'assets' | 'references' | 'history' | 'cache' | 'total', number>>
     clearCache(projectId: string): Promise<void>
   }
@@ -232,6 +251,8 @@ export interface StudioApi {
     interrupt(projectId: string): Promise<void>
     transcript(projectId: string): Promise<ChatItem[]>
     approveStoryboard(projectId: string, itemId: string): Promise<void>
+    /** switches model / reasoning effort (restarts the session with --resume; waits for a running turn) */
+    setModel(projectId: string, opts: { model: AgentModel; effort: AgentEffort }): Promise<SessionState>
     onEvent(cb: (e: AgentEvent) => void): () => void
   }
   terminal: {
@@ -278,5 +299,30 @@ export interface StudioApi {
   }
   fonts: {
     list(): Promise<FontFamily[]>
+  }
+  ai: {
+    accounts(): Promise<AiAccountInfo[]>
+    /** opens the service's sign-in in the browser; progress arrives through onLogin */
+    login(provider: AiAccountInfo['provider'], label: string, relogin?: string): Promise<void>
+    cancelLogin(): Promise<void>
+    onLogin(cb: (e: AiLoginEvent) => void): () => void
+    setActive(provider: AiAccountInfo['provider'], accountId: string): Promise<AiAccountInfo[]>
+    rename(accountId: string, label: string): Promise<AiAccountInfo[]>
+    remove(accountId: string): Promise<AiAccountInfo[]>
+    models(provider: AiAccountInfo['provider'], kind: AiModelInfo['kind']): Promise<AiModelInfo[]>
+    voices(provider: AiAccountInfo['provider'], query: string): Promise<AiVoiceInfo[]>
+    /** makes a short sample of a voice (uses the service's credits); returns a playable URL */
+    ttsSample(provider: AiAccountInfo['provider'], voiceId: string, text: string): Promise<string>
+    settings(): Promise<AiSettings>
+    saveSettings(patch: Partial<AiSettings>): Promise<AiSettings>
+    /** media made or imported by AI tools in this project */
+    generated(projectId: string): Promise<{ file: string; kind: string; provider: string; tool: string; label?: string; at: string }[]>
+    audioCandidates(projectId: string): Promise<AudioCandidateList | null>
+    /** asks Claude to search music / sound effects (Artlist) and show candidates */
+    searchAudio(projectId: string, input: { query: string; kind: 'bgm' | 'sfx' }): Promise<void>
+    /** downloads a candidate into the project; returns its composition path */
+    useAudioCandidate(projectId: string, item: AudioCandidate): Promise<string>
+    /** types /mcp into the project's Claude terminal for Artlist sign-in */
+    artlistLogin(projectId: string): Promise<void>
   }
 }

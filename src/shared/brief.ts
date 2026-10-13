@@ -12,7 +12,8 @@ export interface OutputSpec {
   fps: number
   duration: number
   format: OutputFormat
-  background: 'color' | 'transparent'
+  /** auto = Claude designs the background (colour, gradient, texture, generated image…) */
+  background: 'color' | 'transparent' | 'auto'
   backgroundColor: string
   quality: OutputQuality
   audio: boolean
@@ -103,6 +104,72 @@ export interface BrandPreset {
   notes: string
 }
 
+// ---- storyboard (optional, for designers who planned the scenes) ----
+
+export interface StoryText {
+  id: string
+  text: string
+  /** must appear verbatim */
+  locked: boolean
+}
+
+export interface StoryImage {
+  id: string
+  /** file = attached by the designer, describe = described in words (Claude finds or generates it) */
+  mode: 'file' | 'describe'
+  /** composition-relative asset path, e.g. "assets/scene-1.png" */
+  file?: string
+  originalName?: string
+  required: boolean
+  description: string
+  /** generation model for a described image; null/undefined = brief default */
+  model?: AiModelRef | null
+}
+
+export interface StoryScene {
+  id: string
+  title: string
+  /** seconds; undefined = Claude decides */
+  duration?: number
+  /** what happens: layout, motion, transitions, mood */
+  description: string
+  texts: StoryText[]
+  images: StoryImage[]
+}
+
+// ---- AI generation (Higgsfield, Magnific) and sound libraries (Artlist) ----
+
+export type AiProviderId = 'higgsfield' | 'magnific' | 'artlist'
+
+export interface AiModelRef {
+  provider: AiProviderId
+  /** provider's model id */
+  model: string
+  label?: string
+}
+
+export interface AiBrief {
+  /** default model for generated images; null = Claude picks */
+  image: AiModelRef | null
+  /** default model for generated video clips; null = Claude picks */
+  video: AiModelRef | null
+  narration: {
+    enabled: boolean
+    provider?: AiProviderId
+    voiceId?: string
+    voiceName?: string
+    /** '' = Claude writes the script */
+    script: string
+    note: string
+  }
+  /** let Claude look for BGM / sound effects on Artlist */
+  artlist: boolean
+}
+
+export function defaultAi(): AiBrief {
+  return { image: null, video: null, narration: { enabled: false, script: '', note: '' }, artlist: false }
+}
+
 export interface Brief {
   version: 1
   title: string
@@ -116,6 +183,9 @@ export interface Brief {
   tone: string
   /** brand kit applied to this brief (structured for Claude) */
   brand?: Omit<BrandPreset, 'logo'>
+  /** optional scene-by-scene plan */
+  storyboard: StoryScene[]
+  ai: AiBrief
 }
 
 export interface OutputPreset {
@@ -182,7 +252,7 @@ export function defaultOutput(presetId: OutputPresetId = 'youtube-16x9', duratio
     fps: 29.97,
     duration,
     format: 'mp4-h264',
-    background: 'color',
+    background: 'auto',
     backgroundColor: '#000000',
     quality: 'standard',
     audio: true,
@@ -201,7 +271,21 @@ export function emptyBrief(title: string, presetId?: OutputPresetId, duration?: 
     assets: [],
     references: [],
     tone: '',
+    storyboard: [],
+    ai: defaultAi(),
   }
+}
+
+/** fills fields added after a project was created */
+export function normalizeBrief(b: Partial<Brief> & { title?: string }): Brief {
+  const base = emptyBrief(b.title ?? '')
+  const ai = { ...defaultAi(), ...(b.ai ?? {}) }
+  ai.narration = { ...defaultAi().narration, ...(b.ai?.narration ?? {}) }
+  return { ...base, ...b, output: { ...base.output, ...(b.output ?? {}) }, storyboard: b.storyboard ?? [], ai } as Brief
+}
+
+export function newScene(id: string): StoryScene {
+  return { id, title: '', description: '', texts: [], images: [] }
 }
 
 export function newRequiredText(id: string): RequiredText {

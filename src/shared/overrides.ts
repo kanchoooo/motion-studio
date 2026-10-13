@@ -60,6 +60,23 @@ export interface BgmTrack {
   loop: boolean
 }
 
+/**
+ * Designer change to one authored motion (a GSAP tween). Keyed by
+ * "<data-ms-id>#<n>" (n-th tween created for the element, in code order);
+ * `sig` must still match or the change is not applied (Claude rewrote it).
+ */
+export interface MotionOverride {
+  sig: string
+  /** seconds to move the motion by on the authored timeline */
+  shift?: number
+  duration?: number
+  ease?: string
+  /** changed values: "to.y", "from.opacity", ... */
+  values?: Record<string, number | string>
+  /** removed: the element keeps its resting state */
+  disabled?: boolean
+}
+
 export interface TimeRemapSection {
   from: number
   to: number
@@ -77,10 +94,12 @@ export interface Overrides {
   sfxGroups: Record<string, { src: string; volume?: number }>
   /** designer-added background music tracks */
   bgm: BgmTrack[]
+  /** per-motion edits (start, length, easing, values) */
+  motions: Record<string, MotionOverride>
 }
 
 export function emptyOverrides(): Overrides {
-  return { version: 1, elements: {}, timeRemap: [], keepTotalDuration: true, audio: {}, sfxGroups: {}, bgm: [] }
+  return { version: 1, elements: {}, timeRemap: [], keepTotalDuration: true, audio: {}, sfxGroups: {}, bgm: [], motions: {} }
 }
 
 /** fills fields added after a project was created */
@@ -94,6 +113,7 @@ export function overridesToScript(o: Overrides): string {
     elements: o.elements,
     timeRemap: o.timeRemap,
     keepTotalDuration: o.keepTotalDuration,
+    motions: o.motions,
   }
   // JSON is a valid JS expression; escape "</" so the payload can never close a <script> tag
   return `window.__MS_OVERRIDES__ = ${JSON.stringify(payload).replace(/<\//g, '<\\/')};\n`

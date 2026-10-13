@@ -16,6 +16,12 @@ export interface EditorElementInfo {
   movable: boolean
 }
 
+/** what the runtime found in a hidden render of the composition (see audit.ts) */
+export interface AuditInfo {
+  loose: { id: string; label: string; text: string; images: number }[]
+  stale: string[]
+}
+
 /** latest element list reported by the editor preview, per project */
 export const lastElements = new Map<string, EditorElementInfo[]>()
 
@@ -37,7 +43,7 @@ const norm = (s: string) =>
     .replace(/\s+/g, ' ')
     .trim()
 
-export function staticFindings(html: string, brief: Brief, overrides: Overrides, elements?: EditorElementInfo[]): CheckFinding[] {
+export function staticFindings(html: string, brief: Brief, overrides: Overrides, elements?: EditorElementInfo[], audit?: AuditInfo): CheckFinding[] {
   const out: CheckFinding[] = []
   const head = html.split(/<\/head>/i)[0] ?? ''
 
@@ -88,6 +94,19 @@ export function staticFindings(html: string, brief: Brief, overrides: Overrides,
   for (const e of elements ?? []) {
     if (!e.movable) out.push({ severity: 'warning', code: 'ms_not_absolute', message: `"${e.label}"(${e.id})가 position:absolute가 아니라서 디자이너가 위치를 옮길 수 없어요. 절대 위치로 배치해 주세요.`, elementId: e.id })
   }
+  // groups (phone mockups, cards, UI screens): everything inside must be editable on its own
+  for (const l of audit?.loose ?? []) {
+    const what = [l.text && `글자("${l.text}")`, l.images && `이미지 ${l.images}개`].filter(Boolean).join('와 ')
+    out.push({
+      severity: 'error',
+      code: 'ms_group_inner_not_editable',
+      message: `"${l.label || l.id}"(${l.id}) 안의 ${what}를 디자이너가 따로 고칠 수 없어요. 그룹 안의 문구·이미지·버튼마다 data-ms-id·data-ms-label·data-ms-type을 붙이고, 그룹 안에서 position:absolute로 배치해 주세요.`,
+      elementId: l.id,
+    })
+  }
+  for (const key of audit?.stale ?? []) {
+    out.push({ severity: 'info', code: 'ms_motion_edit_stale', message: `디자이너가 조정한 모션(${key})이 코드가 바뀌어서 적용되지 않아요. 같은 요소의 모션 순서와 속성을 유지하거나, 바꾼 이유를 알려 주세요.` })
+  }
 
   // 5. canvas matches the brief
   const root = html.match(/<[a-z]+[^>]*data-composition-id="[^"]*"[^>]*>/i)?.[0] ?? ''
@@ -130,10 +149,10 @@ export function staticFindings(html: string, brief: Brief, overrides: Overrides,
   return out
 }
 
-export async function fullCheck(projectDir: string, brief: Brief, overrides: Overrides, elements?: EditorElementInfo[], withRuntime = true): Promise<CheckFinding[]> {
+export async function fullCheck(projectDir: string, brief: Brief, overrides: Overrides, elements?: EditorElementInfo[], withRuntime = true, audit?: AuditInfo): Promise<CheckFinding[]> {
   const index = join(projectDir, 'composition', 'index.html')
   const html = existsSync(index) ? readFileSync(index, 'utf8') : ''
-  const findings = staticFindings(html, brief, overrides, elements)
+  const findings = staticFindings(html, brief, overrides, elements, audit)
   if (withRuntime && !html.includes('data-ms-empty="true"')) {
     const res = await hfCheck(join(projectDir, 'composition')).catch(() => null)
     for (const i of res?.issues ?? []) {

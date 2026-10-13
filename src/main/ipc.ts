@@ -4,6 +4,7 @@ import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electro
 import type { AgentEvent, ExportOptions, ExportProgress, SendMessageInput } from '@shared/api'
 import type { Brief } from '@shared/brief'
 import type { Overrides } from '@shared/overrides'
+import { hasAccess, unlock } from './access'
 import { SessionManager } from './agent/pty-session'
 import { parseAudio, sfxLibrary, useBuiltinSfx } from './audio'
 import { fullCheck, lastElements, type EditorElementInfo } from './checks'
@@ -17,6 +18,15 @@ import { cancelExport, exportAll, listRenders, removeRender, startExport, update
 import { createVariations } from './variations'
 import { listBrands, removeBrand, saveBrand } from './brands'
 import { addReferenceFiles, addYoutube, listReferences, removeReference, updateReference } from './references'
+import type { AiConnectProvider, AiLoginEvent, AiMediaKind, AiSettings, AudioCandidate, AudioCandidateList } from '@shared/ai'
+import { patchAccount, publicInfo, removeAccount, setActive } from './ai/accounts'
+import { clearCatalog, listModels, listVoices } from './ai/catalog'
+import { cancelLogin, login, resetConnections } from './ai/connect'
+import { listGenerated, recordGenerated } from './ai/generated'
+import { importUrl } from './ai/media'
+import { aiSettings, saveAiSettings } from './ai/settings'
+import { ttsSample } from './ai/tts'
+import { readJson } from './util'
 
 export function registerIpc(getWindow: () => BrowserWindow | null): SessionManager {
   const send = (channel: string, payload: unknown) => getWindow()?.webContents.send(channel, payload)
@@ -31,6 +41,8 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
     ipcMain.handle(channel, async (_e, ...args) => fn(...(args as A)))
 
   // ---- app ----
+  handle('app:hasAccess', () => hasAccess())
+  handle('app:unlock', (password: string) => unlock(String(password ?? '').slice(0, 200)))
   handle('app:info', () => ({ version: app.getVersion(), platform: process.platform, arch: process.arch, projectsDir: projectsDir() }))
   handle('app:doctor', () => doctor())
   handle('app:login', () => agent.startLogin())
@@ -41,14 +53,16 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
     if (/^https:\/\//.test(url)) return shell.openExternal(url)
   })
   handle('app:reveal', (path: string) => shell.showItemInFolder(path))
-  handle('app:pickFiles', async (kind: 'assets' | 'any') => {
+  handle('app:pickFiles', async (kind: 'assets' | 'images' | 'any') => {
     const win = getWindow()
     const opts: Electron.OpenDialogOptions = {
       properties: ['openFile', 'multiSelections'],
       filters:
         kind === 'assets'
           ? [{ name: '이미지·영상·소리', extensions: projects.ASSET_EXTENSIONS }]
-          : [{ name: '모든 파일', extensions: ['*'] }],
+          : kind === 'images'
+            ? [{ name: '이미지', extensions: projects.FEEDBACK_IMAGE_EXTENSIONS }]
+            : [{ name: '모든 파일', extensions: ['*'] }],
     }
     const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
     return r.canceled ? [] : r.filePaths
@@ -103,6 +117,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
   })
   handle('projects:assetUrl', (id: string, rel: string) => serveFolderUrl(join(projects.pathOf(id), 'composition')) + rel)
   handle('projects:fileUrl', (id: string, rel: string) => serveFolderUrl(projects.pathOf(id)) + rel)
+  handle('projects:addFeedbackImage', (id: string, file: string) => projects.addFeedbackImage(id, file))
 
   // ---- agent (live Claude Code session in a PTY) ----
   handle('agent:start', (id: string) => {
@@ -115,6 +130,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
   handle('agent:interrupt', (id: string) => agent.interrupt(id))
   handle('agent:transcript', (id: string) => agent.transcript(id))
   handle('agent:approveStoryboard', (id: string, itemId: string) => agent.approveStoryboard(id, itemId))
+  handle('agent:setModel', (id: string, opts: { model: string; effort: string }) => agent.setModel(id, opts))
   handle('terminal:snapshot', (id: string) => agent.snapshot(id))
   ipcMain.on('terminal:write', (_e, id: string, data: string) => agent.write(id, data))
   ipcMain.on('terminal:resize', (_e, id: string, cols: number, rows: number) => agent.resize(id, cols, rows))
@@ -184,6 +200,61 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
     const r = listRenders(dir).find((x) => x.id === renderId)
     return r ? serveFolderUrl(dir) + r.file.split('\\').join('/') : ''
   })
+
+  // ---- AI services ----
+  handle('ai:accounts', () => publicInfo())
+  handle('ai:login', (provider: AiConnectProvider, label: string, relogin?: string) => {
+    void login(provider, { label, relogin }, (e: AiLoginEvent) => {
+      if (e.status === 'done') clearCatalog()
+      send('ai:login', e)
+    })
+  })
+  handle('ai:cancelLogin', () => cancelLogin())
+  handle('ai:setActive', (provider: AiConnectProvider, id: string) => {
+    setActive(provider, id)
+    resetConnections()
+    clearCatalog()
+    return publicInfo()
+  })
+  handle('ai:rename', (id: string, label: string) => {
+    patchAccount(id, { label: label.trim().slice(0, 30) || '계정' })
+    return publicInfo()
+  })
+  handle('ai:remove', (id: string) => {
+    removeAccount(id)
+    resetConnections()
+    clearCatalog()
+    return publicInfo()
+  })
+  handle('ai:models', (provider: AiConnectProvider, kind: AiMediaKind) => listModels(provider, kind))
+  handle('ai:voices', (provider: AiConnectProvider, query: string) => listVoices(provider, query))
+  handle('ai:ttsSample', async (provider: AiConnectProvider, voiceId: string, text: string) => {
+    const file = await ttsSample(provider, voiceId, text.slice(0, 200))
+    return serveFolderUrl(join(file, '..')) + encodeURIComponent(file.split(/[\\/]/).pop()!)
+  })
+  handle('ai:settings', () => aiSettings())
+  handle('ai:saveSettings', (patch: Partial<AiSettings>) => {
+    const before = aiSettings()
+    const next = saveAiSettings(patch)
+    // a new MCP setup only reaches Claude through a fresh session (--resume keeps the conversation)
+    if (before.artlist !== next.artlist) agent.restartIdle()
+    return next
+  })
+  handle('ai:generated', (id: string) => listGenerated(projects.pathOf(id)))
+  handle('ai:audioCandidates', (id: string) => readJson<AudioCandidateList | null>(join(projects.pathOf(id), '.studio', 'audio-candidates.json'), null))
+  handle('ai:searchAudio', (id: string, input: { query: string; kind: 'bgm' | 'sfx' }) => {
+    const what = input.kind === 'bgm' ? '배경음악' : '효과음'
+    return agent.send({ projectId: id, text: `아트리스트에서 "${input.query.trim()}" ${what} 후보를 8개쯤 찾아서 사운드 패널에 보여 주세요. 미리듣기 주소가 있으면 꼭 넣어 주세요.` })
+  })
+  handle('ai:useAudioCandidate', async (id: string, item: AudioCandidate) => {
+    const dir = projects.pathOf(id)
+    const url = item.downloadUrl ?? item.previewUrl
+    if (!url) throw new Error('이 후보는 내려받을 수 있는 파일 주소가 없어요. 아트리스트에서 직접 받아서 첨부해 주세요.')
+    const m = await importUrl(join(dir, 'composition'), url, item.source.replace(/[^a-z0-9-]/gi, '').slice(0, 20) || 'audio')
+    recordGenerated(dir, [{ file: m.file, kind: m.kind, provider: item.source, tool: 'pick', label: item.title }])
+    return m.file
+  })
+  handle('ai:artlistLogin', (id: string) => agent.typeCommand(id, '/mcp'))
 
   // ---- fonts ----
   handle('fonts:list', () => listFonts())

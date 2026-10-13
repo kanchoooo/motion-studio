@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { AlignCenter, AlignLeft, AlignRight, Box, Eye, EyeOff, Image as ImageIcon, Layers, Lock, Redo2, RotateCcw, Type, Undo2 } from 'lucide-react'
+import { AlignCenter, AlignLeft, AlignRight, ArrowUpLeft, Box, Eye, EyeOff, Image as ImageIcon, Layers, Lock, Redo2, RotateCcw, Type, Undo2 } from 'lucide-react'
 import { FontSelect } from '../../components/FontSelect'
 import { ColorField, NumberField, Segmented } from '../../components/ui'
 import { useStore } from '../../store'
 import { useEditor } from './editorStore'
+import { MotionPanel } from './MotionPanel'
 import { rgbToHex, useOverrides } from './overrides'
 import { SoundPanel } from './SoundPanel'
 
@@ -25,11 +26,14 @@ export function Inspector() {
   }, [loadFonts])
 
   return (
-    <div style={{ borderLeft: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+    <div style={{ borderLeft: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', flexDirection: 'column', minHeight: 0, flex: 1, minWidth: 0 }}>
       <div className="row" style={{ height: 40, padding: '0 10px 0 14px', borderBottom: '1px solid var(--border)', flex: 'none' }}>
         <div className="seg grow" style={{ marginLeft: -4 }}>
           <button className={panel === 'elements' ? 'on' : ''} onClick={() => useEditor.setState({ panel: 'elements' })}>
             요소
+          </button>
+          <button className={panel === 'motion' ? 'on' : ''} onClick={() => useEditor.setState({ panel: 'motion' })}>
+            모션
           </button>
           <button className={panel === 'sound' ? 'on' : ''} onClick={() => useEditor.setState({ panel: 'sound' })}>
             사운드
@@ -44,20 +48,27 @@ export function Inspector() {
       </div>
       <div style={{ flex: 1, overflow: 'auto', padding: 12 }} className="col">
         {panel === 'sound' && project?.hasVideo && <SoundPanel />}
+        {panel === 'motion' && project?.hasVideo && <MotionPanel />}
         {panel === 'elements' && sel && (
           <div className="row" style={{ marginBottom: 4 }}>
             <button className="icon-btn" title="요소 목록" onClick={() => useEditor.setState({ selected: null })} style={{ marginLeft: -6 }}>
               ←
             </button>
             <span className="ellipsis grow" style={{ fontWeight: 650 }}>{sel.label}</span>
+            {sel.parent && (
+              <button className="btn ghost sm" title="이 요소를 감싸는 그룹을 골라요" onClick={() => useEditor.setState({ selected: sel.parent })}>
+                <ArrowUpLeft size={12} />
+                상위 요소
+              </button>
+            )}
           </div>
         )}
         {!project?.hasVideo && <div className="small muted">영상이 만들어지면 여기에서 요소와 사운드를 직접 다듬을 수 있어요.</div>}
         {panel === 'elements' && project?.hasVideo && !sel && (
           <>
-            <div className="section-label">이 시점의 요소 · 캔버스에서 클릭해도 골라져요</div>
+            <div className="section-label">요소 · 캔버스나 아래 타임라인에서 골라도 돼요</div>
             {elements.length === 0 && <div className="small muted">영상을 멈추면 요소 목록이 보여요.</div>}
-            {elements.filter((e) => e.type !== 'sfx' && e.type !== 'bgm').map((e) => {
+            {elements.filter((e) => !['sfx', 'bgm', 'voice'].includes(e.type)).map((e) => {
               const Icon = ICON[e.type] ?? Box
               const edited = !!ov?.elements[e.id]
               return (
@@ -65,7 +76,7 @@ export function Inspector() {
                   key={e.id}
                   className="row"
                   onClick={() => useEditor.setState({ selected: e.id })}
-                  style={{ height: 30, border: 'none', background: 'transparent', borderRadius: 6, padding: '0 8px', cursor: 'pointer', opacity: e.visible ? 1 : 0.45, color: 'var(--text)' }}
+                  style={{ height: 30, border: 'none', background: 'transparent', borderRadius: 6, padding: `0 8px 0 ${8 + e.depth * 14}px`, cursor: 'pointer', opacity: e.visible ? 1 : 0.45, color: 'var(--text)' }}
                 >
                   <Icon size={13} color="var(--text-3)" />
                   <span className="ellipsis grow" style={{ textAlign: 'left' }}>{e.label}</span>
@@ -123,11 +134,15 @@ function ElementEditor({ id }: { id: string; fontsReady: boolean }) {
         <Section title="텍스트">
           <textarea
             className="textarea"
-            rows={2}
+            rows={Math.min(12, Math.max(3, text.split('\n').length + 1))}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onBlur={() => text !== (o.text ?? el.text ?? '') && patchElement(id, label, { text }, ['text'])}
-            style={{ minHeight: 48 }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) (e.target as HTMLTextAreaElement).blur()
+            }}
+            placeholder="문구 (⌘/Ctrl+Enter로 적용)"
+            style={{ minHeight: 76, fontSize: 14, lineHeight: 1.5, resize: 'vertical' }}
           />
           <FontSelect value={family} onChange={(fontFamily) => patchElement(id, label, { style: { fontFamily } }, ['fontFamily'])} />
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
@@ -164,11 +179,16 @@ function ElementEditor({ id }: { id: string; fontsReady: boolean }) {
 
       <Section title="배치">
         {!el.movable && <div className="tiny" style={{ color: 'var(--warning)' }}>이 요소는 위치를 옮길 수 없게 만들어졌어요. Claude에게 "절대 위치로 바꿔줘"라고 요청해 주세요.</div>}
+        {el.movable && !el.transformable && <div className="tiny muted">그룹 안에 줄지어 놓인 요소라 위치만 옮길 수 있어요. 크기·회전도 바꾸려면 Claude에게 "그룹 안에서 절대 위치로 바꿔줘"라고 요청해 주세요.</div>}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
           <NumberField title="가로 이동 (캔버스에서 드래그해도 돼요)" label="X" unit="px" value={t.x ?? 0} onChange={(x) => patchElement(id, label, { transform: { x } }, ['x'])} />
           <NumberField title="세로 이동" label="Y" unit="px" value={t.y ?? 0} onChange={(y) => patchElement(id, label, { transform: { y } }, ['y'])} />
-          <NumberField title="크기 배율" label="크기" unit="%" value={Math.round((t.scale ?? 1) * 100)} min={5} max={1000} onChange={(v) => patchElement(id, label, { transform: { scale: v / 100 } }, ['scale'])} />
-          <NumberField title="회전" label="회전" unit="°" value={t.rotate ?? 0} min={-360} max={360} onChange={(rotate) => patchElement(id, label, { transform: { rotate } }, ['rotate'])} />
+          {el.transformable !== false && (
+            <>
+              <NumberField title="크기 배율" label="크기" unit="%" value={Math.round((t.scale ?? 1) * 100)} min={5} max={1000} onChange={(v) => patchElement(id, label, { transform: { scale: v / 100 } }, ['scale'])} />
+              <NumberField title="회전" label="회전" unit="°" value={t.rotate ?? 0} min={-360} max={360} onChange={(rotate) => patchElement(id, label, { transform: { rotate } }, ['rotate'])} />
+            </>
+          )}
         </div>
       </Section>
 
@@ -192,6 +212,9 @@ function ElementEditor({ id }: { id: string; fontsReady: boolean }) {
             <span>빠르게</span>
           </div>
           <NumberField title="등장 시점을 앞뒤로 옮겨요" label="시점" unit="초" value={o.timing?.shift ?? 0} step={0.1} precision={1} min={-10} max={10} onChange={(shift) => patchElement(id, label, { timing: { shift } }, ['shift'])} />
+          <button className="btn sm" style={{ alignSelf: 'flex-start' }} onClick={() => useEditor.setState({ panel: 'motion', selectedMotion: null })}>
+            모션 하나하나 조정하기 →
+          </button>
         </div>
       </Section>
 

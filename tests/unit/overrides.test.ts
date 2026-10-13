@@ -23,3 +23,13 @@ describe('overridesToScript', () => {
     expect(isEmptyOverride({ transform: { x: 4 } })).toBe(false)
   })
 })
+
+describe('motions in the runtime script', () => {
+  it('passes motion edits to the runtime', () => {
+    const o = emptyOverrides()
+    o.motions['title#1'] = { sig: 'from:opacity,y', duration: 2, ease: 'none', shift: 0.5 }
+    const win: Record<string, unknown> = {}
+    new Function('window', overridesToScript(o))(win)
+    expect((win.__MS_OVERRIDES__ as { motions: Record<string, { duration: number }> }).motions['title#1'].duration).toBe(2)
+  })
+})

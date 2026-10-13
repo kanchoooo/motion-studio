@@ -1,14 +1,19 @@
 import { useEffect } from 'react'
+import { ChevronsLeft, History, MessageSquare } from 'lucide-react'
+import { Splitter } from '../../components/Splitter'
 import { useStore } from '../../store'
+import { HistoryPanel } from '../history/HistoryPanel'
 import { ChatPanel } from './ChatPanel'
 import { useEditor } from './editorStore'
 import { Inspector } from './Inspector'
+import { clampSize, LAYOUT_DEFAULTS, useLayout } from './layout'
 import { Preview } from './Preview'
 import { useOverrides } from './overrides'
-import { Transport } from './Transport'
+import { Timeline } from './Timeline'
 
 export function EditorTab({ active }: { active: boolean }) {
   const { project } = useStore()
+  const L = useLayout()
 
   // designer shortcuts (ignored while typing)
   useEffect(() => {
@@ -46,17 +51,57 @@ export function EditorTab({ active }: { active: boolean }) {
   }, [active, project?.brief.output.fps])
 
   return (
-    <div style={{ height: '100%', display: 'grid', gridTemplateColumns: 'var(--panel-left) 1fr var(--panel-right)', gridTemplateRows: '100%', overflow: 'clip' }}>
-      <ChatPanel />
-      <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, background: 'var(--bg)' }}>
-        <div style={{ flex: 1, minHeight: 0, position: 'relative', margin: 16, background: 'var(--canvas)', borderRadius: 10, overflow: 'clip' }}>
-          <Preview active={active} />
+    <div style={{ height: '100%', display: 'flex', overflow: 'clip' }} data-testid="editor">
+      {L.chatOpen ? (
+        <>
+          <div style={{ width: L.chatW, flex: 'none', minWidth: 0, position: 'relative' }} data-testid="chat-panel">
+            <ChatPanel onFold={() => L.set({ chatOpen: false })} />
+          </div>
+          <Splitter dir="x" value={L.chatW} onChange={(v) => L.set({ chatW: clampSize('chatW', v) })} onReset={() => L.set({ chatW: LAYOUT_DEFAULTS.chatW })} />
+        </>
+      ) : (
+        <div className="rail" style={{ borderLeft: 'none', borderRight: '1px solid var(--border)' }}>
+          <button className="rail-btn" title="대화 펼치기" onClick={() => L.set({ chatOpen: true })}>
+            <MessageSquare size={14} />
+            Claude와 대화
+          </button>
         </div>
-        <div style={{ borderTop: '1px solid var(--border)', background: 'var(--surface)' }}>
-          <Transport />
+      )}
+
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
+          <div style={{ flex: 1, minWidth: 0, background: 'var(--bg)', display: 'flex' }}>
+            <div style={{ flex: 1, minHeight: 0, position: 'relative', margin: 12, background: 'var(--canvas)', borderRadius: 10, overflow: 'clip' }}>
+              <Preview active={active} />
+            </div>
+          </div>
+          <Splitter dir="x" invert value={L.inspectorW} onChange={(v) => L.set({ inspectorW: clampSize('inspectorW', v) })} onReset={() => L.set({ inspectorW: LAYOUT_DEFAULTS.inspectorW })} />
+          <div style={{ width: L.inspectorW, flex: 'none', minWidth: 0, display: 'flex' }} data-testid="inspector">
+            <Inspector />
+          </div>
+          {L.historyOpen && (
+            <>
+              <Splitter dir="x" invert value={L.historyW} onChange={(v) => L.set({ historyW: clampSize('historyW', v) })} onReset={() => L.set({ historyW: LAYOUT_DEFAULTS.historyW })} />
+              <div style={{ width: L.historyW, flex: 'none', minWidth: 0 }}>
+                <HistoryPanel onClose={() => L.set({ historyOpen: false })} />
+              </div>
+            </>
+          )}
+          {!L.historyOpen && (
+            <div className="rail">
+              <button className="rail-btn" title="작업 이력 펼치기" onClick={() => L.set({ historyOpen: true })} data-testid="history-toggle">
+                <History size={14} />
+                이력
+                <ChevronsLeft size={12} />
+              </button>
+            </div>
+          )}
+        </div>
+        <Splitter dir="y" invert value={L.timelineH} onChange={(v) => L.set({ timelineH: clampSize('timelineH', v) })} onReset={() => L.set({ timelineH: LAYOUT_DEFAULTS.timelineH })} />
+        <div style={{ height: L.timelineH, flex: 'none', borderTop: '1px solid var(--border)', minHeight: 0 }}>
+          <Timeline />
         </div>
       </div>
-      <Inspector />
     </div>
   )
 }

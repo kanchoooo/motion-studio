@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { Check, Clapperboard, FileText, Image, Loader2, Monitor, Palette } from 'lucide-react'
+import { Check, Clapperboard, FileText, Film, Image, Loader2, Monitor, Palette, Sparkles } from 'lucide-react'
 import type { Brief } from '@shared/brief'
 import { studio, useStore } from '../../store'
+import { AiSection } from './AiSection'
 import { AssetsSection } from './AssetsSection'
 import { OutputSection } from './OutputSection'
 import { ReferencesSection } from './ReferencesSection'
+import { StoryboardSection } from './StoryboardSection'
 import { TextsSection } from './TextsSection'
 import { ToneSection } from './ToneSection'
 
@@ -14,6 +16,8 @@ const SECTIONS = [
   { id: 'assets', label: '소재', icon: Image },
   { id: 'references', label: '레퍼런스', icon: Clapperboard },
   { id: 'tone', label: '톤앤매너·메모', icon: Palette },
+  { id: 'storyboard', label: '스토리보드', icon: Film },
+  { id: 'ai', label: 'AI 생성·음성', icon: Sparkles },
 ] as const
 type SectionId = (typeof SECTIONS)[number]['id']
 
@@ -42,7 +46,7 @@ export function BriefTab() {
     }, 700)
   }
 
-  const counts: Partial<Record<SectionId, number>> = { texts: brief.texts.length, assets: brief.assets.length }
+  const counts: Partial<Record<SectionId, number>> = { texts: brief.texts.length, assets: brief.assets.length, storyboard: brief.storyboard.length }
 
   return (
     <div style={{ height: '100%', display: 'flex' }}>
@@ -89,6 +93,8 @@ export function BriefTab() {
           {section === 'assets' && <AssetsSection brief={brief} onChange={update} />}
           {section === 'references' && <ReferencesSection />}
           {section === 'tone' && <ToneSection brief={brief} onChange={update} />}
+          {section === 'storyboard' && <StoryboardSection brief={brief} onChange={update} />}
+          {section === 'ai' && <AiSection brief={brief} onChange={update} />}
         </div>
       </div>
     </div>

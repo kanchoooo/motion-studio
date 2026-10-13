@@ -77,7 +77,7 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
               className="btn primary"
               onClick={() => {
                 onClose()
-                if (p?.phase === 'done') setTab('history')
+                if (p?.phase === 'done') setTab('results')
               }}
             >
               {p?.phase === 'done' ? '결과물 보기' : '닫기'}

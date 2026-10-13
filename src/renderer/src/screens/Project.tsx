@@ -1,22 +1,23 @@
 import { useState } from 'react'
-import { ArrowLeft, Copy, Download, Radio, SquareTerminal } from 'lucide-react'
+import { ArrowLeft, Copy, Download, Radio, Sparkles, SquareTerminal } from 'lucide-react'
+import { ConnectionsModal } from '../components/ai/ConnectionsModal'
 import { ThemeSwitch } from '../components/ThemeSwitch'
 import { studio, useStore, type ProjectTab } from '../store'
 import { BriefTab } from './brief/BriefTab'
 import { EditorTab } from './editor/EditorTab'
 import { ExportModal } from './ExportModal'
-import { HistoryTab } from './history/HistoryTab'
+import { ResultsTab } from './history/ResultsTab'
 import { FamilyMenu } from './variations/FamilyMenu'
 import { VariationModal } from './variations/VariationModal'
 
 const TABS: { id: ProjectTab; label: string }[] = [
   { id: 'brief', label: '브리프' },
   { id: 'editor', label: '편집' },
-  { id: 'history', label: '이력·결과물' },
+  { id: 'results', label: '결과물' },
 ]
 
 export function Project() {
-  const { project, tab, setTab, closeProject, session, terminalOpen, setTerminal, exportProgress } = useStore()
+  const { project, tab, setTab, closeProject, session, terminalOpen, setTerminal, exportProgress, aiOpen } = useStore()
   const [exporting, setExporting] = useState(false)
   const [varying, setVarying] = useState(false)
   if (!project) return null
@@ -59,6 +60,10 @@ export function Project() {
               리모트 컨트롤
             </button>
           )}
+          <button className="btn ghost sm" title="힉스필드·매그니픽·아트리스트 연결, 회사/개인 계정 전환" onClick={() => useStore.setState({ aiOpen: true })} data-testid="ai-connections">
+            <Sparkles size={13} />
+            AI 연결
+          </button>
           <button className={`icon-btn${terminalOpen ? ' active' : ''}`} title="터미널 열기/닫기" onClick={() => setTerminal(!terminalOpen)}>
             <SquareTerminal size={16} />
           </button>
@@ -79,10 +84,11 @@ export function Project() {
         <div style={{ position: 'absolute', inset: 0, visibility: tab === 'editor' ? 'visible' : 'hidden' }}>
           <EditorTab active={tab === 'editor'} />
         </div>
-        {tab === 'history' && <HistoryTab />}
+        {tab === 'results' && <ResultsTab />}
       </div>
       {exporting && <ExportModal onClose={() => setExporting(false)} />}
       {varying && <VariationModal onClose={() => setVarying(false)} />}
+      {aiOpen && <ConnectionsModal onClose={() => useStore.setState({ aiOpen: false })} />}
     </div>
   )
 }

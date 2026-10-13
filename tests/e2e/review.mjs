@@ -1,6 +1,7 @@
 // Opens an existing project (e.g. the live-flow sandbox) and exercises preview,
 // selection, inspector editing, markup, export and history.
 // Run: MS_SANDBOX=<dir> node tests/e2e/review.mjs
+import { grantAccess, toHome } from './access.mjs'
 import { _electron as electron } from 'playwright-core'
 import { mkdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
@@ -15,6 +16,7 @@ const t0 = Date.now()
 const log = (...a) => console.log(`[${((Date.now() - t0) / 1000).toFixed(0)}s]`, ...a)
 const steps = (process.env.STEPS || 'preview,edit,mark,export,history').split(',')
 
+grantAccess(join(sandbox, 'userdata'))
 const app = await electron.launch({
   args: [join(root, 'out', 'main', 'index.js')],
   cwd: root,
@@ -28,7 +30,7 @@ const shot = async (name) => {
 }
 
 try {
-  await win.getByText('브리프를 정리하고 Claude와 대화하면서 영상을 만들어요.').waitFor({ timeout: 90000 })
+  await toHome(win)
   await shot('00-home')
   await win.locator('.card').filter({ has: win.locator('img, span') }).first().click()
   await win.getByText('Claude와 대화').waitFor({ timeout: 20000 })
@@ -107,9 +109,12 @@ try {
   }
 
   if (steps.includes('history')) {
-    await win.getByRole('button', { name: '이력·결과물' }).click()
+    await win.getByRole('button', { name: '결과물', exact: true }).click()
     await win.waitForTimeout(1500)
-    await shot('09-history')
+    await shot('09-results')
+    await win.locator('.drag .seg').getByRole('button', { name: '편집' }).click()
+    if (!(await win.getByTestId('history-panel').count())) await win.getByTestId('history-toggle').click()
+    await shot('09b-history-panel')
   }
 } catch (e) {
   console.error('REVIEW FAILED:', e.message)

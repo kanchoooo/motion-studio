@@ -1,7 +1,7 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { basename, extname, join } from 'node:path'
 import { app, shell } from 'electron'
-import { emptyBrief, OUTPUT_PRESETS, type Asset, type AssetKind, type Brief, type OutputPresetId } from '@shared/brief'
+import { emptyBrief, normalizeBrief, OUTPUT_PRESETS, type Asset, type AssetKind, type Brief, type OutputPresetId } from '@shared/brief'
 import { emptyOverrides, normalizeOverrides, overridesToScript, type Overrides } from '@shared/overrides'
 import { applyAudio, applyLength } from './audio'
 import type { ProjectMeta, ProjectState, ProjectSummary } from '@shared/project'
@@ -169,7 +169,7 @@ export function state(projectId: string): ProjectState {
   return {
     meta: readJson<ProjectMeta>(f.meta(dir), null as never),
     path: dir,
-    brief: readJson<Brief>(f.brief(dir), null as never),
+    brief: normalizeBrief(readJson<Brief>(f.brief(dir), null as never)),
     overrides: normalizeOverrides(readJson<Overrides | null>(f.overrides(dir), null)),
     hasVideo: compositionHasVideo(html),
   }
@@ -220,6 +220,20 @@ const IMAGE = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg', '.avif'
 const VIDEO = new Set(['.mp4', '.mov', '.webm', '.m4v'])
 const AUDIO = new Set(['.mp3', '.wav', '.m4a', '.aac', '.ogg'])
 export const ASSET_EXTENSIONS = [...IMAGE, ...VIDEO, ...AUDIO, '.psd'].map((e) => e.slice(1))
+
+export const FEEDBACK_IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'gif']
+
+/** reference image attached to a chat message or a canvas mark: copied into feedback/refs/ */
+export function addFeedbackImage(projectId: string, file: string): string {
+  const ext = extname(file).toLowerCase().slice(1)
+  if (!FEEDBACK_IMAGE_EXTENSIONS.includes(ext)) throw new Error('PNG, JPG, WebP, GIF 이미지만 첨부할 수 있어요.')
+  if (statSync(file).size > 25 * 1024 * 1024) throw new Error('25MB보다 큰 이미지는 첨부할 수 없어요.')
+  const dir = join(pathOf(projectId), 'feedback', 'refs')
+  mkdirSync(dir, { recursive: true })
+  const name = `${Date.now()}-${newId().slice(0, 6)}.${ext === 'jpeg' ? 'jpg' : ext}`
+  copyFileSync(file, join(dir, name))
+  return `feedback/refs/${name}`
+}
 
 function guessKind(name: string, ext: string): AssetKind {
   const n = name.toLowerCase()

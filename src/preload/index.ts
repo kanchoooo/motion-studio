@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import type { AiLoginEvent } from '@shared/ai'
 import type { AgentEvent, ExportProgress, StudioApi } from '@shared/api'
 
 const invoke = (channel: string, ...args: unknown[]) => ipcRenderer.invoke(channel, ...args)
@@ -11,6 +12,8 @@ function subscribe<T>(channel: string, cb: (payload: T) => void): () => void {
 
 const api: StudioApi & { internal: { previewBase: string } } = {
   app: {
+    hasAccess: () => invoke('app:hasAccess'),
+    unlock: (password) => invoke('app:unlock', password),
     info: () => invoke('app:info'),
     doctor: () => invoke('app:doctor'),
     login: () => invoke('app:login'),
@@ -42,6 +45,7 @@ const api: StudioApi & { internal: { previewBase: string } } = {
     sfxLibrary: () => invoke('projects:sfxLibrary'),
     useSfx: (id, sfxId) => invoke('projects:useSfx', id, sfxId),
     fileUrl: (id, rel) => invoke('projects:fileUrl', id, rel),
+    addFeedbackImage: (id, file) => invoke('projects:addFeedbackImage', id, file),
     diskUsage: (id) => invoke('projects:diskUsage', id),
     clearCache: (id) => invoke('projects:clearCache', id),
   },
@@ -53,6 +57,7 @@ const api: StudioApi & { internal: { previewBase: string } } = {
     interrupt: (id) => invoke('agent:interrupt', id),
     transcript: (id) => invoke('agent:transcript', id),
     approveStoryboard: (id, itemId) => invoke('agent:approveStoryboard', id, itemId),
+    setModel: (id, opts) => invoke('agent:setModel', id, opts),
     onEvent: (cb) => subscribe<AgentEvent>('agent:event', cb),
   },
   terminal: {
@@ -95,6 +100,25 @@ const api: StudioApi & { internal: { previewBase: string } } = {
   },
   fonts: {
     list: () => invoke('fonts:list'),
+  },
+  ai: {
+    accounts: () => invoke('ai:accounts'),
+    login: (provider, label, relogin) => invoke('ai:login', provider, label, relogin),
+    cancelLogin: () => invoke('ai:cancelLogin'),
+    onLogin: (cb) => subscribe<AiLoginEvent>('ai:login', cb),
+    setActive: (provider, id) => invoke('ai:setActive', provider, id),
+    rename: (id, label) => invoke('ai:rename', id, label),
+    remove: (id) => invoke('ai:remove', id),
+    models: (provider, kind) => invoke('ai:models', provider, kind),
+    voices: (provider, query) => invoke('ai:voices', provider, query),
+    ttsSample: (provider, voiceId, text) => invoke('ai:ttsSample', provider, voiceId, text),
+    settings: () => invoke('ai:settings'),
+    saveSettings: (patch) => invoke('ai:saveSettings', patch),
+    generated: (id) => invoke('ai:generated', id),
+    audioCandidates: (id) => invoke('ai:audioCandidates', id),
+    searchAudio: (id, input) => invoke('ai:searchAudio', id, input),
+    useAudioCandidate: (id, item) => invoke('ai:useAudioCandidate', id, item),
+    artlistLogin: (id) => invoke('ai:artlistLogin', id),
   },
   internal: {
     previewBase: (process.argv.find((a) => a.startsWith('--ms-preview-base=')) ?? '').split('=')[1] ?? '',

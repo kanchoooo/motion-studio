@@ -3,7 +3,7 @@ import { Clapperboard, Loader2 } from 'lucide-react'
 import { studio, useStore } from '../../store'
 import { elementsForMark, elementsUnder, useEditor } from './editorStore'
 import { useOverrides } from './overrides'
-import { MsPlayer, queryElements, queryTiming } from './player'
+import { MsPlayer, queryElements, queryMotions, queryTiming } from './player'
 
 const SAFE: Record<string, { top: number; right: number; bottom: number; left: number } | null> = {
   none: null,
@@ -39,6 +39,7 @@ export function Preview({ active }: { active: boolean }) {
           useEditor.setState({ ready: true, duration: duration || out.duration })
           void studio.projects.audio(pid).then((audio) => useEditor.setState({ audio }))
           void queryTiming(player).then((timing) => useEditor.setState({ timing }))
+          void queryMotions(player).then(({ items, stale }) => useEditor.setState({ motions: items, staleMotions: stale }))
           if (keepTime > 0) player!.seek(Math.min(keepTime, duration || keepTime))
           setTimeout(refreshElements, 150)
           setError(null)
@@ -73,7 +74,8 @@ export function Preview({ active }: { active: boolean }) {
     const ro = new ResizeObserver(measure)
     if (host.current) ro.observe(host.current)
     return () => ro.disconnect()
-  }, [measure, active])
+    // the host div only exists once there is a video: measure again when the first one arrives
+  }, [measure, active, project?.hasVideo])
 
   // ---- element boxes follow the playhead when paused ----
   const refreshElements = useCallback(async () => {

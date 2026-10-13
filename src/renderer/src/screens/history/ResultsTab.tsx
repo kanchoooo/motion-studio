@@ -1,37 +1,27 @@
 import { useEffect, useState } from 'react'
-import { Bookmark, Bot, Columns2, FolderOpen, HardDrive, MoreHorizontal, Play, RotateCcw, Sparkles, Star, Trash2, User } from 'lucide-react'
-import type { HistoryEntry, RenderRecord } from '@shared/project'
+import { Bookmark, Columns2, FolderOpen, HardDrive, MoreHorizontal, Play, RotateCcw, Star, Trash2 } from 'lucide-react'
+import type { RenderRecord } from '@shared/project'
 import { formatBytes, Menu, Modal, relativeTime } from '../../components/ui'
 import { CompareModal } from './CompareModal'
 import { StorageModal } from './StorageModal'
 import { studio, useStore } from '../../store'
 
-const ACTOR = {
-  designer: { icon: User, label: '디자이너', color: 'var(--accent)' },
-  claude: { icon: Bot, label: 'Claude', color: 'var(--success)' },
-  app: { icon: Sparkles, label: '자동', color: 'var(--text-3)' },
-}
-
-export function HistoryTab() {
+export function ResultsTab() {
   const { project, historyNonce, toast, setProject, setTab } = useStore()
   const pid = project!.meta.id
   const [renders, setRenders] = useState<RenderRecord[]>([])
-  const [entries, setEntries] = useState<HistoryEntry[]>([])
   const [base, setBase] = useState('')
   const [playing, setPlaying] = useState<RenderRecord | null>(null)
   const [menu, setMenu] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
-  const [filter, setFilter] = useState<'all' | 'starred' | 'versions'>('all')
   const [comparing, setComparing] = useState(false)
   const [picked, setPicked] = useState<string[]>([])
-  const [rowMenu, setRowMenu] = useState<string | null>(null)
   const [storage, setStorage] = useState(false)
   const [usage, setUsage] = useState<number | null>(null)
 
   const load = async () => {
-    const [r, h, b] = await Promise.all([studio.renders.list(pid), studio.history.list(pid), studio.projects.fileUrl(pid, '')])
+    const [r, b] = await Promise.all([studio.renders.list(pid), studio.projects.fileUrl(pid, '')])
     setRenders(r)
-    setEntries(h)
     setBase(b)
     void studio.projects.diskUsage(pid).then((u) => setUsage(u.total))
   }
@@ -51,20 +41,10 @@ export function HistoryTab() {
     }
   }
 
-  const restorePart = async (entryId: string, scope: 'composition' | 'overrides' | 'brief', label: string) => {
-    const what = { composition: '영상', overrides: '직접 수정값', brief: '브리프' }[scope]
-    if (!confirm(`"${label}" 시점의 ${what}만 되돌릴까요?\n나머지는 지금 상태 그대로 두고, 지금 상태도 이력에 남아요.`)) return
-    setProject(await studio.history.restorePartial(pid, entryId, scope))
-    toast(`${what}만 되돌렸어요`, 'success')
-    void load()
-  }
-
   const toggleStar = async (r: RenderRecord) => {
     await studio.renders.update(pid, r.id, { starred: !r.starred })
     void load()
   }
-
-  const shown = entries.filter((e) => filter === 'all' || (filter === 'starred' ? e.starred : !!e.versionName))
 
   return (
     <div style={{ height: '100%', overflow: 'auto' }}>
@@ -72,7 +52,7 @@ export function HistoryTab() {
         <div className="row" style={{ marginBottom: 6 }}>
           <div className="col grow" style={{ gap: 2 }}>
             <div className="h2">결과물</div>
-            <div className="muted small">내보낸 영상이 모두 보관돼요. 이전 결과물이 더 마음에 들면 그 상태로 되돌릴 수 있어요.</div>
+            <div className="muted small">내보낸 영상이 모두 보관돼요. 이전 결과물이 더 마음에 들면 그 상태로 되돌릴 수 있어요. 작업 이력은 편집 화면 오른쪽 "이력"에 있어요.</div>
           </div>
           <button className="btn ghost" onClick={() => setStorage(true)} title="저장 공간 관리">
             <HardDrive size={14} />
@@ -161,72 +141,6 @@ export function HistoryTab() {
           </div>
         )}
 
-        <div className="row" style={{ marginTop: 28, marginBottom: 6 }}>
-          <div className="col grow" style={{ gap: 2 }}>
-            <div className="h2">작업 이력</div>
-            <div className="muted small">Claude의 작업, 직접 수정, 브리프 변경이 자동으로 기록돼요.</div>
-          </div>
-          <div className="seg">
-            {(['all', 'versions', 'starred'] as const).map((f) => (
-              <button key={f} className={filter === f ? 'on' : ''} onClick={() => setFilter(f)}>
-                {{ all: '전체', versions: '저장한 버전', starred: '별표' }[f]}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="card" style={{ padding: 4 }}>
-          {shown.length === 0 && <div className="small muted" style={{ padding: 16 }}>표시할 이력이 없어요.</div>}
-          {shown.map((e, i) => {
-            const a = ACTOR[e.actor] ?? ACTOR.app
-            const Icon = a.icon
-            return (
-              <div key={e.id} className="row" style={{ padding: '10px 12px', borderTop: i ? '1px solid var(--border)' : 'none', gap: 12 }}>
-                <div style={{ width: 28, height: 28, borderRadius: 14, background: 'var(--surface-3)', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none' }}>
-                  <Icon size={14} color={a.color} />
-                </div>
-                {e.thumbnail && base && <img src={`${base}${e.thumbnail}`} style={{ width: 64, height: 36, objectFit: 'cover', borderRadius: 4, flex: 'none' }} />}
-                <div className="col grow" style={{ gap: 1, minWidth: 0 }}>
-                  <div className="row" style={{ gap: 6 }}>
-                    {e.versionName && <span className="badge accent">{e.versionName}</span>}
-                    <span className="small ellipsis">{e.summary}</span>
-                  </div>
-                  <div className="tiny faint">
-                    {a.label} · {relativeTime(e.at)}
-                    {i === 0 && filter === 'all' ? ' · 현재 상태' : ''}
-                  </div>
-                </div>
-                <button className="icon-btn" title="별표" onClick={async () => {
-                  await studio.history.star(pid, e.id, !e.starred)
-                  void load()
-                }}>
-                  <Star size={14} fill={e.starred ? 'var(--warning)' : 'none'} color={e.starred ? 'var(--warning)' : 'currentColor'} />
-                </button>
-                {!(i === 0 && filter === 'all') && (
-                  <div style={{ position: 'relative' }} className="row">
-                    <button className="btn sm" onClick={() => restore(e.id, e.versionName ?? e.summary)}>
-                      <RotateCcw size={12} />
-                      되돌리기
-                    </button>
-                    <button className="icon-btn" title="일부만 되돌리기" onClick={() => setRowMenu(rowMenu === e.id ? null : e.id)}>
-                      <MoreHorizontal size={14} />
-                    </button>
-                    {rowMenu === e.id && (
-                      <Menu
-                        style={{ right: 0, top: 32 }}
-                        onClose={() => setRowMenu(null)}
-                        items={[
-                          { label: '영상(Claude 작업)만 되돌리기', onClick: () => restorePart(e.id, 'composition', e.versionName ?? e.summary) },
-                          { label: '직접 수정값만 되돌리기', onClick: () => restorePart(e.id, 'overrides', e.versionName ?? e.summary) },
-                          { label: '브리프만 되돌리기', onClick: () => restorePart(e.id, 'brief', e.versionName ?? e.summary) },
-                        ]}
-                      />
-                    )}
-                  </div>
-                )}
-              </div>
-            )
-          })}
-        </div>
       </div>
 
       {comparing && picked.length === 2 && (

@@ -1,11 +1,12 @@
 import { create } from 'zustand'
+import type { AudioCandidateList } from '@shared/ai'
 import type { AgentEvent, ChatItem, DoctorReport, ExportProgress, FontFamily, SessionState } from '@shared/api'
 import type { ProjectState, ProjectSummary } from '@shared/project'
 
 export const studio = window.studio
 
-export type Screen = 'doctor' | 'home' | 'project'
-export type ProjectTab = 'brief' | 'editor' | 'history'
+export type Screen = 'lock' | 'doctor' | 'home' | 'project'
+export type ProjectTab = 'brief' | 'editor' | 'results'
 
 interface Toast {
   id: number
@@ -30,6 +31,9 @@ interface State {
   exportProgress: ExportProgress | null
   fonts: FontFamily[]
   toasts: Toast[]
+  /** latest music / sound candidates Claude found for the open project */
+  audioCandidates: AudioCandidateList | null
+  aiOpen: boolean
 
   go(screen: Screen): void
   setTab(tab: ProjectTab): void
@@ -46,7 +50,7 @@ interface State {
 let toastSeq = 0
 
 export const useStore = create<State>((set, get) => ({
-  screen: 'doctor',
+  screen: 'lock',
   theme: (localStorage.getItem('ms-theme') as 'dark' | 'light') || 'dark',
   doctor: null,
   projects: [],
@@ -62,6 +66,8 @@ export const useStore = create<State>((set, get) => ({
   exportProgress: null,
   fonts: [],
   toasts: [],
+  audioCandidates: null,
+  aiOpen: false,
 
   go: (screen) => set({ screen }),
   setTab: (tab) => set({ tab }),
@@ -75,7 +81,7 @@ export const useStore = create<State>((set, get) => ({
   openProject: async (path) => {
     const project = await studio.projects.open(path)
     const id = project.meta.id
-    set({ project, screen: 'project', tab: project.hasVideo ? 'editor' : 'brief', chat: [], session: { status: 'starting' }, exportProgress: null })
+    set({ project, screen: 'project', tab: project.hasVideo ? 'editor' : 'brief', chat: [], session: { status: 'starting' }, exportProgress: null, audioCandidates: null })
     const session = await studio.agent.start(id)
     const chat = await studio.agent.transcript(id)
     if (get().project?.meta.id === id) set({ session, chat, terminalOpen: session.attention === 'trust' || get().terminalOpen })
@@ -124,6 +130,10 @@ studio.agent.onEvent((e: AgentEvent) => {
       break
     case 'history-changed':
       useStore.setState({ historyNonce: s.historyNonce + 1 })
+      break
+    case 'audio-candidates':
+      useStore.setState({ audioCandidates: e.list })
+      useStore.getState().toast(`음악 후보 ${e.list.items.length}개를 찾았어요. 사운드 패널에서 들어 보세요.`, 'success')
       break
   }
 })

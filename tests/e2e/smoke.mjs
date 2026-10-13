@@ -1,6 +1,7 @@
 // End-to-end smoke test: launches the built app, walks the main designer flow
 // and saves screenshots to tests/e2e/shots/. Run: npm run build && node tests/e2e/smoke.mjs
 import { _electron as electron, chromium } from 'playwright-core'
+import { grantAccess } from './access.mjs'
 import { spawn } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -59,6 +60,21 @@ const shot = async (name) => {
 const step = (name) => console.log(`\n== ${name}`)
 
 try {
+  step('lock')
+  await win.getByTestId('lock-screen').waitFor({ timeout: 20000 })
+  await shot('00-lock')
+  await win.getByLabel('암호').fill('틀린암호')
+  await win.getByLabel('암호').press('Enter')
+  await win.getByText('암호가 맞지 않아요').waitFor({ timeout: 10000 })
+  await shot('00b-lock-wrong')
+  if (process.env.MS_ACCESS_PASSWORD) {
+    await win.getByLabel('암호').fill(process.env.MS_ACCESS_PASSWORD)
+    await win.getByLabel('암호').press('Enter')
+  } else {
+    grantAccess(join(sandbox, 'userdata'))
+    await win.reload()
+  }
+
   step('doctor')
   await win.getByText('작업 환경을 확인할게요').waitFor({ timeout: 15000 })
   await shot('01-doctor')
@@ -88,6 +104,18 @@ try {
   await win.getByRole('button', { name: /톤앤매너/ }).click()
   await win.getByPlaceholder('예: 모션커피').fill('모션커피')
   await shot('06-brief-tone')
+  // storyboard (optional): one scene with a locked line and a described image
+  await win.getByRole('button', { name: /스토리보드/ }).click()
+  await win.getByRole('button', { name: /씬 추가/ }).click()
+  await win.getByPlaceholder('씬 제목 (예: 오프닝 · 제품 등장)').fill('오프닝')
+  await win.getByRole('button', { name: /문구 추가/ }).click()
+  await win.getByPlaceholder('예: 봄을 담은 한 잔').fill('봄을 담은 한 잔')
+  await win.getByRole('button', { name: /이미지 추가/ }).click()
+  await win.getByPlaceholder(/벚꽃잎이 흩날리는/).fill('벚꽃이 흩날리는 카페 창가')
+  await shot('06b-brief-storyboard')
+  await win.getByRole('button', { name: /AI 생성·음성/ }).click()
+  await win.getByTestId('ai-section').waitFor()
+  await shot('06c-brief-ai')
   await win.waitForTimeout(1200) // autosave
   if (only === 'brief') throw new Error('stop')
 
@@ -103,9 +131,31 @@ try {
   const state = await win.evaluate(() => document.querySelector('.badge')?.textContent)
   console.log('session badge:', state)
 
-  step('history')
-  await win.getByRole('button', { name: '이력·결과물' }).click()
-  await shot('09-history')
+  step('panels')
+  // history folds out of the editor's right edge; chat folds to the left
+  await win.getByTestId('history-toggle').click()
+  await win.getByTestId('history-panel').waitFor()
+  await win.getByText('프로젝트를 만들었어요').first().waitFor({ timeout: 10000 })
+  const before = await win.getByTestId('chat-panel').evaluate((el) => el.getBoundingClientRect().width)
+  const bar = win.locator('.splitter-x').first()
+  const box = await bar.boundingBox()
+  await win.mouse.move(box.x + box.width / 2, box.y + 200)
+  await win.mouse.down()
+  await win.mouse.move(box.x + box.width / 2 + 120, box.y + 200, { steps: 6 })
+  await win.mouse.up()
+  const after = await win.getByTestId('chat-panel').evaluate((el) => el.getBoundingClientRect().width)
+  console.log('chat width', before, '→', after)
+  if (Math.abs(after - before - 120) > 4) throw new Error(`chat panel did not resize (${before} → ${after})`)
+  await shot('09-history-panel')
+  await win.getByRole('button', { name: 'AI 연결' }).click()
+  await win.getByText('이미지·영상·음성 생성 서비스에 로그인하면').waitFor()
+  await shot('09b-ai-connections')
+  await win.keyboard.press('Escape')
+
+  step('results')
+  await win.getByRole('button', { name: '결과물', exact: true }).click()
+  await win.getByText('아직 내보낸 영상이 없어요').waitFor()
+  await shot('10-results')
 } catch (e) {
   if (e.message !== 'stop') {
     console.error('E2E FAILED:', e.message)

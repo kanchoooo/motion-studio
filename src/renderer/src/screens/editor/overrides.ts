@@ -1,7 +1,7 @@
 // Designer edits: optimistic local state, instant preview via the runtime bridge,
 // debounced save (each save becomes a history entry with a readable summary).
 import { create } from 'zustand'
-import { normalizeOverrides, type AudioEdit, type BgmTrack, type ElementOverride, type Overrides, type TimeRemapSection } from '@shared/overrides'
+import { normalizeOverrides, type AudioEdit, type BgmTrack, type ElementOverride, type MotionOverride, type Overrides, type TimeRemapSection } from '@shared/overrides'
 import { studio, useStore } from '../../store'
 import { useEditor } from './editorStore'
 import { ask } from './player'
@@ -25,7 +25,7 @@ const LABEL: Record<string, string> = {
 }
 
 /** changes that need the composition to rebuild its timeline */
-const NEEDS_RELOAD = new Set(['text', 'animSpeed', 'shift', 'timeRemap', 'audio'])
+const NEEDS_RELOAD = new Set(['text', 'animSpeed', 'shift', 'timeRemap', 'audio', 'motion'])
 
 interface OverrideState {
   value: Overrides | null
@@ -44,6 +44,8 @@ interface OverrideState {
   patchAudio(id: string, patch: AudioEdit | null, summary: string): void
   setSfxGroup(group: string, value: { src: string; volume?: number } | null, summary: string): void
   setBgm(tracks: BgmTrack[], summary: string): void
+  /** edit one authored motion; null removes the edit */
+  patchMotion(key: string, sig: string, patch: Partial<Omit<MotionOverride, 'sig'>> | null, summary: string): void
 }
 
 let timer: ReturnType<typeof setTimeout> | undefined
@@ -154,6 +156,19 @@ export const useOverrides = create<OverrideState>((set, get) => ({
     if (!cur) return
     set({ value: { ...cur, bgm: tracks }, ...pushUndo(cur) })
     schedule(['audio'], summary)
+  },
+  patchMotion: (key, sig, patch, summary) => {
+    const cur = get().value
+    if (!cur) return
+    const motions = { ...cur.motions }
+    if (patch === null) delete motions[key]
+    else {
+      const prev = motions[key]?.sig === sig ? motions[key] : { sig }
+      const next: MotionOverride = { ...prev, ...patch, values: patch.values ? { ...prev.values, ...patch.values } : prev.values, sig }
+      motions[key] = next
+    }
+    set({ value: { ...cur, motions }, ...pushUndo(cur) })
+    schedule(['motion'], summary)
   },
   setRemap: (sections, keepTotal, summary) => {
     const cur = get().value

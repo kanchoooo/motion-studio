@@ -6,6 +6,7 @@ import { Menu, NumberField, Toggle } from '../../components/ui'
 import { studio, useStore } from '../../store'
 import { useEditor } from './editorStore'
 import { useOverrides } from './overrides'
+import { SoundFinder } from './SoundFinder'
 
 const fileName = (p: string) => p.split('/').pop() ?? p
 
@@ -31,6 +32,7 @@ export function SoundPanel() {
 
   const bgmClaude = audio.filter((a) => a.kind === 'bgm' && !a.managed)
   const sfx = audio.filter((a) => a.kind === 'sfx')
+  const voice = audio.filter((a) => a.kind === 'voice')
   const groups = [...new Set(sfx.map((s) => s.group ?? '기타'))]
   const sel = audio.find((a) => a.id === selectedAudio)
   const selTrack = ov.bgm.find((t) => t.id === selectedAudio)
@@ -65,6 +67,7 @@ export function SoundPanel() {
 
   return (
     <div className="col" style={{ gap: 14 }}>
+      <SoundFinder />
       <div className="col" style={{ gap: 6 }}>
         <div className="row">
           <span className="section-label grow">배경음악</span>
@@ -81,6 +84,15 @@ export function SoundPanel() {
           <ClipRow key={a.id} icon={<Music size={13} />} label={a.label} sub={`${a.start.toFixed(1)}초~ · ${fileName(a.src)}`} onClick={() => useEditor.setState({ selectedAudio: a.id })} badge="Claude" />
         ))}
       </div>
+
+      {voice.length > 0 && (
+        <div className="col" style={{ gap: 6 }}>
+          <span className="section-label">내레이션 · {voice.length}개</span>
+          {voice.map((a) => (
+            <ClipRow key={a.id} icon={<Volume2 size={13} />} label={a.label} sub={`${a.start.toFixed(1)}초~ · ${fileName(a.src)}`} onClick={() => useEditor.setState({ selectedAudio: a.id })} muted={a.volume === 0} />
+          ))}
+        </div>
+      )}
 
       <div className="col" style={{ gap: 6 }}>
         <span className="section-label">효과음 {sfx.length ? `· ${sfx.length}개` : ''}</span>

@@ -1,5 +1,6 @@
 // Instant variations (no Claude): speed-matched 6s and scaled 1280x720, exported and probed.
 // Run: MS_SANDBOX=<dir> node tests/e2e/variations-quick.mjs
+import { grantAccess } from './access.mjs'
 import { _electron as electron } from 'playwright-core'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
@@ -13,6 +14,7 @@ const sandbox = process.env.MS_SANDBOX
 const ffprobe = join(root, 'resources', 'bin', `${process.platform}-${process.arch}`, 'ffprobe')
 const t0 = Date.now()
 const log = (...a) => console.log(`[${((Date.now() - t0) / 1000).toFixed(0)}s]`, ...a)
+grantAccess(join(sandbox, 'userdata'))
 const app = await electron.launch({ args: [join(root, 'out', 'main', 'index.js')], cwd: root, env: { ...process.env, MS_PROJECTS_DIR: join(sandbox, 'projects'), MS_USER_DATA: join(sandbox, 'userdata') } })
 const win = await app.firstWindow()
 const shot = async (n) => {

@@ -65,6 +65,13 @@ MS_SANDBOX=<live-flow가 남긴 폴더> node tests/e2e/review.mjs
 ```
 src/
   main/            Electron 메인 프로세스
+    ai/            AI 서비스 연결 (힉스필드·매그니픽: 앱이 OAuth·MCP 클라이언트)
+                   - accounts: 서비스별 계정 여러 개, 사용 중 계정 (토큰은 0600 파일, Windows는 DPAPI)
+                   - connect: 로그인(동적 등록·PKCE·루프백), MCP 연결·토큰 갱신
+                   - media: 결과 파일을 composition/assets/generated/에 저장
+                   - catalog / tts: 모델·목소리 목록, 미리듣기 샘플
+    access.ts      첫 실행 암호 (해시만 보관)
+    audit.ts       숨은 창에서 영상을 열어 편집 가능 요소·그룹 내부·모션 상태 점검
     agent/         Claude 실시간 세션
                    - pty-session: 대화형 Claude Code를 PTY로 실행, 리모트 컨트롤
                    - transcript: 대화 기록 파일 추적
@@ -113,6 +120,19 @@ poc/               Phase 0 기술 검증 기록 (RESULTS.md)
 - **폴더 신뢰 확인은 자동으로 답하지 않는다.** 터미널을 열고 안내만 한다.
 - 개발 중 Claude Code 터미널 안에서 `npm run dev`를 실행하면 부모 세션의 `CLAUDE*` 환경변수가 이어진다. 그러면 대화 기록 저장이 꺼지므로, PTY를 띄울 때 이 변수들을 제거한다(`cleanEnv`).
 
+## 5-1. AI 서비스 연결
+
+| 서비스 | 연결 방식 | 로그인 |
+|---|---|---|
+| 힉스필드 `mcp.higgsfield.ai/mcp` | 앱이 MCP 클라이언트 | 앱의 "AI 연결" → 브라우저 OAuth |
+| 매그니픽 `mcp.magnific.com` | 앱이 MCP 클라이언트 | 앱의 "AI 연결" → 브라우저 OAuth |
+| 아트리스트 `mcp.artlist.io/mcp` | Claude Code가 MCP 클라이언트 (동적 등록이 꺼져 있음) | Claude 터미널의 `/mcp` → artlist → Authenticate |
+
+- Claude는 앱 MCP의 중계 도구(`ai_status`, `ai_tools`, `ai_call`, `ai_import`)로 힉스필드·매그니픽을 써요. 결과 파일은 앱이 내려받아 프로젝트에 넣어요(세션에 셸이 없어서).
+- 아트리스트를 켜면 세션 MCP 설정에 `artlist`가 추가되고 `mcp__artlist` 권한이 열려요. 후보는 `show_audio_candidates`로 사운드 패널에 보여줘요.
+- 모델·추론 강도는 세션을 `--model`/`--effort`로 다시 시작해서 바꿔요(`--resume`).
+  - Claude Code의 `/model`·`/effort` 화면에서 Enter를 누르면 사용자 전체 기본값이 바뀌기 때문이에요.
+
 ## 6. 코드 서명과 공증 (Mac)
 
 배포용 빌드는 `npm run dist:mac`(= `node scripts/build-mac.mjs`)으로 한다. M칩용과 Intel용 dmg·zip을 각각 만든다. `--arch arm64` 또는 `--arch x64`로 하나만 만들 수도 있다.
@@ -154,7 +174,16 @@ poc/               Phase 0 기술 검증 기록 (RESULTS.md)
 - Electron 자체는 키체인을 쓰지 않는다(`use-mock-keychain`). 그래서 "Safe Storage" 키체인 확인 창이 반복해서 뜨지 않는다.
 - 쉬고 있는 다른 프로젝트의 Claude 세션은 정리해서, 여러 프로세스가 동시에 토큰을 갱신하다 로그아웃되는 일을 줄인다.
 
-## 8. 문제 해결
+## 8. 첫 실행 암호
+
+- 지인에게만 공유하는 앱이라 처음 실행할 때 암호를 한 번 물어요(`src/main/access.ts`, 화면은 `LockScreen.tsx`).
+  - 통과하면 앱 데이터 폴더에 `access.json`이 생기고, 다음부터는 묻지 않아요.
+- 저장소에는 **암호 원문이 없고**, 솔트를 넣은 scrypt 해시만 있어요. 소스가 공개라 직접 빌드하면 우회할 수 있으니, 설치 파일을 가진 사람을 거르는 정도의 장치예요.
+- 암호를 바꾸려면 `node scripts/set-access-password.mjs`를 실행하고 다시 빌드하면 돼요.
+- 테스트는 샌드박스 프로필에 `access.json`을 미리 만들어 통과해요(`tests/e2e/access.mjs`).
+  - 실제 암호로 확인하려면 환경변수로 넘겨요: `MS_ACCESS_PASSWORD=… node tests/e2e/smoke.mjs`, `MS_ACCESS_PASSWORD=… npx vitest run`.
+
+## 9. 문제 해결
 
 | 증상 | 해결 |
 |---|---|

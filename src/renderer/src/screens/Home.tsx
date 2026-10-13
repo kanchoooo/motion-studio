@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Clapperboard, FolderOpen, MoreHorizontal, Plus, Settings2, Trash2 } from 'lucide-react'
+import { Clapperboard, FolderOpen, MoreHorizontal, Plus, Settings2, Sparkles, Trash2 } from 'lucide-react'
+import { ConnectionsModal } from '../components/ai/ConnectionsModal'
 import { OUTPUT_PRESETS, type OutputPresetId } from '@shared/brief'
 import type { ProjectSummary } from '@shared/project'
 import { Menu, Modal, NumberField, relativeTime } from '../components/ui'
@@ -7,7 +8,7 @@ import { studio, useStore } from '../store'
 import { ThemeSwitch } from '../components/ThemeSwitch'
 
 export function Home() {
-  const { projects, refreshProjects, openProject, go, toast } = useStore()
+  const { projects, refreshProjects, openProject, go, toast, aiOpen } = useStore()
   const [creating, setCreating] = useState(false)
   const [menu, setMenu] = useState<string | null>(null)
 
@@ -25,12 +26,17 @@ export function Home() {
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      {aiOpen && <ConnectionsModal onClose={() => useStore.setState({ aiOpen: false })} />}
       <div className="row drag" style={{ height: 'var(--titlebar)', padding: '0 16px 0 88px', borderBottom: '1px solid var(--border)', flex: 'none' }}>
         <Clapperboard size={18} color="var(--accent)" />
         <div style={{ fontWeight: 700 }}>모션스튜디오</div>
         <div className="grow" />
         <div className="row no-drag">
           <ThemeSwitch />
+          <button className="btn ghost sm" onClick={() => useStore.setState({ aiOpen: true })} title="힉스필드·매그니픽·아트리스트 연결">
+            <Sparkles size={14} />
+            AI 연결
+          </button>
           <button className="btn ghost sm" onClick={() => go('doctor')}>
             <Settings2 size={14} />
             환경 점검

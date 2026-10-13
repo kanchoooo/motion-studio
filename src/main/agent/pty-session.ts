@@ -15,6 +15,8 @@ import { join } from 'node:path'
 import * as pty from 'node-pty'
 import type { AgentEvent, ChatItem, SendMessageInput, SessionState, Storyboard } from '@shared/api'
 import type { FeedbackMark } from '@shared/project'
+import { AI_PROVIDERS } from '@shared/ai'
+import { aiSettings } from '../ai/settings'
 import { claudeEnv } from '../claude-env'
 import { claudeBinary } from '../doctor'
 import * as history from '../history'
@@ -64,7 +66,8 @@ function markLines(marks: FeedbackMark[]): string {
       const where = m.kind === 'range' && m.range ? `${m.range.from.toFixed(1)}~${m.range.to.toFixed(1)}초 구간` : `${m.time.toFixed(2)}초`
       const box = m.rect ? ` 영역(x:${Math.round(m.rect.x)}, y:${Math.round(m.rect.y)}, w:${Math.round(m.rect.w)}, h:${Math.round(m.rect.h)})` : ''
       const els = m.elements.length ? ` 해당 요소: ${m.elements.map((e) => `${e.label}(data-ms-id="${e.id}")`).join(', ')}` : ' 해당 요소 없음(빈 영역)'
-      return `- ${m.n}번 표시 [${where}${box}]${els}${m.note ? ` — 코멘트: "${m.note}"` : ''}`
+      const refs = m.refs?.length ? `\n  참고 이미지(원하는 방향): ${m.refs.join(', ')} — Read 도구로 열어 보세요.` : ''
+      return `- ${m.n}번 표시 [${where}${box}]${els}${m.note ? ` — 코멘트: "${m.note}"` : ''}${refs}`
     })
     .join('\n')
 }
@@ -74,9 +77,17 @@ export class SessionManager {
   /** variation re-layouts waiting for Claude, processed one at a time */
   private adaptQueue: { projectId: string; text: string }[] = []
   private adapting: string | null = null
+  /** projects whose model/effort change waits for the running turn */
+  private pendingRestart = new Set<string>()
 
   constructor(private emit: Emit) {
-    setToolHooks({ onStoryboard: (projectId, sb) => this.addStoryboard(projectId, sb) })
+    setToolHooks({
+      onStoryboard: (projectId, sb) => this.addStoryboard(projectId, sb),
+      onAudioCandidates: (projectId, list) => {
+        writeText(join(projects.pathOf(projectId), '.studio', 'audio-candidates.json'), JSON.stringify(list))
+        this.emit({ type: 'audio-candidates', projectId, list })
+      },
+    })
   }
 
   state(projectId: string): SessionState {
@@ -193,12 +204,19 @@ export class SessionManager {
     mkdirSync(studioDir, { recursive: true })
     const promptFile = join(studioDir, 'system-prompt.md')
     writeText(promptFile, STUDIO_PROMPT)
-    const mcpConfig = JSON.stringify({ mcpServers: { studio: { type: 'http', url: `${previewBase()}/mcp/${mcpTokenFor(projectId)}` } } })
+    // Artlist signs in through Claude Code itself (/mcp in the terminal): the app never sees its token
+    const artlist = aiSettings().artlist
+    const mcpConfig = JSON.stringify({
+      mcpServers: {
+        studio: { type: 'http', url: `${previewBase()}/mcp/${mcpTokenFor(projectId)}` },
+        ...(artlist ? { artlist: { type: 'http', url: AI_PROVIDERS.artlist.url } } : {}),
+      },
+    })
     const settings = JSON.stringify({
       disableClaudeAiConnectors: true,
       permissions: {
         // Read(path) covers every file-reading tool (Glob, Grep), Edit(path) every writing tool
-        allow: ['mcp__studio', 'Skill', 'Read(./**)', 'Edit(./composition/**)'],
+        allow: ['mcp__studio', ...(artlist ? ['mcp__artlist'] : []), 'Skill', 'Read(./**)', 'Edit(./composition/**)'],
         deny: ['Edit(./composition/ms/**)', 'Edit(./composition/vendor/**)', 'Edit(./composition/assets/**)', 'Edit(./brief.json)', 'Edit(./overrides.json)', 'Edit(./references/**)'],
       },
     })
@@ -217,6 +235,9 @@ export class SessionManager {
       '--append-system-prompt-file', promptFile,
       // render the studio rules fresh each request so app updates reach existing conversations
       '--system-prompt-snapshot', 'off',
+      // session-only model/effort: never touches the designer's own Claude Code defaults
+      ...(meta.agentModel ? ['--model', meta.agentModel] : []),
+      ...(meta.agentEffort ? ['--effort', meta.agentEffort] : []),
     ]
     const cols = existing?.cols ?? 110
     const rows = existing?.rows ?? 34
@@ -231,7 +252,7 @@ export class SessionManager {
       plain: '',
       cols,
       rows,
-      state: { status: 'starting', sessionId, remoteName: name },
+      state: { status: 'starting', sessionId, remoteName: name, model: meta.agentModel, effort: meta.agentEffort },
       tail: undefined as unknown as TranscriptTail,
       appItems: projects.readChat<ChatItem>(projectId),
       compositionMtime: this.compMtime(dir),
@@ -315,6 +336,23 @@ export class SessionManager {
     }
   }
 
+  /**
+   * Model / reasoning effort for this project. Claude Code's own /model and /effort
+   * pickers save the choice as the user's global default, so the session is
+   * restarted with --model/--effort instead (--resume keeps the conversation).
+   */
+  setModel(projectId: string, opts: { model: string; effort: string }): SessionState {
+    projects.touch(projectId, { agentModel: opts.model || undefined, agentEffort: (opts.effort || undefined) as never })
+    const l = this.live.get(projectId)
+    if (!l) return this.state(projectId)
+    if (l.state.status === 'busy' || this.adapting === projectId) {
+      this.pendingRestart.add(projectId)
+      this.setState(l, { pendingRestart: true })
+      return l.state
+    }
+    return this.restart(projectId)
+  }
+
   private async onTurnEnd(l: Live, lastText: string) {
     if (this.adapting === l.projectId) {
       setFamilyStatus(l.projectId, 'done')
@@ -322,6 +360,7 @@ export class SessionManager {
       this.adapting = null
       setTimeout(() => void this.pump(), 500)
     }
+    if (this.pendingRestart.delete(l.projectId)) setTimeout(() => this.restart(l.projectId), 300)
     projects.applyAudioEdits(l.dir)
     const m = this.compMtime(l.dir)
     projects.refreshFontCss(l.dir)
@@ -343,6 +382,28 @@ export class SessionManager {
     if (m === l.compositionMtime) return false
     l.compositionMtime = m
     return true
+  }
+
+  /** types a slash command into the terminal (e.g. /mcp for Artlist sign-in); the designer finishes it there */
+  async typeCommand(projectId: string, command: string) {
+    let l = this.live.get(projectId)
+    if (!l || l.state.status === 'exited') {
+      this.start(projectId)
+      l = this.live.get(projectId)!
+    }
+    for (let i = 0; i < 60 && l.state.status === 'starting'; i++) await new Promise((r) => setTimeout(r, 250))
+    l.term.write(command)
+    await new Promise((r) => setTimeout(r, ENTER_DELAY))
+    l.term.write('\r')
+  }
+
+  /** restarts idle sessions so a new MCP setup (e.g. Artlist on/off) takes effect */
+  restartIdle() {
+    for (const [id, l] of this.live) {
+      if (id.startsWith('__')) continue
+      if (l.state.status === 'ready') this.restart(id)
+      else if (l.state.status === 'busy') this.pendingRestart.add(id)
+    }
   }
 
   write(projectId: string, data: string) {
@@ -378,7 +439,7 @@ export class SessionManager {
     for (let i = 0; i < 60 && l.state.status === 'starting'; i++) await new Promise((r) => setTimeout(r, 250))
 
     const oneLine = input.text.replace(/\s*\n\s*/g, ' ').replace(/[\x00-\x1f\x7f]/g, '').trim()
-    const rich = !!(input.marks?.length || input.annotatedFrame) || input.text.includes('\n') || oneLine.length > 300
+    const rich = !!(input.marks?.length || input.annotatedFrame || input.attachments?.length) || input.text.includes('\n') || oneLine.length > 300
     let line = oneLine
     if (rich) {
       const stamp = `${Date.now()}`
@@ -397,9 +458,12 @@ export class SessionManager {
           ? ['', `## 화면 표시 피드백${input.time != null ? ` (${input.time.toFixed(2)}초 화면)` : ''}`, markLines(input.marks), '', '좌표는 영상 원본 픽셀 기준입니다.']
           : []),
         ...(frame ? ['', `표시가 그려진 화면: ${frame} — Read 도구로 열어서 직접 확인하세요.`] : []),
+        ...(input.attachments?.length
+          ? ['', '## 참고 이미지 (디자이너가 원하는 방향)', ...input.attachments.map((a) => `- ${a}`), '', 'Read 도구로 하나씩 열어 보고 분위기·구성·색·타이포를 참고하세요. 그대로 복사하지는 마세요.']
+          : []),
       ].join('\n')
       writeText(join(fb, `msg-${stamp}.md`), md)
-      writeText(join(fb, `msg-${stamp}.json`), JSON.stringify({ text: input.text, marks: input.marks, frame, time: input.time }))
+      writeText(join(fb, `msg-${stamp}.json`), JSON.stringify({ text: input.text, marks: input.marks, frame, time: input.time, attachments: input.attachments }))
       line = `[모션스튜디오 메시지] feedback/msg-${stamp}.md 파일을 Read 도구로 읽고 그 내용대로 진행해 주세요.`
     }
     if (!line) return

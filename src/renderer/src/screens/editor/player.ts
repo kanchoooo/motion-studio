@@ -6,7 +6,12 @@ export interface RuntimeElement {
   id: string
   label: string
   type: string
+  /** enclosing editable element (group), null at the top level */
+  parent: string | null
+  depth: number
   movable: boolean
+  /** false for nested elements in normal flow: they move, but do not scale/rotate */
+  transformable: boolean
   visible: boolean
   rect: { x: number; y: number; w: number; h: number }
   text?: string
@@ -106,6 +111,32 @@ export interface ElementTiming {
 export async function queryTiming(p: MsPlayer | null): Promise<ElementTiming[]> {
   const r = await ask<{ items: ElementTiming[] }>(p, { ms: 'timing' })
   return r?.items ?? []
+}
+
+/** one authored motion (GSAP tween) as reported by the runtime */
+export interface RuntimeMotion {
+  key: string
+  owners: string[]
+  type: 'to' | 'from' | 'fromTo'
+  sig: string
+  props: { name: string; from?: number | string; to?: number | string; editable: boolean }[]
+  /** authored easing ('' = GSAP default) and per-item length */
+  ease: string
+  duration: number
+  stagger: boolean
+  shift: number
+  edited: boolean
+  disabled: boolean
+  /** authored-timeline start without the designer's shift */
+  authoredStart: number
+  /** output-time position (after section speed) */
+  start: number
+  end: number
+}
+
+export async function queryMotions(p: MsPlayer | null): Promise<{ items: RuntimeMotion[]; stale: string[] }> {
+  const r = await ask<{ items: RuntimeMotion[]; stale: string[] }>(p, { ms: 'motions' })
+  return { items: r?.items ?? [], stale: r?.stale ?? [] }
 }
 
 export async function queryElements(p: MsPlayer | null): Promise<RuntimeElement[]> {

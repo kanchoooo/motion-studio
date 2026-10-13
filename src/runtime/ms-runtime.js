@@ -12,8 +12,14 @@
  *  - text:      replaced while the parser inserts the node, i.e. before the
  *               composition's own scripts (SplitText etc.) run
  *  - animSpeed: timeScale on every tween that targets the element
+ *  - motions:   each tween the composition creates is recorded (for the
+ *               editor's timeline) and designer edits to its length, easing,
+ *               values or on/off are applied to its vars before GSAP sees them;
+ *               start shifts are applied once the timeline is registered
  *  - timeRemap: section speed changes via a wrapper timeline scrubbing the
  *               authored one; clip data-start/duration are remapped to match
+ *  - nested editables that are not absolutely positioned (inside a phone
+ *    mockup, a card…) move with relative left/top instead of a wrapper
  *
  * This file is managed by Motion Studio. Compositions must not edit it.
  */
@@ -24,6 +30,148 @@
   var REMAP = (O.timeRemap || []).filter(function (s) { return s.to > s.from && s.speed > 0 })
     .sort(function (a, b) { return a.from - b.from })
   var KEEP_TOTAL = O.keepTotalDuration !== false
+
+  // ---- 0. motions ---------------------------------------------------------------
+  // Tweens are keyed "<owner data-ms-id>#<n>" (n-th tween created for that element)
+  // with a signature (kind + animated properties) so an edit is dropped, not
+  // misapplied, when Claude rewrites the code.
+  var MO = O.motions || {}
+  var SPECIAL = {}
+  ;('ease duration delay stagger repeat repeatDelay yoyo yoyoEase repeatRefresh paused overwrite immediateRender lazy ' +
+    'inherit id data callbackScope startAt runBackwards keyframes reversed clearProps modifiers snap scrollTrigger ' +
+    'onStart onStartParams onUpdate onUpdateParams onComplete onCompleteParams onRepeat onRepeatParams ' +
+    'onReverseComplete onReverseCompleteParams onInterrupt onInterruptParams parent').split(' ').forEach(function (k) { SPECIAL[k] = 1 })
+  var MOTIONS = []
+  var MCOUNT = {}
+  var STALE = []
+  function ownersOf(targets) {
+    var arr
+    try { arr = window.gsap.utils.toArray(targets) } catch (e) { return [] }
+    var seen = {}, out = []
+    arr.forEach(function (t) { var id = ownerId(t); if (id && !seen[id]) { seen[id] = 1; out.push(id) } })
+    return out
+  }
+  function propsOf(vars) {
+    return Object.keys(vars || {}).filter(function (k) { return !SPECIAL[k] })
+  }
+  function numeric(v) {
+    return typeof v === 'number' || (typeof v === 'string' && /^\s*-?\d*\.?\d+(px|%|deg|rad|turn|rem|em|vw|vh)?\s*$/.test(v))
+  }
+  function shown(v) {
+    if (typeof v === 'function') return 'ƒ'
+    if (v && typeof v === 'object') return '…'
+    return v
+  }
+  /** records a tween about to be created and returns vars with designer edits applied */
+  function captureMotion(type, targets, a, b) {
+    var owners = ownersOf(targets)
+    if (!owners.length) return null
+    var toVars = type === 'fromTo' ? b : a
+    var fromVars = type === 'fromTo' ? a : null
+    if (!toVars || typeof toVars !== 'object' || toVars.keyframes) return null
+    var props = propsOf(toVars)
+    if (fromVars) propsOf(fromVars).forEach(function (k) { if (props.indexOf(k) < 0) props.push(k) })
+    if (!props.length) return null
+    var primary = owners[0]
+    var n = (MCOUNT[primary] = (MCOUNT[primary] || 0) + 1)
+    var key = primary + '#' + n
+    var sig = type + ':' + props.slice().sort().join(',')
+    var rec = {
+      key: key, owners: owners, type: type, sig: sig, props: [],
+      ease: typeof toVars.ease === 'string' ? toVars.ease : toVars.ease ? 'custom' : '',
+      duration: typeof toVars.duration === 'number' ? toVars.duration : 0.5,
+      stagger: !!toVars.stagger, shift: 0, edited: false, disabled: false, tween: null,
+    }
+    props.forEach(function (k) {
+      var p = { name: k }
+      if (type === 'to') p.to = shown(toVars[k])
+      else if (type === 'from') p.from = shown(toVars[k])
+      else {
+        if (fromVars && k in fromVars) p.from = shown(fromVars[k])
+        if (k in toVars) p.to = shown(toVars[k])
+      }
+      p.editable = (p.from === undefined || numeric(p.from)) && (p.to === undefined || numeric(p.to))
+      rec.props.push(p)
+    })
+    // always pass fresh copies: the copy identifies the created tween (tween.vars === copy)
+    toVars = Object.assign({}, toVars)
+    if (fromVars) fromVars = Object.assign({}, fromVars)
+    var o = MO[key]
+    if (o && o.sig !== sig) STALE.push(key)
+    else if (o) {
+      rec.edited = true
+      rec.shift = +o.shift || 0
+      if (o.disabled) {
+        rec.disabled = true
+        props.forEach(function (k) { delete toVars[k]; if (fromVars) delete fromVars[k] })
+      } else {
+        if (typeof o.duration === 'number' && o.duration >= 0) toVars.duration = o.duration
+        if (o.ease) toVars.ease = o.ease
+        Object.keys(o.values || {}).forEach(function (vk) {
+          var dot = vk.indexOf('.'), side = vk.slice(0, dot), prop = vk.slice(dot + 1), v = o.values[vk]
+          if (props.indexOf(prop) < 0) return
+          if (type === 'fromTo') { if (side === 'from') fromVars[prop] = v; else toVars[prop] = v }
+          else if ((type === 'to' && side === 'to') || (type === 'from' && side === 'from')) toVars[prop] = v
+        })
+      }
+    }
+    MOTIONS.push(rec)
+    return { rec: rec, a: type === 'fromTo' ? fromVars : toVars, b: toVars }
+  }
+  function hookGsap() {
+    var g = window.gsap
+    if (!g || g.__msHooked) return
+    g.__msHooked = true
+    function wrap(owner, name, isTimeline) {
+      var orig = owner[name]
+      if (typeof orig !== 'function') return
+      owner[name] = function (targets) {
+        var args = Array.prototype.slice.call(arguments)
+        var r = null
+        // legacy signature: (targets, duration, vars[, toVars])
+        var legacy = typeof args[1] === 'number'
+        var i = legacy ? 2 : 1
+        try {
+          r = name === 'fromTo' ? captureMotion('fromTo', targets, args[i], args[i + 1]) : captureMotion(name, targets, args[i])
+        } catch (e) { r = null }
+        if (r) {
+          if (name === 'fromTo') { args[i] = r.a; args[i + 1] = r.b } else args[i] = r.b
+          if (legacy && typeof r.b.duration === 'number') args[1] = r.b.duration
+        }
+        var res = orig.apply(this, args)
+        if (r) {
+          if (!isTimeline) r.rec.tween = res
+          else {
+            var kids = this.getChildren(false, true, false)
+            for (var k = kids.length - 1; k >= 0; k--) if (kids[k].vars === r.b) { r.rec.tween = kids[k]; break }
+          }
+        }
+        return res
+      }
+    }
+    ;['to', 'from', 'fromTo'].forEach(function (m) {
+      wrap(g, m, false)
+      if (g.core && g.core.Timeline) wrap(g.core.Timeline.prototype, m, true)
+    })
+  }
+  hookGsap()
+  function inRoot(tw, root) {
+    for (var p = tw.parent; p; p = p.parent) if (p === root) return true
+    return false
+  }
+  function finishMotions(tl) {
+    MOTIONS.forEach(function (m) {
+      var tw = m.tween
+      if (!tw || !inRoot(tw, tl)) return
+      if (m.shift) {
+        var k = 1
+        for (var p = tw.parent; p && p !== tl; p = p.parent) k *= p.timeScale() || 1
+        tw.startTime(Math.max(0, tw.startTime() + m.shift * k))
+      }
+      m.start = globalStart(tw, tl)
+      m.end = m.start + tw.totalDuration() / (tw.timeScale() || 1)
+    })
+  }
 
   // ---- 1. style + transform overrides --------------------------------------
   var TYPO = { fontFamily: 'font-family', fontWeight: 'font-weight', fontStyle: 'font-style',
@@ -58,6 +206,10 @@
         if (t.scale != null && +t.scale !== 1) tdecl.push('scale:' + (+t.scale))
       }
       if (tdecl.length) tf.push('[data-ms-wrap-for="' + esc(id) + '"]{' + tdecl.join(';') + '}')
+      // nested elements in normal flow move with relative offsets (layout is untouched)
+      if (t && (t.x || t.y)) {
+        tf.push(sel + '[data-ms-unwrappable]{position:relative !important;left:calc(var(--ms-l0, 0px) + ' + (+t.x || 0) + 'px) !important;top:calc(var(--ms-t0, 0px) + ' + (+t.y || 0) + 'px) !important}')
+      }
     })
     return { typo: typo.join('\n'), tf: tf.join('\n') }
   }
@@ -88,6 +240,11 @@
       if (el.parentElement && el.parentElement.hasAttribute('data-ms-wrap-for')) continue
       var cs = getComputedStyle(el)
       if (cs.position !== 'absolute' && cs.position !== 'fixed') {
+        if (cs.position === 'relative') {
+          // keep the authored offset; designer moves add to it
+          el.style.setProperty('--ms-l0', cs.left === 'auto' ? '0px' : cs.left)
+          el.style.setProperty('--ms-t0', cs.top === 'auto' ? '0px' : cs.top)
+        }
         el.setAttribute('data-ms-unwrappable', cs.position)
         continue
       }
@@ -175,8 +332,9 @@
     for (var i = 0; i < nodes.length; i++) {
       var el = nodes[i]
       if (el.hasAttribute('data-composition-id')) continue
-      // music keeps real time; sound effects stay locked to the picture they accompany
-      if (el.tagName === 'AUDIO' && el.getAttribute('data-ms-type') !== 'sfx') continue
+      // music keeps real time; sound effects and narration stay locked to the picture they accompany
+      var at = el.getAttribute('data-ms-type')
+      if (el.tagName === 'AUDIO' && at !== 'sfx' && at !== 'voice') continue
       var s = parseFloat(el.getAttribute('data-start')) || 0
       var d = parseFloat(el.getAttribute('data-duration'))
       var ns = M.map(s)
@@ -231,6 +389,7 @@
 
   function wrapTimeline(id, tl) {
     if (!tl || typeof tl.getChildren !== 'function' || tl.__msWrapped) return tl
+    try { finishMotions(tl) } catch (e) { /* motion edits are best effort */ }
     applyElementTiming(tl)
     try { collectTiming(tl) } catch (e) { /* timing bars are best effort */ }
     wrapEditables()
@@ -272,11 +431,19 @@
       var pcs = getComputedStyle(p)
       if (pcs.visibility === 'hidden' || pcs.display === 'none' || parseFloat(pcs.opacity) <= 0.01) visible = false
     }
+    var up = el.parentElement && el.parentElement.closest('[data-ms-id]')
+    var depth = 0
+    for (var a = up; a; a = a.parentElement && a.parentElement.closest('[data-ms-id]')) depth++
+    var unwrapped = el.hasAttribute('data-ms-unwrappable')
     return {
       id: el.getAttribute('data-ms-id'),
       label: el.getAttribute('data-ms-label') || el.getAttribute('data-ms-id'),
       type: el.getAttribute('data-ms-type') || (el.tagName === 'IMG' ? 'image' : 'shape'),
-      movable: !el.hasAttribute('data-ms-unwrappable'),
+      parent: up ? up.getAttribute('data-ms-id') : null,
+      depth: depth,
+      // wrapped elements take move/scale/rotate; nested flow elements move only
+      movable: !unwrapped || el.getAttribute('data-ms-unwrappable') !== 'sticky',
+      transformable: !unwrapped,
       visible: visible,
       rect: { x: r.left - root.left, y: r.top - root.top, w: r.width, h: r.height },
       text: (el.getAttribute('data-ms-type') === 'text') ? el.innerText : undefined,
@@ -294,6 +461,34 @@
     for (var i = 0; i < list.length; i++) out.push(describe(list[i]))
     return out
   }
+  /**
+   * Content the designer cannot edit on its own: text or pictures that belong
+   * directly to a group (or to an element that also contains editable children),
+   * e.g. a phone mockup whose screen copy has no data-ms-id of its own.
+   */
+  function looseContent() {
+    var out = []
+    var list = document.querySelectorAll('[data-ms-id]')
+    for (var i = 0; i < list.length; i++) {
+      var el = list[i]
+      if (el.getAttribute('data-ms-type') !== 'group' && !el.querySelector('[data-ms-id]')) continue
+      if (el.tagName === 'AUDIO') continue
+      var text = ''
+      var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+      for (var n = walker.nextNode(); n; n = walker.nextNode()) {
+        var v = n.nodeValue.replace(/\s+/g, ' ').trim()
+        var pe = n.parentElement
+        if (!v || !pe || pe.closest('[data-ms-id]') !== el || /^(SCRIPT|STYLE)$/.test(pe.tagName)) continue
+        text += v + ' '
+      }
+      var pics = 0
+      var media = el.querySelectorAll('img,video')
+      for (var k = 0; k < media.length; k++) if (media[k].closest('[data-ms-id]') === el && media[k] !== el) pics++
+      if (text || pics) out.push({ id: el.getAttribute('data-ms-id'), label: el.getAttribute('data-ms-label') || '', text: text.trim().slice(0, 60), images: pics })
+    }
+    return out
+  }
+
   window.addEventListener('message', function (ev) {
     var d = ev.data
     if (!d || typeof d !== 'object' || !d.ms) return
@@ -314,6 +509,21 @@
         out.push({ id: id, label: el.getAttribute('data-ms-label') || id, type: el.getAttribute('data-ms-type') || '', start: a, end: b })
       })
       reply({ items: out })
+    }
+    else if (d.ms === 'motions') {
+      var MM = window.__MS_TIME_MAP__
+      var items = []
+      MOTIONS.forEach(function (m) {
+        if (m.start == null) return
+        items.push({
+          key: m.key, owners: m.owners, type: m.type, sig: m.sig, props: m.props, ease: m.ease,
+          duration: m.duration, stagger: m.stagger, shift: m.shift, edited: m.edited, disabled: m.disabled,
+          authoredStart: m.start - m.shift,
+          start: MM ? MM.map(m.start) : m.start,
+          end: MM ? MM.map(m.end) : m.end,
+        })
+      })
+      reply({ items: items, stale: STALE })
     }
     else if (d.ms === 'play' && P) { P.play(); postState() }
     else if (d.ms === 'pause' && P) { P.pause(); postState() }
@@ -364,5 +574,8 @@
     }, 50)
   }
 
-  window.__MS_RUNTIME__ = { version: '1.1.0', overrides: O, listElements: listElements }
+  window.__MS_RUNTIME__ = {
+    version: '1.2.0', overrides: O, listElements: listElements,
+    audit: function () { return { elements: listElements(), loose: looseContent(), stale: STALE } },
+  }
 })()

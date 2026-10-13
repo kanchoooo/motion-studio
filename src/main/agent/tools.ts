@@ -6,9 +6,16 @@ import { promisify } from 'node:util'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import type { Storyboard } from '@shared/api'
+import { AI_PROVIDERS, type AiConnectProvider, type AudioCandidateList } from '@shared/ai'
 import { describeTiming, SECTION_LABELS } from '@shared/brief'
+import { activeAccount } from '../ai/accounts'
+import { callTool, connectedProviders, listTools } from '../ai/connect'
+import { importUrl, saveResultMedia } from '../ai/media'
+import { aiSettings } from '../ai/settings'
+import { recordGenerated } from '../ai/generated'
 import { sfxLibrary, useBuiltinSfx } from '../audio'
 import { listReferences, nearDuplicates, referenceFramesAt } from '../references'
+import { auditComposition } from '../audit'
 import { fullCheck, lastElements } from '../checks'
 import { listFonts } from '../fonts'
 import * as history from '../history'
@@ -21,6 +28,20 @@ const text = (t: string) => ({ content: [{ type: 'text' as const, text: t }] })
 
 export interface ToolHooks {
   onStoryboard(projectId: string, sb: Storyboard): void
+  onAudioCandidates(projectId: string, list: AudioCandidateList): void
+}
+
+const PROVIDER = z.enum(['higgsfield', 'magnific'])
+/** compact JSON schema for Claude (drops noise, keeps names, types, enums, descriptions) */
+function compactSchema(s: unknown, depth = 0): unknown {
+  if (!s || typeof s !== 'object' || depth > 6) return s
+  if (Array.isArray(s)) return s.map((x) => compactSchema(x, depth + 1))
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(s as Record<string, unknown>)) {
+    if (['$schema', 'additionalProperties', 'title', 'examples', '$id'].includes(k)) continue
+    out[k] = k === 'description' && typeof v === 'string' ? v.slice(0, 300) : compactSchema(v, depth + 1)
+  }
+  return out
 }
 
 export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServer {
@@ -42,6 +63,20 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
             campaign: brief.campaign,
             output: { ...brief.output, dataFpsAttribute: Math.round(brief.output.fps), fpsNote: 'Write data-fps as the integer dataFpsAttribute; the app renders at the exact rate (e.g. 29.97).' },
             tone: brief.tone,
+            background:
+              brief.output.background === 'auto'
+                ? 'AI 자율: design the background yourself (colour, gradient, texture, shapes or a generated image) to fit the tone and each scene.'
+                : brief.output.background === 'transparent'
+                  ? 'transparent'
+                  : `solid colour ${brief.output.backgroundColor}`,
+            storyboard: brief.storyboard.length
+              ? {
+                  note: 'The designer planned these scenes. Follow their order, timing (seconds; missing = you decide), copy and images. Texts with locked=true must appear verbatim. Images with mode "file" are files to use (required=true: must appear). Images with mode "describe" must be found among the assets or generated with AI (see ai_status; use the image\'s model if set, else the brief default).',
+                  totalSeconds: brief.storyboard.reduce((a, s) => a + (s.duration ?? 0), 0) || undefined,
+                  scenes: brief.storyboard.map((s, i) => ({ n: i + 1, ...s })),
+                }
+              : undefined,
+            ai: { ...brief.ai, note: 'Defaults for AI generation (null = you choose). What the designer asks in the chat always wins over these.' },
             brand: brief.brand ? { ...brief.brand, note: 'Brand kit: use these colours and fonts as the base palette/typography.' } : undefined,
             requiredTexts: brief.texts.map((t) => ({ ...t, timingLabel: describeTiming(t.timing) })),
             assets: brief.assets.map((a) => ({
@@ -227,8 +262,11 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
     { description: 'Run HyperFrames checks plus Motion Studio rules and brief compliance on composition/. Fix all errors.' },
     async () => {
       projects.refreshFontCss(dir())
-      const { brief, overrides } = st()
-      const findings = await fullCheck(dir(), brief, overrides, lastElements.get(projectId))
+      const { brief, overrides, hasVideo } = st()
+      // a fresh hidden render knows the current element tree even when the editor has not reloaded yet
+      const audit = hasVideo ? await auditComposition(dir(), brief.output) : null
+      const elements = audit ? audit.elements : lastElements.get(projectId)
+      const findings = await fullCheck(dir(), brief, overrides, elements, true, audit ?? undefined)
       // near-identical frames vs. references (inspiration is fine, copies are not)
       if (listReferences(dir()).some((r) => r.status === 'ready')) {
         const d = brief.output.duration
@@ -267,6 +305,149 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
     },
   )
 
+  // ---- AI generation (Higgsfield / Magnific through the app) and sound search (Artlist) ----
+
+  server.registerTool(
+    'ai_status',
+    { description: 'What AI generation is available right now: connected services (Higgsfield, Magnific: images, video clips, text-to-speech) with the active account, the brief defaults (models, narration), and whether Artlist (music / sound effects) is on. Call this before generating anything.' },
+    async () => {
+      const { brief } = st()
+      const connected = connectedProviders()
+      return text(
+        JSON.stringify(
+          {
+            services: (['higgsfield', 'magnific'] as const).map((p) => ({
+              id: p,
+              name: AI_PROVIDERS[p].name,
+              connected: connected.includes(p),
+              account: activeAccount(p)?.label,
+            })),
+            artlist: aiSettings().artlist
+              ? 'enabled: use the mcp__artlist__* tools directly (search music, sound effects, voice-over). If they are missing, Artlist is not signed in yet — tell the designer to sign in from the Claude terminal (/mcp).'
+              : 'off (the designer can turn it on in AI 연결)',
+            briefDefaults: brief.ai,
+            how: [
+              'Use ai_tools(provider) to see the service\'s tools and parameters, then ai_call to run them. Generated files are saved into the project automatically and their composition paths are returned.',
+              'What the designer asked in the chat wins over the brief defaults. If neither names a model, choose a suitable one and say which.',
+              'Generation costs the designer\'s credits: generate only what you will use, one or two candidates at most unless asked.',
+              'Text-to-speech: write the script in natural Korean unless told otherwise; place the narration as <audio data-ms-type="voice" data-ms-label="내레이션 · …"> on the root with its exact length.',
+            ],
+          },
+          null,
+          1,
+        ),
+      )
+    },
+  )
+
+  server.registerTool(
+    'ai_tools',
+    {
+      description: "List an AI service's tools with their parameters (Higgsfield or Magnific). Use filter to narrow, e.g. 'image', 'video', 'tts', 'voice', 'model', 'status'.",
+      inputSchema: { provider: PROVIDER, filter: z.string().optional() },
+    },
+    async ({ provider, filter }) => {
+      const tools = await listTools(provider as AiConnectProvider)
+      const f = filter?.toLowerCase()
+      const shown = tools.filter((t) => !f || t.name.toLowerCase().includes(f) || (t.description ?? '').toLowerCase().includes(f))
+      return text(JSON.stringify(shown.map((t) => ({ name: t.name, description: (t.description ?? '').slice(0, 500), input: compactSchema(t.inputSchema) })), null, 1).slice(0, 60_000))
+    },
+  )
+
+  server.registerTool(
+    'ai_call',
+    {
+      description: "Run one tool of an AI service (Higgsfield or Magnific) with the designer's active account. Images, video and audio in the result are downloaded into composition/assets/generated/ and their composition paths (e.g. assets/generated/magnific-ab12cd-1.png) are returned: use those paths in the composition, and Read image files to look at them. Set save_media=false for listing/search calls.",
+      inputSchema: {
+        provider: PROVIDER,
+        tool: z.string(),
+        arguments: z.record(z.string(), z.unknown()).default({}),
+        save_media: z.boolean().default(true),
+        label: z.string().optional().describe('short Korean description of what this makes (shown to the designer)'),
+      },
+    },
+    async ({ provider, tool, arguments: args, save_media, label }) => {
+      const r = await callTool(provider as AiConnectProvider, tool, args)
+      const parts: string[] = []
+      for (const c of r.content ?? []) if (c.type === 'text' && c.text) parts.push(c.text)
+      if (r.structuredContent) parts.push(JSON.stringify(r.structuredContent))
+      let saved: Awaited<ReturnType<typeof saveResultMedia>> = []
+      if (save_media && !r.isError) {
+        saved = await saveResultMedia(join(dir(), 'composition'), provider, r)
+        recordGenerated(dir(), saved.map((m) => ({ file: m.file, kind: m.kind, provider, tool, label: label ?? (typeof args.prompt === 'string' ? args.prompt : typeof args.text === 'string' ? args.text : undefined) })))
+      }
+      const out = [
+        r.isError ? '[error] 서비스가 오류를 돌려줬어요.' : '',
+        parts.join('\n').slice(0, 8000),
+        saved.length ? `\nSaved into the project (use these composition paths):\n${saved.map((m) => `- ${m.file} (${m.kind}, ${Math.round(m.bytes / 1024)}KB)`).join('\n')}` : '',
+      ]
+      return text(out.filter(Boolean).join('\n'))
+    },
+  )
+
+  server.registerTool(
+    'ai_import',
+    {
+      description: 'Download one media URL (an image, video or audio file, e.g. a track or sound effect found with the Artlist tools) into composition/assets/generated/ and return its composition path.',
+      inputSchema: { url: z.string().url(), label: z.string().optional(), source: z.string().default('import') },
+    },
+    async ({ url, label, source }) => {
+      const m = await importUrl(join(dir(), 'composition'), url, source.replace(/[^a-z0-9-]/gi, '').slice(0, 20) || 'import')
+      recordGenerated(dir(), [{ file: m.file, kind: m.kind, provider: source, tool: 'import', label }])
+      return text(`Saved: ${m.file} (${m.kind}, ${Math.round(m.bytes / 1024)}KB)`)
+    },
+  )
+
+  server.registerTool(
+    'show_audio_candidates',
+    {
+      description: "Show music or sound-effect candidates (e.g. found on Artlist) to the designer in the Sound panel, where they can audition and pick one. Include preview_url for listening and download_url if the service gives a downloadable file. After calling this, briefly say what you found and END YOUR TURN.",
+      inputSchema: {
+        query: z.string().describe('what was searched, in Korean'),
+        kind: z.enum(['bgm', 'sfx']),
+        source: z.string().default('artlist'),
+        items: z
+          .array(
+            z.object({
+              id: z.string().optional(),
+              title: z.string(),
+              artist: z.string().optional(),
+              duration: z.number().optional().describe('seconds'),
+              bpm: z.number().optional(),
+              mood: z.string().optional(),
+              preview_url: z.string().optional(),
+              download_url: z.string().optional(),
+              page_url: z.string().optional(),
+            }),
+          )
+          .min(1)
+          .max(30),
+      },
+    },
+    async ({ query, kind, source, items }) => {
+      hooks.onAudioCandidates(projectId, {
+        id: Math.random().toString(36).slice(2, 10),
+        at: new Date().toISOString(),
+        query,
+        kind,
+        items: items.map((it, i) => ({
+          id: it.id ?? String(i),
+          source,
+          kind,
+          title: it.title,
+          artist: it.artist,
+          duration: it.duration,
+          bpm: it.bpm,
+          mood: it.mood,
+          previewUrl: it.preview_url,
+          downloadUrl: it.download_url,
+          pageUrl: it.page_url,
+        })),
+      })
+      return text('사운드 패널에 후보를 보여줬어요. 디자이너가 듣고 고를 거예요. 이번 턴은 여기서 마무리하세요.')
+    },
+  )
+
   return server
 }
 
@@ -283,6 +464,11 @@ export const STUDIO_TOOL_LABELS: Record<string, string> = {
   mcp__studio__use_sound_effect: '효과음을 넣고 있어요',
   mcp__studio__get_version: '이전 버전을 살펴보고 있어요',
   mcp__studio__look_at_frames: '장면을 직접 확인하고 있어요',
+  mcp__studio__ai_status: 'AI 생성 도구를 확인하고 있어요',
+  mcp__studio__ai_tools: 'AI 생성 도구를 확인하고 있어요',
+  mcp__studio__ai_call: 'AI로 소재를 만들고 있어요',
+  mcp__studio__ai_import: '소재를 가져오고 있어요',
+  mcp__studio__show_audio_candidates: '음악 후보를 정리하고 있어요',
   Write: '영상을 만들고 있어요',
   Edit: '영상을 다듬고 있어요',
   Read: '자료를 살펴보고 있어요',
