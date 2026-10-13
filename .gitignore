@@ -12,3 +12,4 @@ poc/**/renders/
 .env
 .env.*
 tests/e2e/shots*/
+*.tsbuildinfo
