@@ -1,10 +1,11 @@
-import { execFile, spawn } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import { existsSync, statfsSync } from 'node:fs'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import type { DoctorItem, DoctorReport } from '@shared/api'
 import { listFonts } from './fonts'
 import { browserPath, ensureBrowser } from './hyperframes'
+import { claudeEnv, ignoredCredentialVars } from './claude-env'
 import { appRoot, bin, projectsDir } from './paths'
 import { isTrusted } from './trust'
 
@@ -26,7 +27,7 @@ export interface ClaudeAuth {
 
 export async function claudeAuthStatus(): Promise<ClaudeAuth> {
   try {
-    const { stdout } = await run(claudeBinary(), ['auth', 'status', '--json'], { timeout: 20_000 })
+    const { stdout } = await run(claudeBinary(), ['auth', 'status', '--json'], { timeout: 20_000, env: claudeEnv() })
     return JSON.parse(stdout) as ClaudeAuth
   } catch (e) {
     const out = (e as { stdout?: string }).stdout
@@ -38,24 +39,15 @@ export async function claudeAuthStatus(): Promise<ClaudeAuth> {
   }
 }
 
-/** Opens Anthropic's own sign-in flow in the browser (the app never sees credentials). */
-export function claudeLogin(): Promise<{ ok: boolean; message: string }> {
-  return new Promise((resolve) => {
-    const child = spawn(claudeBinary(), ['auth', 'login', '--claudeai'], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
-    let out = ''
-    child.stdout.on('data', (d) => (out += d))
-    child.stderr.on('data', (d) => (out += d))
-    const timer = setTimeout(() => child.kill(), 10 * 60_000)
-    child.on('close', async () => {
-      clearTimeout(timer)
-      const s = await claudeAuthStatus()
-      resolve(
-        s.loggedIn
-          ? { ok: true, message: `${s.email ?? 'Claude 계정'}으로 로그인했어요.` }
-          : { ok: false, message: '로그인이 완료되지 않았어요. 브라우저에서 로그인을 마친 뒤 다시 시도해 주세요.' + (out ? `\n${out.slice(-300)}` : '') },
-      )
-    })
-  })
+/** macOS: the login keychain must be unlocked for Claude Code to read its sign-in */
+export function keychainLocked(): boolean {
+  if (process.platform !== 'darwin') return false
+  try {
+    execFileSync('security', ['show-keychain-info', 'login.keychain-db'], { stdio: 'pipe', timeout: 5000 })
+    return false
+  } catch {
+    return true
+  }
 }
 
 const PLAN_LABEL: Record<string, string> = { max: 'Max', pro: 'Pro', team: 'Team', enterprise: 'Enterprise', free: 'Free' }
@@ -64,22 +56,28 @@ export async function doctor(): Promise<DoctorReport> {
   const items: DoctorItem[] = []
 
   const auth = await claudeAuthStatus()
-  items.push(
-    auth.loggedIn
-      ? {
-          id: 'claude',
-          label: 'Claude 계정',
-          status: 'ok',
-          detail: `${auth.email ?? ''}${auth.subscriptionType ? ` · ${PLAN_LABEL[auth.subscriptionType] ?? auth.subscriptionType} 플랜` : ''}`,
-        }
-      : {
-          id: 'claude',
-          label: 'Claude 계정',
-          status: 'error',
-          detail: '로그인이 필요해요. 본인 Claude 계정(회사 Team 계정)으로 로그인해 주세요.',
-          action: { id: 'login', label: 'Claude 로그인' },
-        },
-  )
+  const ignored = ignoredCredentialVars()
+  const login = { id: 'login' as const, label: 'Claude 로그인' }
+  if (keychainLocked()) {
+    items.push({ id: 'claude', label: 'Claude 계정', status: 'error', detail: '맥 키체인이 잠겨 있어서 Claude 로그인 정보를 읽을 수 없어요. 맥 잠금을 풀고(로그인 암호) "다시 확인"을 눌러 주세요.', action: login })
+  } else if (!auth.loggedIn) {
+    items.push({ id: 'claude', label: 'Claude 계정', status: 'error', detail: '로그인이 필요해요. 본인 Claude 계정(회사 Team 계정)으로 로그인해 주세요.', action: login })
+  } else if (auth.authMethod && auth.authMethod !== 'claude.ai') {
+    items.push({
+      id: 'claude',
+      label: 'Claude 계정',
+      status: 'warn',
+      detail: `Claude 구독 계정이 아닌 방식(${auth.authMethod})으로 연결돼 있어요. 리모트 컨트롤이 동작하지 않을 수 있어요. Claude 계정으로 다시 로그인해 주세요.`,
+      action: login,
+    })
+  } else {
+    items.push({
+      id: 'claude',
+      label: 'Claude 계정',
+      status: 'ok',
+      detail: `${auth.email ?? ''}${auth.subscriptionType ? ` · ${PLAN_LABEL[auth.subscriptionType] ?? auth.subscriptionType} 플랜` : ''}${ignored.length ? ` · ${ignored.join(', ')} 환경변수는 쓰지 않고 키체인 로그인을 써요` : ''}`,
+    })
+  }
 
   if (auth.loggedIn) {
     items.push(

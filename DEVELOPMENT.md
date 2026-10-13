@@ -112,7 +112,42 @@ poc/               Phase 0 기술 검증 기록 (RESULTS.md)
 - **폴더 신뢰 확인은 자동으로 답하지 않는다.** 터미널을 열고 안내만 한다.
 - 개발 중 Claude Code 터미널 안에서 `npm run dev`를 실행하면 부모 세션의 `CLAUDE*` 환경변수가 이어진다. 그러면 대화 기록 저장이 꺼지므로, PTY를 띄울 때 이 변수들을 제거한다(`cleanEnv`).
 
-## 6. 문제 해결
+## 6. 코드 서명과 공증 (Mac)
+
+`electron-builder.config.cjs`가 키체인의 인증서를 보고 서명 방식을 자동으로 고른다.
+
+| 상황 | 결과 |
+|---|---|
+| "Developer ID Application" 인증서 있음 + Apple 공증 정보 환경변수 | 서명 + 공증 → 팀원 Mac에서 경고 없이 열림 (배포용) |
+| "Developer ID Application" 인증서만 있음 | 서명만 (공증 안 됨 → 다른 Mac에서는 경고) |
+| `MS_SIGN_DEV=1` + "Apple Development" 인증서 | 개발용 서명 (이 Mac 테스트용, 배포 불가) |
+| 인증서 없음 | 서명 없음 (첫 실행 시 우클릭 → 열기) |
+
+**공증 정보** (둘 중 하나):
+- `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`
+- `APPLE_API_KEY`(.p8 경로), `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`
+
+**서명 범위**:
+- 하드닝 런타임과 `build/entitlements.mac.plist`(JIT, 네이티브 모듈, yt-dlp용)를 쓴다.
+- 함께 넣은 FFmpeg, yt-dlp, PTY 모듈도 우리 인증서로 서명한다.
+- **Claude Code 실행 파일은 Anthropic 서명을 그대로 유지**한다(`signIgnore`). 원본 그대로 실행해야 하기 때문이다.
+
+Developer ID 인증서는 유료 Apple Developer Program 계정에서 Xcode → Settings → Accounts → Manage Certificates → "+ Developer ID Application"으로 만든다.
+
+## 7. Claude 로그인과 키체인
+
+- 로그인은 앱 안 터미널 창에서 **Claude Code 자체 로그인**(`claude auth login`)으로 한다. 로그인 정보는 Claude Code가 맥 키체인(Windows는 자격 증명)에 직접 저장하고, 앱은 보지도 저장하지도 않는다.
+- 앱이 실행하는 모든 Claude 프로세스는 `claude-env.ts`의 환경을 쓴다.
+  - `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` 등은 **넘기지 않는다**.
+  - 장기 토큰이 키체인 로그인을 덮어쓰면 리모트 컨트롤이 잠기기 때문이다(관제센터에서 겪은 문제).
+- 환경 점검이 확인하는 것:
+  - 키체인 잠김
+  - 로그인 방식이 claude.ai가 아닌 경우
+  - 무시한 환경변수
+- Electron 자체는 키체인을 쓰지 않는다(`use-mock-keychain`). 그래서 "Safe Storage" 키체인 확인 창이 반복해서 뜨지 않는다.
+- 쉬고 있는 다른 프로젝트의 Claude 세션은 정리해서, 여러 프로세스가 동시에 토큰을 갱신하다 로그아웃되는 일을 줄인다.
+
+## 8. 문제 해결
 
 | 증상 | 해결 |
 |---|---|

@@ -23,6 +23,7 @@ interface State {
   chat: ChatItem[]
   session: SessionState
   terminalOpen: boolean
+  loginOpen: boolean
   previewNonce: number
   historyNonce: number
   familyNonce: number
@@ -54,6 +55,7 @@ export const useStore = create<State>((set, get) => ({
   chat: [],
   session: { status: 'stopped' },
   terminalOpen: false,
+  loginOpen: false,
   previewNonce: 0,
   historyNonce: 0,
   familyNonce: 0,

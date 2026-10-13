@@ -42,6 +42,10 @@ function createWindow(previewBase: string) {
 }
 
 app.setName('모션스튜디오')
+// The app itself stores nothing secret, so Chromium must not touch the macOS
+// keychain ("Safe Storage" item): with changing builds/signatures that item
+// triggers repeated keychain prompts. Claude Code keeps its own sign-in there.
+if (process.platform === 'darwin') app.commandLine.appendSwitch('use-mock-keychain')
 // isolated profile for automated tests
 if (process.env.MS_USER_DATA) app.setPath('userData', process.env.MS_USER_DATA)
 

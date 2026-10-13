@@ -57,7 +57,11 @@ export function Doctor({ embedded }: { embedded?: boolean }) {
         setTrusting(true)
         return
       }
-      if (item.action.id === 'login') setMsg((await studio.app.login()).message)
+      if (item.action.id === 'login') {
+        await studio.app.login()
+        useStore.setState({ loginOpen: true })
+        return
+      }
       else if (item.action.id === 'install-browser') setMsg((await studio.app.installBrowser()).message)
       else if (item.action.id === 'rescan-fonts') await studio.fonts.list()
     } finally {
@@ -101,7 +105,6 @@ export function Doctor({ embedded }: { embedded?: boolean }) {
             </div>
           ))}
         </div>
-        {busy === 'claude' && <div className="small muted">브라우저에서 Claude 로그인 창이 열려요. 회사 Team 계정으로 로그인한 뒤 이 화면으로 돌아오세요.</div>}
         {msg && <div className="small muted">{msg}</div>}
         {trusting && (
           <Modal title="작업 폴더 허용" onClose={() => setTrusting(false)} width={760}>

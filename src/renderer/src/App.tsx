@@ -4,6 +4,7 @@ import { Doctor } from './screens/Doctor'
 import { Home } from './screens/Home'
 import { Project } from './screens/Project'
 import { TerminalPanel } from './screens/editor/TerminalPanel'
+import { LoginModal } from './components/LoginModal'
 
 export function App() {
   const { screen, toasts, project } = useStore()
@@ -23,6 +24,7 @@ export function App() {
       </div>
       {/* the live terminal belongs to the open project and survives tab switches */}
       {screen === 'project' && project && <TerminalPanel key={project.meta.id} />}
+      <LoginModal />
       <div className="toasts">
         {toasts.map((t) => (
           <div key={t.id} className={`toast ${t.kind}`}>

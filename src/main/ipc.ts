@@ -7,7 +7,7 @@ import type { Overrides } from '@shared/overrides'
 import { SessionManager } from './agent/pty-session'
 import { parseAudio, sfxLibrary, useBuiltinSfx } from './audio'
 import { fullCheck, lastElements, type EditorElementInfo } from './checks'
-import { claudeLogin, doctor, installBrowser } from './doctor'
+import { doctor, installBrowser } from './doctor'
 import { listFonts } from './fonts'
 import * as history from './history'
 import { projectsDir, serveFolderUrl } from './ipc-helpers'
@@ -33,7 +33,8 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
   // ---- app ----
   handle('app:info', () => ({ version: app.getVersion(), platform: process.platform, arch: process.arch, projectsDir: projectsDir() }))
   handle('app:doctor', () => doctor())
-  handle('app:login', () => claudeLogin())
+  handle('app:login', () => agent.startLogin())
+  handle('app:cancelLogin', () => agent.kill('__login__'))
   handle('app:installBrowser', () => installBrowser())
   handle('app:trustWorkspace', () => agent.startWorkspaceTrust())
   handle('app:openExternal', (url: string) => {
@@ -104,7 +105,10 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
   handle('projects:fileUrl', (id: string, rel: string) => serveFolderUrl(projects.pathOf(id)) + rel)
 
   // ---- agent (live Claude Code session in a PTY) ----
-  handle('agent:start', (id: string) => agent.start(id))
+  handle('agent:start', (id: string) => {
+    agent.pruneIdle(id)
+    return agent.start(id)
+  })
   handle('agent:restart', (id: string) => agent.restart(id))
   handle('agent:state', (id: string) => agent.state(id))
   handle('agent:send', (input: SendMessageInput) => agent.send(input))

@@ -11,7 +11,7 @@ export function TerminalPanel() {
     session.attention === 'trust'
       ? '이 프로젝트 폴더를 처음 열었어요. 키보드 ↓ 키로 "Yes, I trust this folder"를 고른 뒤 Enter를 눌러 주세요. (그냥 Enter를 누르면 Claude가 종료돼요)'
       : session.attention === 'login'
-        ? 'Claude 로그인이 필요해요. 터미널 안내를 따르거나 홈 → 환경 점검에서 로그인해 주세요.'
+        ? 'Claude 로그인이 풀렸어요. 오른쪽 버튼으로 다시 로그인하면 이어서 작업할 수 있어요.'
         : session.attention === 'usage'
           ? '사용량 한도에 도달했어요. 터미널에 표시된 초기화 시간 이후에 이어서 작업할 수 있어요.'
           : null
@@ -33,8 +33,19 @@ export function TerminalPanel() {
         </button>
       </div>
       {attention && (
-        <div className="small" style={{ padding: '8px 14px', background: 'var(--warning-soft)', color: 'var(--warning)', borderBottom: '1px solid var(--border)' }}>
-          {attention}
+        <div className="row small" style={{ padding: '8px 14px', background: 'var(--warning-soft)', color: 'var(--warning)', borderBottom: '1px solid var(--border)' }}>
+          <span className="grow">{attention}</span>
+          {session.attention === 'login' && (
+            <button
+              className="btn sm primary"
+              onClick={async () => {
+                await studio.app.login()
+                useStore.setState({ loginOpen: true })
+              }}
+            >
+              Claude 로그인
+            </button>
+          )}
         </div>
       )}
       {pid && <XTerm sessionId={pid} active={terminalOpen} style={{ padding: '6px 0 0 10px' }} />}

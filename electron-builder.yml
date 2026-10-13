@@ -24,6 +24,9 @@ files:
   - '!**/node_modules/**/{test,tests,__tests__,example,examples,docs}/**'
   - '!**/node_modules/**/*.{md,map,ts,tsx}'
   - '!**/node_modules/@anthropic-ai/claude-agent-sdk-{linux,linux-*}*/**'
+  # compile caches written by tools at dev time: thousands of files, and codesign
+  # would try to sign each one
+  - '!**/node_modules/**/{.v8-cache,.cache}/**'
 
 extraResources:
   # FFmpeg / ffprobe / yt-dlp for this OS+CPU (scripts/fetch-binaries.mjs)

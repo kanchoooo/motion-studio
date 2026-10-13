@@ -15,6 +15,7 @@ import { join } from 'node:path'
 import * as pty from 'node-pty'
 import type { AgentEvent, ChatItem, SendMessageInput, SessionState, Storyboard } from '@shared/api'
 import type { FeedbackMark } from '@shared/project'
+import { claudeEnv } from '../claude-env'
 import { claudeBinary } from '../doctor'
 import * as history from '../history'
 import { isDev, appRoot, projectsDir } from '../paths'
@@ -55,22 +56,6 @@ interface Live {
   tail: TranscriptTail
   appItems: ChatItem[]
   compositionMtime: number
-}
-
-function cleanEnv(): Record<string, string> {
-  const env: Record<string, string> = {}
-  for (const [k, v] of Object.entries(process.env)) {
-    if (v == null) continue
-    // a parent Claude Code session (e.g. `npm run dev` from a Claude terminal) marks children,
-    // which turns transcript saving off: drop every CLAUDE* marker except the config dir
-    if (/^CLAUDE/.test(k) && k !== 'CLAUDE_CONFIG_DIR') continue
-    if (k === 'CI' || k === 'NO_COLOR' || k === 'TERM_PROGRAM' || k === 'ELECTRON_RUN_AS_NODE') continue
-    env[k] = v
-  }
-  env.TERM = 'xterm-256color'
-  env.COLORTERM = 'truecolor'
-  if (process.platform !== 'win32' && !env.LANG) env.LANG = 'ko_KR.UTF-8'
-  return env
 }
 
 function markLines(marks: FeedbackMark[]): string {
@@ -147,7 +132,7 @@ export class SessionManager {
       cols: 100,
       rows: 26,
       cwd: projectsDir(),
-      env: cleanEnv(),
+      env: claudeEnv(),
       useConpty: true,
     })
     const l = { projectId: id, dir: projectsDir(), sessionId: '', term, buffer: '', plain: '', cols: 100, rows: 26, state: { status: 'starting' } as SessionState, tail: { stop() {}, items: [], busy: false } as unknown as TranscriptTail, appItems: [], compositionMtime: 0 }
@@ -163,6 +148,35 @@ export class SessionManager {
     term.onExit(() => this.setState(l, { status: 'exited' }))
     this.setState(l, l.state)
     return l.state
+  }
+
+  /**
+   * Runs Anthropic's own sign-in (`claude auth login`) in a real terminal the
+   * designer can see and type into (browser link, pasted code). Credentials go
+   * straight from Claude Code to the keychain; the app never sees them.
+   */
+  startLogin(): SessionState {
+    const id = '__login__'
+    this.kill(id)
+    const term = pty.spawn(claudeBinary(), ['auth', 'login', '--claudeai'], { name: 'xterm-256color', cols: 100, rows: 24, cwd: projectsDir(), env: claudeEnv(), useConpty: true })
+    const l = { projectId: id, dir: projectsDir(), sessionId: '', term, buffer: '', plain: '', cols: 100, rows: 24, state: { status: 'starting' } as SessionState, tail: { stop() {}, items: [], busy: false } as unknown as TranscriptTail, appItems: [], compositionMtime: 0 }
+    this.live.set(id, l)
+    term.onData((d) => {
+      l.buffer = (l.buffer + d).slice(-REPLAY)
+      this.emit({ type: 'pty-data', projectId: id, data: d })
+    })
+    term.onExit(({ exitCode }) => this.setState(l, { status: 'exited', exitCode }))
+    this.setState(l, l.state)
+    return l.state
+  }
+
+  /** keeps few Claude processes alive: idle sessions of other projects are closed (fewer token refreshes racing) */
+  pruneIdle(keepProjectId: string) {
+    for (const [id, l] of this.live) {
+      if (id === keepProjectId || id.startsWith('__') || id === this.adapting) continue
+      if (this.adaptQueue.some((q) => q.projectId === id)) continue
+      if (l.state.status === 'ready' || l.state.status === 'exited') this.kill(id)
+    }
   }
 
   /** starts (or returns) the live session for a project */
@@ -206,7 +220,7 @@ export class SessionManager {
     ]
     const cols = existing?.cols ?? 110
     const rows = existing?.rows ?? 34
-    const term = pty.spawn(claudeBinary(), args, { name: 'xterm-256color', cols, rows, cwd: dir, env: cleanEnv(), useConpty: true })
+    const term = pty.spawn(claudeBinary(), args, { name: 'xterm-256color', cols, rows, cwd: dir, env: claudeEnv(), useConpty: true })
 
     const l: Live = {
       projectId,

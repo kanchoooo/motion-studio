@@ -14,6 +14,7 @@ const api: StudioApi & { internal: { previewBase: string } } = {
     info: () => invoke('app:info'),
     doctor: () => invoke('app:doctor'),
     login: () => invoke('app:login'),
+    cancelLogin: () => invoke('app:cancelLogin'),
     installBrowser: () => invoke('app:installBrowser'),
     openExternal: (url) => invoke('app:openExternal', url),
     reveal: (path) => invoke('app:reveal', path),

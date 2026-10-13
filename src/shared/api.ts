@@ -184,7 +184,9 @@ export interface StudioApi {
   app: {
     info(): Promise<AppInfo>
     doctor(): Promise<DoctorReport>
-    login(): Promise<{ ok: boolean; message: string }>
+    /** opens Claude Code's own sign-in in a terminal session ("__login__") */
+    login(): Promise<SessionState>
+    cancelLogin(): Promise<void>
     installBrowser(): Promise<{ ok: boolean; message: string }>
     openExternal(url: string): Promise<void>
     reveal(path: string): Promise<void>

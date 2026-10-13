@@ -229,7 +229,7 @@
 ## Phase 5 — 배포
 
 ### 계획
-- [ ] 배포 방식 결정 (서명 여부, 업데이트 방식)
+- [~] 배포 방식: 서명 자동 선택(Developer ID → 서명+공증 / Apple Development → 테스트 서명 / 없음 → 미서명). 현재 Apple Development만 있어 Developer ID 발급 대기
 
 ### 진행
 - [ ] Mac 설치 파일 (dmg), Windows 설치 파일 (exe)
@@ -264,4 +264,7 @@
 | 2026-10-13 | Phase 2.5 | 사운드: Claude 효과음 5개 → 일괄 교체 → BGM 2곡 실테스트 통과. 단위 테스트 22개 |
 | 2026-10-13 | 계획 | 요구 추가: 베리에이션(크기·길이, 각각 편집). 모방 방지 기준: 거의 똑같은 복제만 방지 |
 | 2026-10-13 | Phase 3·4 | 레퍼런스(파일·유튜브·분석·복제 감지), 타임라인 요소 막대, 비교, 부분 되돌리기, 저장 공간, 브랜드 프리셋, PSD. 단위 테스트 30개 |
+| 2026-10-13 | 배포 | GitHub 비공개 저장소 kanchoooo/motion-studio 생성·푸시 |
+| 2026-10-13 | 로그인·키체인 | 로그인을 앱 안 터미널(Claude Code 자체 로그인)로, CLAUDE_CODE_OAUTH_TOKEN·ANTHROPIC_* 무시, 키체인 잠김·로그인 방식 점검, Electron 키체인 미사용, 유휴 세션 정리 |
+| 2026-10-13 | 서명 | 하드닝 런타임 + entitlements, Claude 바이너리 Anthropic 서명 유지. Apple Development 서명 앱에서 세션·렌더 검증. 컴파일 캐시 제외로 서명 시간 12분+ → 3분 47초 |
 | 2026-10-13 | 배포 준비 | setup 스크립트, prepare-target(교차 아키텍처), electron-builder, CI, DEVELOPMENT/INSTALL 문서. Intel 설치본 실행 검증 (한글 번들명 충돌 → 영문으로 해결), Claude 권한 규칙 Read/Edit로 정리 |
