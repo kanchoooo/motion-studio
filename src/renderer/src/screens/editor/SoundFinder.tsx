@@ -197,12 +197,14 @@ function Narration() {
   const [voice, setVoice] = useState<AiVoiceInfo | null>(null)
   return (
     <div className="col" style={{ gap: 8 }}>
-      <VoiceBrowser selected={voice ? { provider: voice.provider, voiceId: voice.id } : project!.brief.ai.narration} onPick={setVoice} height={240} />
+      <VoiceBrowser selected={voice ? { provider: voice.provider, voiceId: voice.id } : undefined} onPick={setVoice} height={300} />
       <button
         className="btn sm primary"
         disabled={!voice}
         onClick={async () => {
-          await studio.agent.send({ projectId: project!.meta.id, text: `"${voice!.name}" 목소리(${voice!.provider}, voice id: ${voice!.id})로 내레이션을 만들어 영상에 넣어 주세요. 대본은 브리프와 장면에 맞춰 써 주세요.` })
+          const v = voice!
+          const ref = v.provider === 'magnific' ? `매그니픽 audio_tts voiceId ${v.id}, source ${v.source ?? 'catalog'}` : `힉스필드 generate_audio voice_type ${v.voiceType ?? 'preset'}, voice_id ${v.id}`
+          await studio.agent.send({ projectId: project!.meta.id, text: `"${v.name}" 목소리(${ref})로 내레이션을 만들어 영상에 넣어 주세요. 대본은 브리프와 장면에 맞춰 써 주세요.` })
           toast('Claude에게 내레이션을 부탁했어요', 'success')
         }}
       >

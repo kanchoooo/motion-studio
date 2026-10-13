@@ -1,5 +1,5 @@
 import type { Asset, BrandPreset, Brief, OutputFormat, OutputQuality, ReferenceItem } from './brief'
-import type { AiAccountInfo, AiLoginEvent, AiModelInfo, AiSettings, AiVoiceInfo, AudioCandidate, AudioCandidateList } from './ai'
+import type { AiAccountInfo, AiLoginEvent, AiModelInfo, AiModelList, AiSettings, AiVoiceInfo, AudioCandidate, AudioCandidateList, PrivateBrowser } from './ai'
 import type { Overrides } from './overrides'
 import type { FeedbackMark, HistoryEntry, ProjectState, ProjectSummary, RenderRecord } from './project'
 
@@ -25,7 +25,7 @@ export interface Storyboard {
 }
 
 export type ChatItem =
-  | { id: string; at: string; role: 'user'; text: string; marks?: FeedbackMark[]; frame?: string; time?: number; attachments?: string[] }
+  | { id: string; at: string; role: 'user'; text: string; marks?: FeedbackMark[]; frame?: string; time?: number; attachments?: string[]; /** sent while Claude was working: delivered when it reaches a stopping point */ queued?: boolean }
   | { id: string; at: string; role: 'assistant'; text: string; streaming?: boolean }
   | { id: string; at: string; role: 'status'; text: string; done: boolean }
   | { id: string; at: string; role: 'storyboard'; storyboard: Storyboard; status: 'pending' | 'approved' | 'superseded' }
@@ -303,16 +303,20 @@ export interface StudioApi {
   ai: {
     accounts(): Promise<AiAccountInfo[]>
     /** opens the service's sign-in in the browser; progress arrives through onLogin */
-    login(provider: AiAccountInfo['provider'], label: string, relogin?: string): Promise<void>
+    /** browser: 'default' or a PrivateBrowser id (opens a private/incognito window) */
+    login(provider: AiAccountInfo['provider'], label: string, opts?: { relogin?: string; browser?: string }): Promise<void>
     cancelLogin(): Promise<void>
     onLogin(cb: (e: AiLoginEvent) => void): () => void
     setActive(provider: AiAccountInfo['provider'], accountId: string): Promise<AiAccountInfo[]>
     rename(accountId: string, label: string): Promise<AiAccountInfo[]>
     remove(accountId: string): Promise<AiAccountInfo[]>
-    models(provider: AiAccountInfo['provider'], kind: AiModelInfo['kind']): Promise<AiModelInfo[]>
-    voices(provider: AiAccountInfo['provider'], query: string): Promise<AiVoiceInfo[]>
-    /** makes a short sample of a voice (uses the service's credits); returns a playable URL */
-    ttsSample(provider: AiAccountInfo['provider'], voiceId: string, text: string): Promise<string>
+    models(provider: AiAccountInfo['provider'], kind: AiModelInfo['kind']): Promise<AiModelList>
+    /** the whole voice catalogue of the active account (searching and filtering happen in the app) */
+    voices(provider: AiAccountInfo['provider']): Promise<AiVoiceInfo[]>
+    /** a short sample of a voice without a free preview (uses the service's credits, cached on disk); returns a playable URL */
+    ttsSample(voice: AiVoiceInfo, text: string): Promise<string>
+    /** browsers that can open the sign-in page in a private window */
+    privateBrowsers(): Promise<PrivateBrowser[]>
     settings(): Promise<AiSettings>
     saveSettings(patch: Partial<AiSettings>): Promise<AiSettings>
     /** media made or imported by AI tools in this project */
@@ -322,7 +326,9 @@ export interface StudioApi {
     searchAudio(projectId: string, input: { query: string; kind: 'bgm' | 'sfx' }): Promise<void>
     /** downloads a candidate into the project; returns its composition path */
     useAudioCandidate(projectId: string, item: AudioCandidate): Promise<string>
-    /** types /mcp into the project's Claude terminal for Artlist sign-in */
-    artlistLogin(projectId: string): Promise<void>
+    /** opens Claude Code's MCP screen with Artlist in a terminal ("__artlist__") for sign-in */
+    artlistLogin(): Promise<SessionState>
+    /** closes that terminal; idle project sessions reconnect so they pick up the sign-in */
+    artlistLoginDone(): Promise<void>
   }
 }

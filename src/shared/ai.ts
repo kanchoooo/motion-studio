@@ -37,6 +37,15 @@ export interface AiLoginEvent {
   status: 'waiting' | 'done' | 'error' | 'cancelled'
   message?: string
   account?: AiAccountInfo
+  /** sign-in page (to copy into any browser's private window) */
+  url?: string
+}
+
+/** an installed browser that can open a private / incognito window */
+export interface PrivateBrowser {
+  id: string
+  /** e.g. "Chrome 시크릿 창" */
+  label: string
 }
 
 export type AiMediaKind = 'image' | 'video' | 'audio'
@@ -47,18 +56,41 @@ export interface AiModelInfo {
   name: string
   kind: AiMediaKind
   description?: string
+  /** the service recommends it (shown first) */
+  recommended?: boolean
+  /** needs a paid plan on the service */
+  premium?: boolean
+  /** exists, but the signed-in account's plan cannot use it */
+  unavailable?: boolean
+}
+
+export interface AiModelList {
+  items: AiModelInfo[]
+  /** shown under the picker, e.g. "영상 생성은 프리미엄 플랜이 필요해요" */
+  note?: string
 }
 
 export interface AiVoiceInfo {
   provider: AiConnectProvider
   id: string
   name: string
+  /** service's own description (often English) */
   description?: string
-  language?: string
-  gender?: string
-  tags?: string[]
-  /** sample audio the designer can play */
+  /** e.g. ["Korean"] */
+  languages?: string[]
+  /** speaks any language (e.g. Google voices on Magnific) */
+  multilingual?: boolean
+  gender?: 'female' | 'male' | 'neutral' | string
+  age?: 'young' | 'middle_aged' | 'old' | string
+  /** sample audio the designer can play for free */
   previewUrl?: string
+  thumbnail?: string
+  /** Higgsfield needs voice_type with the id (preset | element) */
+  voiceType?: string
+  /** Magnific: catalog | mine (cloned voices share ids with the catalog) */
+  source?: string
+  /** engine behind the voice (elevenlabs, google…) */
+  engine?: string
 }
 
 /** music / sound found by Claude (e.g. on Artlist) for the designer to audition */

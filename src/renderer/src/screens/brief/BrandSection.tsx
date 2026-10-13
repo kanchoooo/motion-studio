@@ -39,7 +39,14 @@ export function BrandSection({ brief, onChange }: { brief: Brief; onChange: (b: 
       <div className="row">
         <Palette size={15} color="var(--text-2)" />
         <span className="grow" style={{ fontWeight: 650 }}>브랜드 프리셋</span>
-        {brief.brand && <span className="badge accent">적용됨: {brief.brand.name}</span>}
+        {brief.brand && (
+          <span className="badge accent">
+            적용됨: {brief.brand.name}
+            <button className="icon-btn" title="브랜드 적용 풀기 (넣은 로고 소재는 그대로 둬요)" style={{ width: 16, height: 16, marginLeft: 2 }} onClick={() => onChange({ ...brief, brand: undefined })}>
+              <X size={11} />
+            </button>
+          </span>
+        )}
       </div>
       <div className="small muted" style={{ margin: '6px 0 10px' }}>광고주별 컬러·폰트·로고를 저장해 두고 새 프로젝트에 바로 적용해요. 모든 프로젝트에서 같이 써요.</div>
       <div className="row" style={{ flexWrap: 'wrap', gap: 6 }}>
@@ -51,9 +58,15 @@ export function BrandSection({ brief, onChange }: { brief: Brief; onChange: (b: 
               ))}
             </div>
             <span className="small" style={{ fontWeight: 600 }}>{b.name}</span>
-            <button className="btn sm primary" onClick={() => apply(b)}>
-              적용
-            </button>
+            {brief.brand?.id === b.id ? (
+              <button className="btn sm" title="다시 누르면 적용을 풀어요" onClick={() => onChange({ ...brief, brand: undefined })}>
+                적용됨
+              </button>
+            ) : (
+              <button className="btn sm primary" onClick={() => apply(b)}>
+                적용
+              </button>
+            )}
             <button className="btn sm ghost" onClick={() => { setLogoSource(undefined); setEditing(b) }}>
               편집
             </button>

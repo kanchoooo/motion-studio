@@ -1,67 +1,125 @@
 // Picks a generation model from the connected services ("자동" = Claude chooses).
+// Recommended models first; plan-limited ones are marked; any model can also be
+// typed by name when the list does not have it.
 import { useEffect, useState } from 'react'
-import { Loader2 } from 'lucide-react'
-import { AI_PROVIDERS, type AiAccountInfo, type AiMediaKind, type AiModelInfo } from '@shared/ai'
+import { Loader2, RotateCcw } from 'lucide-react'
+import { AI_PROVIDERS, type AiConnectProvider, type AiMediaKind, type AiModelInfo } from '@shared/ai'
 import type { AiModelRef } from '@shared/brief'
 import { studio } from '../../store'
 
-const cache = new Map<string, Promise<AiModelInfo[]>>()
-function models(provider: AiAccountInfo['provider'], kind: AiMediaKind) {
-  const key = `${provider}:${kind}`
-  if (!cache.has(key)) cache.set(key, studio.ai.models(provider, kind).catch(() => []))
-  return cache.get(key)!
-}
-export const resetModelCache = () => cache.clear()
+const errText = (e: unknown) => (e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(e))
+const TYPED = '__typed__'
+
+export const resetModelCache = () => {}
 
 export function ModelSelect({ kind, value, onChange, autoLabel = '자동 (Claude가 골라요)' }: { kind: AiMediaKind; value: AiModelRef | null | undefined; onChange(v: AiModelRef | null): void; autoLabel?: string }) {
-  const [list, setList] = useState<AiModelInfo[] | null>(null)
-  const [accounts, setAccounts] = useState<AiAccountInfo[]>([])
+  const [lists, setLists] = useState<Partial<Record<AiConnectProvider, { items: AiModelInfo[]; note?: string; error?: string }>> | null>(null)
+  const [connected, setConnected] = useState<AiConnectProvider[]>([])
+  const [typing, setTyping] = useState(false)
+  const [typed, setTyped] = useState('')
+  const [nonce, setNonce] = useState(0)
+
   useEffect(() => {
     let alive = true
+    setLists(null)
     void studio.ai.accounts().then(async (acc) => {
-      if (!alive) return
-      setAccounts(acc)
       const providers = [...new Set(acc.filter((a) => a.active && !a.needsLogin).map((a) => a.provider))]
-      const all = (await Promise.all(providers.map((p) => models(p, kind)))).flat()
-      if (alive) setList(all)
+      if (!alive) return
+      setConnected(providers)
+      const out: NonNullable<typeof lists> = {}
+      await Promise.all(
+        providers.map(async (p) => {
+          try {
+            out[p] = await studio.ai.models(p, kind)
+          } catch (e) {
+            out[p] = { items: [], error: errText(e) }
+          }
+        }),
+      )
+      if (alive) setLists(out)
     })
     return () => {
       alive = false
     }
-  }, [kind])
-  const connected = accounts.some((a) => !a.needsLogin)
+  }, [kind, nonce])
+
+  const all = Object.values(lists ?? {}).flatMap((l) => l?.items ?? [])
   const key = value ? `${value.provider}::${value.model}` : ''
-  const known = !value || (list ?? []).some((m) => m.provider === value.provider && m.id === value.model)
+  const known = !value || all.some((m) => m.provider === value.provider && m.id === value.model)
+  const notes = Object.entries(lists ?? {}).flatMap(([p, l]) => [l?.error && `${AI_PROVIDERS[p as AiConnectProvider].name}: ${l.error}`, l?.note && `${AI_PROVIDERS[p as AiConnectProvider].name}: ${l.note}`].filter(Boolean) as string[])
+
+  if (typing)
+    return (
+      <div className="row" style={{ gap: 6 }}>
+        <select className="select" style={{ width: 110, flex: 'none' }} value={value?.provider ?? connected[0] ?? 'magnific'} onChange={(e) => typed && onChange({ provider: e.target.value as AiConnectProvider, model: typed, label: typed })}>
+          {(['magnific', 'higgsfield'] as const).map((p) => (
+            <option key={p} value={p}>
+              {AI_PROVIDERS[p].name}
+            </option>
+          ))}
+        </select>
+        <input
+          className="input"
+          autoFocus
+          placeholder="모델 이름 (예: Nano Banana Pro)"
+          value={typed}
+          onChange={(e) => setTyped(e.target.value)}
+          onBlur={() => {
+            if (typed.trim()) onChange({ provider: value?.provider ?? connected[0] ?? 'magnific', model: typed.trim(), label: typed.trim() })
+            setTyping(false)
+          }}
+          onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+        />
+      </div>
+    )
+
   return (
-    <div className="row" style={{ gap: 6 }}>
-      <select
-        className="select"
-        value={key}
-        onChange={(e) => {
-          if (!e.target.value) return onChange(null)
-          const [provider, model] = e.target.value.split('::')
-          const m = list?.find((x) => x.provider === provider && x.id === model)
-          onChange({ provider: provider as AiModelRef['provider'], model, label: m?.name })
-        }}
-      >
-        <option value="">{autoLabel}</option>
-        {!known && value && <option value={key}>{value.label ?? value.model} ({AI_PROVIDERS[value.provider].name})</option>}
-        {(['higgsfield', 'magnific'] as const).map((p) => {
-          const items = (list ?? []).filter((m) => m.provider === p)
-          if (!items.length) return null
-          return (
-            <optgroup key={p} label={AI_PROVIDERS[p].name}>
-              {items.map((m) => (
-                <option key={m.id} value={`${p}::${m.id}`} title={m.description}>
-                  {m.name}
-                </option>
-              ))}
-            </optgroup>
-          )
-        })}
-      </select>
-      {list === null && <Loader2 size={14} className="spin" />}
-      {list !== null && !connected && <span className="tiny faint" style={{ whiteSpace: 'nowrap' }}>AI 연결 필요</span>}
+    <div className="col" style={{ gap: 4 }}>
+      <div className="row" style={{ gap: 6 }}>
+        <select
+          className="select"
+          value={key}
+          onChange={(e) => {
+            if (e.target.value === TYPED) {
+              setTyped(value?.label ?? '')
+              return setTyping(true)
+            }
+            if (!e.target.value) return onChange(null)
+            const [provider, model] = e.target.value.split('::')
+            const m = all.find((x) => x.provider === provider && x.id === model)
+            onChange({ provider: provider as AiConnectProvider, model, label: m?.name })
+          }}
+        >
+          <option value="">{autoLabel}</option>
+          {!known && value && <option value={key}>{value.label ?? value.model} ({AI_PROVIDERS[value.provider].name})</option>}
+          {(['magnific', 'higgsfield'] as const).map((p) => {
+            const items = lists?.[p]?.items ?? []
+            if (!items.length) return null
+            return (
+              <optgroup key={p} label={AI_PROVIDERS[p].name}>
+                {items.map((m) => (
+                  <option key={m.id} value={`${p}::${m.id}`} disabled={m.unavailable} title={m.description}>
+                    {m.recommended ? '★ ' : ''}
+                    {m.name}
+                    {m.unavailable ? ' (지금 플랜으로는 사용 불가)' : m.premium ? ' · 유료 플랜' : ''}
+                  </option>
+                ))}
+              </optgroup>
+            )
+          })}
+          <option value={TYPED}>직접 입력…</option>
+        </select>
+        {lists === null && connected.length > 0 && <Loader2 size={14} className="spin" />}
+        {lists !== null && !connected.length && <span className="tiny faint" style={{ whiteSpace: 'nowrap' }}>AI 연결 필요</span>}
+        {notes.length > 0 && (
+          <button className="icon-btn" title="다시 불러오기" onClick={() => setNonce((n) => n + 1)}>
+            <RotateCcw size={13} />
+          </button>
+        )}
+      </div>
+      {notes.map((n) => (
+        <span key={n} className="tiny" style={{ color: 'var(--warning)' }}>{n}</span>
+      ))}
     </div>
   )
 }

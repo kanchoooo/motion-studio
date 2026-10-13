@@ -16,13 +16,24 @@ export function ChatPanel({ onFold }: { onFold?(): void }) {
   const [attachments, setAttachments] = useState<string[]>([])
   const [dropping, setDropping] = useState(false)
   const list = useRef<HTMLDivElement>(null)
+  // follow new messages only while the designer is at the bottom (reading older ones is not interrupted)
+  const atBottom = useRef(true)
+  const [behind, setBehind] = useState(false)
   const pid = project!.meta.id
   const busy = session.status === 'busy'
 
   useEffect(() => {
     const el = list.current
-    if (el) el.scrollTop = el.scrollHeight
+    if (!el) return
+    if (atBottom.current) el.scrollTop = el.scrollHeight
+    else setBehind(true)
   }, [chat.length, chat[chat.length - 1]])
+  const toBottom = () => {
+    const el = list.current
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+    atBottom.current = true
+    setBehind(false)
+  }
 
   /** copies picked/dropped images into the project and returns their project paths */
   const addImages = async (files: string[]): Promise<string[]> => {
@@ -61,6 +72,7 @@ export function ChatPanel({ onFold }: { onFold?(): void }) {
       setText('')
       setAttachments([])
       clearMarks()
+      toBottom()
       useEditor.setState({ tool: 'select' })
     } catch (e) {
       const msg = errText(e)
@@ -103,7 +115,16 @@ export function ChatPanel({ onFold }: { onFold?(): void }) {
         )}
       </div>
 
-      <div ref={list} style={{ flex: 1, overflow: 'auto', padding: '14px 14px 6px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div
+        ref={list}
+        data-testid="chat-list"
+        onScroll={(e) => {
+          const el = e.currentTarget
+          atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40
+          if (atBottom.current) setBehind(false)
+        }}
+        style={{ flex: 1, overflow: 'auto', padding: '14px 14px 6px', display: 'flex', flexDirection: 'column', gap: 10 }}
+      >
         {chat.length === 0 && (
           <div className="col" style={{ gap: 10, padding: '20px 4px' }}>
             <div className="title">무엇을 만들까요?</div>
@@ -126,7 +147,12 @@ export function ChatPanel({ onFold }: { onFold?(): void }) {
         )}
       </div>
 
-      <div style={{ padding: 12, borderTop: '1px solid var(--border)', flex: 'none' }} className="col">
+      <div style={{ padding: 12, borderTop: '1px solid var(--border)', flex: 'none', position: 'relative' }} className="col">
+        {behind && (
+          <button className="btn sm" onClick={toBottom} style={{ position: 'absolute', top: -40, left: '50%', transform: 'translateX(-50%)', boxShadow: 'var(--shadow-sm)', zIndex: 2 }} data-testid="chat-latest">
+            ↓ 최신 메시지
+          </button>
+        )}
         {marks.length > 0 && (
           <div className="col" style={{ gap: 6, maxHeight: 260, overflow: 'auto' }}>
             <div className="row tiny muted">
@@ -245,18 +271,17 @@ export function ChatPanel({ onFold }: { onFold?(): void }) {
 
 const errText = (e: unknown) => (e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(e))
 
+// '' = the app default (latest Opus, high effort; see DEFAULT_MODEL / DEFAULT_EFFORT in pty-session)
 const MODELS: { value: AgentModel; label: string }[] = [
-  { value: '', label: '기본 모델' },
+  { value: '', label: 'Opus 최신 (기본)' },
   { value: 'fable', label: 'Fable · 가장 강력' },
-  { value: 'opus', label: 'Opus · 균형' },
   { value: 'sonnet', label: 'Sonnet · 빠르고 효율적' },
   { value: 'haiku', label: 'Haiku · 가장 빠름' },
 ]
 const EFFORTS: { value: AgentEffort; label: string }[] = [
-  { value: '', label: '기본' },
+  { value: '', label: '높음 (기본)' },
   { value: 'low', label: '낮음' },
   { value: 'medium', label: '보통' },
-  { value: 'high', label: '높음' },
   { value: 'xhigh', label: '매우 높음' },
   { value: 'max', label: '최대' },
 ]
@@ -265,8 +290,9 @@ const EFFORTS: { value: AgentEffort; label: string }[] = [
 function ModelPicker() {
   const { project, session, toast, setProject } = useStore()
   const pid = project!.meta.id
-  const model = (project!.meta.agentModel ?? '') as AgentModel
-  const effort = (project!.meta.agentEffort ?? '') as AgentEffort
+  // older projects may hold the defaults explicitly
+  const model = (project!.meta.agentModel === 'opus' ? '' : (project!.meta.agentModel ?? '')) as AgentModel
+  const effort = (project!.meta.agentEffort === 'high' ? '' : (project!.meta.agentEffort ?? '')) as AgentEffort
   const change = async (next: { model: AgentModel; effort: AgentEffort }) => {
     try {
       const st = await studio.agent.setModel(pid, next)
@@ -358,7 +384,13 @@ function ChatRow({ item, count = 1 }: { item: ChatItem; count?: number }) {
     case 'user':
       return (
         <div className="fade-in" style={{ alignSelf: 'flex-end', maxWidth: '88%' }}>
-          <div style={{ background: 'var(--accent)', color: 'var(--accent-text)', padding: '8px 12px', borderRadius: '14px 14px 4px 14px', whiteSpace: 'pre-wrap', userSelect: 'text' }}>{item.text}</div>
+          <div style={{ background: 'var(--accent)', color: 'var(--accent-text)', padding: '8px 12px', borderRadius: '14px 14px 4px 14px', whiteSpace: 'pre-wrap', userSelect: 'text', opacity: item.queued ? 0.75 : 1 }}>{item.text}</div>
+          {item.queued && (
+            <div className="row tiny muted" style={{ justifyContent: 'flex-end', marginTop: 3, gap: 4 }} data-testid="queued-label">
+              <Loader2 size={10} className="spin" />
+              전달 대기 · Claude가 지금 작업을 마치는 대로 읽어요
+            </div>
+          )}
           {(item.marks?.length || frameUrl || item.attachments?.length) && (
             <div className="col" style={{ gap: 4, marginTop: 6, alignItems: 'flex-end' }}>
               {frameUrl && <img src={frameUrl} style={{ width: 200, borderRadius: 8, border: '1px solid var(--border)' }} />}

@@ -1,27 +1,41 @@
 // "AI 연결": sign in to Higgsfield / Magnific (several accounts each, one in use)
 // and turn Artlist on for Claude (Artlist signs in inside the Claude terminal).
 import { useEffect, useState } from 'react'
-import { Check, ExternalLink, Loader2, LogIn, Pencil, Plus, SquareTerminal, Trash2 } from 'lucide-react'
-import { AI_PROVIDERS, type AiAccountInfo, type AiConnectProvider, type AiSettings } from '@shared/ai'
+import { Check, Copy, ExternalLink, Loader2, LogIn, Pencil, Plus, SquareTerminal, Trash2 } from 'lucide-react'
+import { AI_PROVIDERS, type AiAccountInfo, type AiConnectProvider, type AiSettings, type PrivateBrowser } from '@shared/ai'
 import { studio, useStore } from '../../store'
+import { XTerm } from '../XTerm'
 import { Modal, Toggle } from '../ui'
 
 const CAN_LABEL = { image: '이미지', video: '영상', tts: '음성(TTS)', music: '음악', sfx: '효과음' } as const
 
 export function ConnectionsModal({ onClose }: { onClose(): void }) {
-  const { toast, project, setTerminal } = useStore()
+  const { toast } = useStore()
   const [accounts, setAccounts] = useState<AiAccountInfo[]>([])
   const [settings, setSettings] = useState<AiSettings | null>(null)
   const [adding, setAdding] = useState<AiConnectProvider | null>(null)
   const [label, setLabel] = useState('회사')
   const [waiting, setWaiting] = useState<AiConnectProvider | null>(null)
+  const [loginUrl, setLoginUrl] = useState<string | null>(null)
+  const [browsers, setBrowsers] = useState<PrivateBrowser[]>([])
+  const [browser, setBrowser] = useState('default')
+  const [artlistTerm, setArtlistTerm] = useState(false)
 
   useEffect(() => {
     void studio.ai.accounts().then(setAccounts)
     void studio.ai.settings().then(setSettings)
+    void studio.ai.privateBrowsers().then((b) => {
+      setBrowsers(b)
+      // a private window by default: the browser's signed-in account (often the company one) is not reused
+      if (b.length) setBrowser(b[0].id)
+    })
     return studio.ai.onLogin((e) => {
-      if (e.status === 'waiting') return setWaiting(e.provider)
+      if (e.status === 'waiting') {
+        if (e.url) setLoginUrl(e.url)
+        return setWaiting(e.provider)
+      }
       setWaiting(null)
+      setLoginUrl(null)
       if (e.status === 'done') {
         toast(`${AI_PROVIDERS[e.provider].name}에 연결했어요${e.account?.email ? ` (${e.account.email})` : ''}`, 'success')
         setAdding(null)
@@ -32,11 +46,60 @@ export function ConnectionsModal({ onClose }: { onClose(): void }) {
 
   const start = (provider: AiConnectProvider, relogin?: AiAccountInfo) => {
     setWaiting(provider)
-    void studio.ai.login(provider, relogin ? relogin.label : label.trim() || '계정', relogin?.id)
+    setLoginUrl(null)
+    void studio.ai.login(provider, relogin ? relogin.label : label.trim() || '계정', { relogin: relogin?.id, browser })
   }
 
+  const waitingRow = (
+    <div className="col" style={{ gap: 6 }}>
+      <div className="row small">
+        <Loader2 size={14} className="spin" />
+        <span className="grow">{browser === 'default' ? '브라우저' : browsers.find((b) => b.id === browser)?.label}에서 로그인해 주세요</span>
+        <button className="btn sm" onClick={() => void studio.ai.cancelLogin()}>
+          취소
+        </button>
+      </div>
+      {loginUrl && (
+        <div className="row tiny muted" style={{ gap: 6 }}>
+          <span className="grow">창이 안 열리거나 다른 브라우저(사파리 개인 정보 보호 창 등)에서 하려면 주소를 복사해 붙여넣으세요.</span>
+          <button
+            className="btn ghost sm"
+            onClick={async () => {
+              await navigator.clipboard.writeText(loginUrl)
+              toast('로그인 주소를 복사했어요', 'success')
+            }}
+          >
+            <Copy size={12} />
+            주소 복사
+          </button>
+        </div>
+      )}
+    </div>
+  )
+
+  const browserPicker = (
+    <div className="row" style={{ gap: 6 }}>
+      <span className="small" style={{ width: 70 }}>로그인 창</span>
+      <select className="select" style={{ height: 28 }} value={browser} onChange={(e) => setBrowser(e.target.value)}>
+        {browsers.map((b) => (
+          <option key={b.id} value={b.id}>
+            {b.label} (추천: 다른 계정으로 로그인)
+          </option>
+        ))}
+        <option value="default">기본 브라우저 (지금 로그인된 계정이 바로 쓰일 수 있어요)</option>
+      </select>
+    </div>
+  )
+
   return (
-    <Modal title="AI 연결" onClose={onClose} width={680}>
+    <Modal
+      title="AI 연결"
+      onClose={() => {
+        if (artlistTerm) void studio.ai.artlistLoginDone()
+        onClose()
+      }}
+      width={artlistTerm ? 820 : 680}
+    >
       <div className="small muted" style={{ lineHeight: 1.6, marginTop: -4 }}>
         이미지·영상·음성 생성 서비스에 로그인하면 Claude가 대화나 브리프에 맞춰 소재를 만들어요. 서비스마다 회사·개인 계정을 여러 개 저장해 두고 골라 쓸 수 있어요. 사용량(크레딧)은 고른 계정에서 차감돼요.
       </div>
@@ -68,6 +131,7 @@ export function ConnectionsModal({ onClose }: { onClose(): void }) {
             {mine.map((a) => (
               <AccountRow key={a.id} a={a} busy={!!waiting} onChange={setAccounts} onRelogin={() => start(p, a)} />
             ))}
+            {mine.length > 0 && adding !== p && !waiting && <div className="tiny faint" style={{ marginTop: 4 }}>다시 로그인할 때도 아래 "계정 추가"의 로그인 창 설정(시크릿 창)을 따라요.</div>}
 
             {adding === p && (
               <div className="col" style={{ gap: 8, marginTop: 8, padding: 10, borderRadius: 8, background: 'var(--surface-2)' }}>
@@ -80,34 +144,21 @@ export function ConnectionsModal({ onClose }: { onClose(): void }) {
                   ))}
                   <input className="input grow" style={{ height: 28 }} value={label} onChange={(e) => setLabel(e.target.value)} placeholder="예: 회사 팀 계정" />
                 </div>
-                <div className="row">
-                  <span className="tiny muted grow">브라우저에서 {meta.name} 로그인 화면이 열려요. 로그인하고 허용하면 자동으로 연결돼요.</span>
-                  {waiting === p ? (
-                    <>
-                      <Loader2 size={14} className="spin" />
-                      <span className="small">브라우저에서 로그인해 주세요</span>
-                      <button className="btn sm" onClick={() => void studio.ai.cancelLogin()}>
-                        취소
-                      </button>
-                    </>
-                  ) : (
+                {browserPicker}
+                {waiting === p ? (
+                  waitingRow
+                ) : (
+                  <div className="row">
+                    <span className="tiny muted grow">{meta.name} 로그인 화면이 열려요. 로그인하고 허용하면 자동으로 연결돼요.</span>
                     <button className="btn sm primary" onClick={() => start(p)} disabled={!!waiting}>
                       <LogIn size={13} />
                       로그인
                     </button>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
             )}
-            {waiting === p && adding !== p && (
-              <div className="row small" style={{ marginTop: 8 }}>
-                <Loader2 size={14} className="spin" />
-                <span className="grow">브라우저에서 로그인해 주세요</span>
-                <button className="btn sm" onClick={() => void studio.ai.cancelLogin()}>
-                  취소
-                </button>
-              </div>
-            )}
+            {waiting === p && adding !== p && <div style={{ marginTop: 8 }}>{waitingRow}</div>}
           </div>
         )
       })}
@@ -131,29 +182,49 @@ export function ConnectionsModal({ onClose }: { onClose(): void }) {
             }}
           />
         </div>
-        {settings?.artlist && (
-          <div className="col tiny muted" style={{ gap: 4, lineHeight: 1.6, padding: 10, borderRadius: 8, background: 'var(--surface-2)' }}>
+        {settings?.artlist && !artlistTerm && (
+          <div className="col tiny muted" style={{ gap: 6, lineHeight: 1.6, padding: 10, borderRadius: 8, background: 'var(--surface-2)' }}>
             <span>
-              로그인은 <b>Claude 터미널</b>에서 해요. 아트리스트 정책상 앱이 직접 로그인할 수 없어서, Claude Code가 로그인 정보를 보관해요(앱은 보지 않아요).
+              아트리스트는 앱이 직접 로그인할 수 없어서 <b>Claude Code</b>가 로그인 정보를 보관해요(앱은 보지 않아요). 아래 버튼을 누르면 로그인 창이 이 화면에 열려요.
             </span>
-            <span>1. 아래 버튼을 누르면 터미널에 MCP 화면이 열려요. 2. ↓로 <b>artlist</b>를 고르고 Enter → <b>Authenticate</b>. 3. 브라우저에서 로그인해요.</span>
-            <span>계정을 바꾸려면 같은 화면에서 <b>Clear authentication</b>(로그아웃) 후 다른 계정으로 다시 로그인해요.</span>
-            {project ? (
+            <button
+              className="btn sm primary"
+              style={{ alignSelf: 'flex-start' }}
+              data-testid="artlist-login"
+              onClick={async () => {
+                setArtlistTerm(true)
+                await studio.ai.artlistLogin()
+              }}
+            >
+              <SquareTerminal size={13} />
+              아트리스트 로그인
+            </button>
+          </div>
+        )}
+        {settings?.artlist && artlistTerm && (
+          <div className="col" style={{ gap: 8 }}>
+            <ol className="small" style={{ margin: 0, paddingLeft: 18, lineHeight: 1.7 }}>
+              <li>처음이면 폴더 신뢰 화면이 나와요: ↓ 키로 "Yes, I trust this folder"를 고르고 Enter.</li>
+              <li>MCP 목록에서 ↑↓로 <b>artlist</b>를 고르고 Enter → <b>Authenticate</b>에서 Enter.</li>
+              <li>브라우저에서 아트리스트에 로그인하고 허용하면 끝이에요. 목록에 ✔ connected가 보이면 아래 완료를 눌러요.</li>
+              <li>계정을 바꾸려면 같은 화면에서 <b>Clear authentication</b> 후 다시 Authenticate.</li>
+            </ol>
+            <div style={{ height: 300, display: 'flex', background: '#0f0f11', borderRadius: 8, padding: '8px 0 0 10px' }} data-testid="artlist-terminal">
+              <XTerm sessionId="__artlist__" />
+            </div>
+            <div className="row">
+              <span className="tiny muted grow">완료하면 열려 있는 프로젝트의 Claude가 다시 연결돼서 아트리스트를 쓸 수 있어요.</span>
               <button
-                className="btn sm"
-                style={{ alignSelf: 'flex-start', marginTop: 4 }}
+                className="btn sm primary"
                 onClick={async () => {
-                  setTerminal(true)
-                  await studio.ai.artlistLogin(project.meta.id)
-                  onClose()
+                  await studio.ai.artlistLoginDone()
+                  setArtlistTerm(false)
+                  toast('아트리스트 로그인을 마쳤어요. 쉬고 있는 Claude 대화는 바로 다시 연결돼요.', 'success')
                 }}
               >
-                <SquareTerminal size={13} />
-                터미널에서 로그인하기
+                완료
               </button>
-            ) : (
-              <span>프로젝트를 연 뒤 이 화면에서 로그인할 수 있어요.</span>
-            )}
+            </div>
           </div>
         )}
       </div>

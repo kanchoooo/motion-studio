@@ -326,8 +326,23 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
               ? 'enabled: use the mcp__artlist__* tools directly (search music, sound effects, voice-over). If they are missing, Artlist is not signed in yet — tell the designer to sign in from the Claude terminal (/mcp).'
               : 'off (the designer can turn it on in AI 연결)',
             briefDefaults: brief.ai,
+            cheatsheet: {
+              magnific: {
+                imageModels: 'images_models_list {search?} → slug; generate: images_generate {prompt, mode: <slug>, aspectRatio, count}',
+                videoModels: 'video_models_list {search?} → slug (plan-blocked slugs are listed under unavailableToThisAccount: tell the designer); generate: video_generate {prompt, slug, duration, aspectRatio}',
+                voices: 'audio_voices_list {search?} → integer id; speech: audio_tts {text, voiceId: <int>, source: "catalog"|"mine"} (call audio_tts_direction first for tags/pauses)',
+                results: 'generation tools return creation identifiers: creations_wait {identifiers} until done, then creations_get {identifiers} — that call\'s file URLs are saved into the project',
+              },
+              higgsfield: {
+                models: 'models_explore {action:"list"|"search"|"recommend", type:"image"|"video"|"audio", query?} → id',
+                generate: 'generate_image / generate_video {params:{model, prompt, aspect_ratio, …}}; speech: generate_audio {params:{model:"seed_audio", prompt:<script>, voice_type, voice_id}}',
+                voices: 'list_voices {size, cursor} → voice_id + voice_type',
+                results: 'jobs_wait {jobs:[…]} (or job_status) until done; the result URLs are saved into the project',
+              },
+            },
             how: [
-              'Use ai_tools(provider) to see the service\'s tools and parameters, then ai_call to run them. Generated files are saved into the project automatically and their composition paths are returned.',
+              'Use ai_tools(provider, filter) for exact parameters, then ai_call. Generated files are saved into the project automatically and their composition paths are returned.',
+              'Plan or daily-limit errors: stop and tell the designer in Korean (which service, what to do) instead of retrying.',
               'What the designer asked in the chat wins over the brief defaults. If neither names a model, choose a suitable one and say which.',
               'Generation costs the designer\'s credits: generate only what you will use, one or two candidates at most unless asked.',
               'Text-to-speech: write the script in natural Korean unless told otherwise; place the narration as <audio data-ms-type="voice" data-ms-label="내레이션 · …"> on the root with its exact length.',

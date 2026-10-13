@@ -130,7 +130,13 @@ poc/               Phase 0 기술 검증 기록 (RESULTS.md)
 
 - Claude는 앱 MCP의 중계 도구(`ai_status`, `ai_tools`, `ai_call`, `ai_import`)로 힉스필드·매그니픽을 써요. 결과 파일은 앱이 내려받아 프로젝트에 넣어요(세션에 셸이 없어서).
 - 아트리스트를 켜면 세션 MCP 설정에 `artlist`가 추가되고 `mcp__artlist` 권한이 열려요. 후보는 `show_audio_candidates`로 사운드 패널에 보여줘요.
-- 모델·추론 강도는 세션을 `--model`/`--effort`로 다시 시작해서 바꿔요(`--resume`).
+- 서비스 응답 형식(2026-10-13 실제 확인, 샘플: `tests/unit/fixtures/`)
+  - 매그니픽 목록(`images_models_list`·`video_models_list`·`audio_voices_list`)은 JSON이 아니라 TOON 텍스트예요(`ai/toon.ts`).
+  - 플랜 때문에 막힌 모델은 `unavailableToThisAccount`에 와요. 목소리에는 미리듣기 주소가 없어서 `audio_tts`로 샘플을 만들어요(creations_wait → creations_get).
+  - 힉스필드는 JSON(structuredContent)이고 페이지가 나뉘어요. `models_explore`, `list_voices`(preview_url 있음)를 써요.
+- 목소리 찾기의 한국어 검색어 → 영어 설명어 매핑과 느낌 칩은 `src/shared/voiceSearch.ts`에 있어요.
+- 아트리스트 로그인은 `__artlist__` 보조 세션(아트리스트만 넣은 `--mcp-config`)에서 `/mcp`를 열어요. 토큰은 서버 이름과 주소로 저장돼서 프로젝트 세션들이 같이 써요.
+- 모델·추론 강도는 세션을 `--model`/`--effort`로 다시 시작해서 바꿔요(`--resume`). 기본값은 `opus` + `high`예요(pty-session `DEFAULT_MODEL`/`DEFAULT_EFFORT`).
   - Claude Code의 `/model`·`/effort` 화면에서 Enter를 누르면 사용자 전체 기본값이 바뀌기 때문이에요.
 
 ## 6. 코드 서명과 공증 (Mac)

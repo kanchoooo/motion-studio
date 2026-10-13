@@ -1,25 +1,55 @@
-// Short text-to-speech samples so the designer can hear a voice before using it.
-import { mkdirSync } from 'node:fs'
+// Short text-to-speech samples for voices without a free preview (Magnific).
+// Each sample is made once (it costs the service's credits) and kept on disk.
+import { existsSync, mkdirSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
-import type { AiConnectProvider } from '@shared/ai'
+import type { AiVoiceInfo } from '@shared/ai'
 import { dataDir } from '../paths'
-import { callTool, listTools } from './connect'
+import { failIfError, payload } from './catalog'
+import { callTool, type ToolResult } from './connect'
 import { saveResultMedia } from './media'
 
-/** generates a sample with the service's TTS tool; returns the absolute file path */
-export async function ttsSample(provider: AiConnectProvider, voiceId: string, text: string): Promise<string> {
-  const tools = await listTools(provider)
-  const tool = tools.find((t) => /tts|speech|text_to_speech/i.test(t.name) && !/voice.*list|list/i.test(t.name))
-  if (!tool) throw new Error('이 서비스에서 음성 생성 도구를 찾지 못했어요.')
-  const props = Object.keys((tool.inputSchema as { properties?: Record<string, unknown> })?.properties ?? {})
-  const textKey = props.find((k) => /^(text|input|script|prompt)$/i.test(k)) ?? 'text'
-  const voiceKey = props.find((k) => /^(voice_id|voiceId|voice)$/i.test(k)) ?? 'voice_id'
-  const dir = join(dataDir(), 'tts-samples')
-  mkdirSync(dir, { recursive: true })
-  const r = await callTool(provider, tool.name, { [textKey]: text, [voiceKey]: voiceId })
-  if (r.isError) throw new Error(r.content?.find((c) => c.type === 'text')?.text?.slice(0, 300) ?? '음성을 만들지 못했어요.')
-  // saveResultMedia writes into <dir>/assets/generated
-  const saved = await saveResultMedia(dir, `${provider}-sample`, r, 1)
-  if (!saved.length) throw new Error('음성 파일을 받지 못했어요. 잠시 뒤 다시 시도해 주세요.')
-  return join(dir, saved[0].file)
+const sampleDir = () => join(dataDir(), 'tts-samples')
+const prefixOf = (v: AiVoiceInfo) => `${v.provider}-${v.id.replace(/[^\w-]/g, '')}`
+
+/** creation identifiers in a queued result */
+function identifiers(v: unknown, out: string[] = []): string[] {
+  if (Array.isArray(v)) v.forEach((x) => identifiers(x, out))
+  else if (v && typeof v === 'object')
+    for (const [k, x] of Object.entries(v)) {
+      if (/^(identifier|creationIdentifier|identifiers)$/i.test(k)) (Array.isArray(x) ? x : [x]).forEach((i) => typeof i === 'string' && !out.includes(i) && out.push(i))
+      else identifiers(x, out)
+    }
+  return out
+}
+
+/** absolute path of an existing sample, if the voice was auditioned before */
+export function existingSample(v: AiVoiceInfo): string | null {
+  const dir = join(sampleDir(), 'assets', 'generated')
+  if (!existsSync(dir)) return null
+  const f = readdirSync(dir).find((n) => n.startsWith(`${prefixOf(v)}-`) && /\.(mp3|wav|m4a|ogg|aac)$/i.test(n))
+  return f ? join(dir, f) : null
+}
+
+export async function ttsSample(v: AiVoiceInfo, text: string): Promise<string> {
+  const have = existingSample(v)
+  if (have) return have
+  if (v.provider !== 'magnific') throw new Error('이 목소리는 미리듣기로 들어 주세요.')
+  mkdirSync(sampleDir(), { recursive: true })
+  let r: ToolResult = await callTool('magnific', 'audio_tts', { text, voiceId: Number(v.id), source: v.source ?? 'catalog' }, 120_000)
+  failIfError(r)
+  let saved = await saveResultMedia(sampleDir(), prefixOf(v), r, 1)
+  // queued: wait for the creation, then read its URLs
+  const ids = saved.length ? [] : identifiers(payload(r)).slice(0, 1)
+  for (let i = 0; i < 6 && ids.length && !saved.length; i++) {
+    r = await callTool('magnific', 'creations_wait', { identifiers: ids, timeoutSeconds: 25 }, 60_000)
+    failIfError(r)
+    const done = !/in[_ -]?progress|queued|processing|poll_after/i.test(JSON.stringify(payload(r)) ?? '')
+    if (done) {
+      r = await callTool('magnific', 'creations_get', { identifiers: ids }, 60_000)
+      failIfError(r)
+      saved = await saveResultMedia(sampleDir(), prefixOf(v), r, 1)
+    }
+  }
+  if (!saved.length) throw new Error('샘플 소리를 받지 못했어요. 잠시 뒤 다시 시도해 주세요.')
+  return join(sampleDir(), saved[0].file)
 }

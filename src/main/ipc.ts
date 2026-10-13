@@ -18,7 +18,8 @@ import { cancelExport, exportAll, listRenders, removeRender, startExport, update
 import { createVariations } from './variations'
 import { listBrands, removeBrand, saveBrand } from './brands'
 import { addReferenceFiles, addYoutube, listReferences, removeReference, updateReference } from './references'
-import type { AiConnectProvider, AiLoginEvent, AiMediaKind, AiSettings, AudioCandidate, AudioCandidateList } from '@shared/ai'
+import type { AiConnectProvider, AiLoginEvent, AiMediaKind, AiSettings, AiVoiceInfo, AudioCandidate, AudioCandidateList } from '@shared/ai'
+import { privateBrowsers } from './ai/browser'
 import { patchAccount, publicInfo, removeAccount, setActive } from './ai/accounts'
 import { clearCatalog, listModels, listVoices } from './ai/catalog'
 import { cancelLogin, login, resetConnections } from './ai/connect'
@@ -203,8 +204,8 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
 
   // ---- AI services ----
   handle('ai:accounts', () => publicInfo())
-  handle('ai:login', (provider: AiConnectProvider, label: string, relogin?: string) => {
-    void login(provider, { label, relogin }, (e: AiLoginEvent) => {
+  handle('ai:login', (provider: AiConnectProvider, label: string, opts?: { relogin?: string; browser?: string }) => {
+    void login(provider, { label, relogin: opts?.relogin, browser: opts?.browser }, (e: AiLoginEvent) => {
       if (e.status === 'done') clearCatalog()
       send('ai:login', e)
     })
@@ -227,11 +228,12 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
     return publicInfo()
   })
   handle('ai:models', (provider: AiConnectProvider, kind: AiMediaKind) => listModels(provider, kind))
-  handle('ai:voices', (provider: AiConnectProvider, query: string) => listVoices(provider, query))
-  handle('ai:ttsSample', async (provider: AiConnectProvider, voiceId: string, text: string) => {
-    const file = await ttsSample(provider, voiceId, text.slice(0, 200))
+  handle('ai:voices', (provider: AiConnectProvider) => listVoices(provider))
+  handle('ai:ttsSample', async (voice: AiVoiceInfo, text: string) => {
+    const file = await ttsSample(voice, String(text).slice(0, 200))
     return serveFolderUrl(join(file, '..')) + encodeURIComponent(file.split(/[\\/]/).pop()!)
   })
+  handle('ai:privateBrowsers', () => privateBrowsers())
   handle('ai:settings', () => aiSettings())
   handle('ai:saveSettings', (patch: Partial<AiSettings>) => {
     const before = aiSettings()
@@ -254,7 +256,12 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
     recordGenerated(dir, [{ file: m.file, kind: m.kind, provider: item.source, tool: 'pick', label: item.title }])
     return m.file
   })
-  handle('ai:artlistLogin', (id: string) => agent.typeCommand(id, '/mcp'))
+  handle('ai:artlistLogin', () => agent.startArtlistLogin())
+  handle('ai:artlistLoginDone', () => {
+    agent.kill('__artlist__')
+    // sessions connect to MCP servers at start: reconnect idle ones so the sign-in reaches them
+    agent.restartIdle()
+  })
 
   // ---- fonts ----
   handle('fonts:list', () => listFonts())

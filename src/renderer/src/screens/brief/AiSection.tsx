@@ -44,11 +44,11 @@ export function AiSection({ brief, onChange }: { brief: Brief; onChange: (b: Bri
         </div>
         {ai.narration.enabled && (
           <div className="col" style={{ gap: 14 }}>
-            <Field label="목소리" hint={ai.narration.voiceName ? `선택됨: ${ai.narration.voiceName}` : '목록에서 듣고 골라 주세요. 비워 두면 Claude가 톤에 맞게 골라요.'}>
+            <Field label="목소리" hint={ai.narration.voiceName ? `선택됨: ${ai.narration.voiceName} · 다시 누르면 선택을 풀어요` : '목록에서 듣고 골라 주세요. 비워 두면 Claude가 톤에 맞게 골라요.'}>
               <VoiceBrowser
                 selected={{ provider: ai.narration.provider, voiceId: ai.narration.voiceId }}
-                onPick={(v) => setN({ provider: v.provider, voiceId: v.id, voiceName: v.name })}
-                height={260}
+                onPick={(v) => setN(v ? { provider: v.provider, voiceId: v.id, voiceName: v.name, voiceType: v.voiceType ?? v.source } : { provider: undefined, voiceId: undefined, voiceName: undefined, voiceType: undefined })}
+                height={300}
               />
             </Field>
             <Field label="대본" hint="비워 두면 Claude가 톤앤매너와 스토리보드에 맞춰 써요. 줄마다 한 문장씩 적으면 장면에 맞춰 나눠 넣어요.">

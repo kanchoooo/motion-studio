@@ -1,0 +1,36 @@
+voices[6]:
+  - id: 994
+    name: Chaewon Baek
+    provider: elevenlabs
+    gender: female
+    age: young
+    description: "A clear and calm Korean female voice with a professional, informative delivery. Precise pronunciation and a natural news-anchor style make it ideal for educational content, documentaries, audiobooks, narration, and any content that requires a calm, trustworthy, and articulate voice."
+    languages[1]: Korean
+  - id: 1011
+    name: Chaewon Yoon
+    provider: elevenlabs
+    gender: female
+    age: middle_aged
+    description: "A calm, steady, and trustworthy deep voice."
+    languages[1]: Korean
+  - id: 824
+    name: Choi Yuna
+    provider: elevenlabs
+    gender: female
+    age: middle_aged
+    description: The Gyeongsang-do + Seoul woman's voice
+    languages[1]: Korean
+  - id: 694
+    name: Achernar
+    provider: google
+    gender: female
+    age: young
+    description: Soft and gentle
+    supportsAllLanguages: true
+  - id: 802
+    name: Ada Okafor
+    provider: elevenlabs
+    gender: female
+    age: young
+    description: "A young, gentle and conversational Nigerian voice with effortless natural cadence and authentic warmth — finely tuned for storytelling, e-learning, narration and customer service. Carrying the rhythm and richness of a modern African perspective, ideal for connecting with diverse audiences with genuine human resonance."
+    languages[1]: English

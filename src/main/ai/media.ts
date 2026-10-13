@@ -70,7 +70,7 @@ export function mediaUrls(value: unknown): string[] {
       continue
     }
     // thumbnails, posters and links to web pages are not outputs
-    if (/thumb|poster|preview_image|avatar|icon|page|web|docs|help|pricing/i.test(key)) continue
+    if (/thumb|poster|preview_?image|preview_?url|web_?url|logo|avatar|icon|page|docs|help|pricing/i.test(key)) continue
     const keyHint = /(^|_)(url|uri|output|outputs|result|results|file|download|media|image|images|video|videos|audio|asset|src)(s|_url)?$/i.test(key)
     if (MEDIA_EXT.test(path) || keyHint) out.push(url)
   }

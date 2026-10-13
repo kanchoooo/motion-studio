@@ -33,6 +33,10 @@ type Emit = (e: AgentEvent) => void
 
 export const pluginDir = () => (isDev ? join(appRoot(), 'resources', 'claude-plugin') : join(process.resourcesPath, 'claude-plugin'))
 
+/** project default unless the designer picks another in the chat panel: latest Opus, high effort */
+export const DEFAULT_MODEL = 'opus'
+export const DEFAULT_EFFORT = 'high'
+
 const REPLAY = 512 * 1024
 const ENTER_DELAY = 800
 const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x1b[=>()][0-9A-Za-z]?/g
@@ -162,6 +166,48 @@ export class SessionManager {
   }
 
   /**
+   * Artlist does not let apps register for sign-in, so Claude Code itself signs in
+   * (its /mcp screen). This helper runs Claude Code with only the Artlist server
+   * in the projects folder and opens /mcp; the designer picks artlist →
+   * Authenticate in the terminal shown by the app. The token stays with Claude
+   * Code (keyed by server name + URL), so every project session reuses it.
+   */
+  startArtlistLogin(): SessionState {
+    const id = '__artlist__'
+    this.kill(id)
+    const mcp = JSON.stringify({ mcpServers: { artlist: { type: 'http', url: AI_PROVIDERS.artlist.url } } })
+    const term = pty.spawn(claudeBinary(), ['--setting-sources', '', '--strict-mcp-config', '--mcp-config', mcp, '--tools', ''], {
+      name: 'xterm-256color',
+      cols: 100,
+      rows: 28,
+      cwd: projectsDir(),
+      env: claudeEnv(),
+      useConpty: true,
+    })
+    const l = { projectId: id, dir: projectsDir(), sessionId: '', term, buffer: '', plain: '', cols: 100, rows: 28, state: { status: 'starting' } as SessionState, tail: { stop() {}, items: [], busy: false } as unknown as TranscriptTail, appItems: [], compositionMtime: 0 }
+    this.live.set(id, l)
+    let opened = false
+    term.onData((d) => {
+      l.buffer = (l.buffer + d).slice(-REPLAY)
+      l.plain = (l.plain + toPlain(d)).slice(-6000)
+      this.emit({ type: 'pty-data', projectId: id, data: d })
+      this.detect(l)
+      // once the input box is up (folder trusted), open the MCP screen
+      if (l.state.status === 'ready' && !opened) {
+        opened = true
+        setTimeout(async () => {
+          term.write('/mcp')
+          await new Promise((r) => setTimeout(r, ENTER_DELAY))
+          term.write('\r')
+        }, 600)
+      }
+    })
+    term.onExit(({ exitCode }) => this.setState(l, { status: 'exited', exitCode }))
+    this.setState(l, l.state)
+    return l.state
+  }
+
+  /**
    * Runs Anthropic's own sign-in (`claude auth login`) in a real terminal the
    * designer can see and type into (browser link, pasted code). Credentials go
    * straight from Claude Code to the keychain; the app never sees them.
@@ -236,8 +282,8 @@ export class SessionManager {
       // render the studio rules fresh each request so app updates reach existing conversations
       '--system-prompt-snapshot', 'off',
       // session-only model/effort: never touches the designer's own Claude Code defaults
-      ...(meta.agentModel ? ['--model', meta.agentModel] : []),
-      ...(meta.agentEffort ? ['--effort', meta.agentEffort] : []),
+      '--model', meta.agentModel || DEFAULT_MODEL,
+      '--effort', meta.agentEffort || DEFAULT_EFFORT,
     ]
     const cols = existing?.cols ?? 110
     const rows = existing?.rows ?? 34
@@ -252,7 +298,7 @@ export class SessionManager {
       plain: '',
       cols,
       rows,
-      state: { status: 'starting', sessionId, remoteName: name, model: meta.agentModel, effort: meta.agentEffort },
+      state: { status: 'starting', sessionId, remoteName: name, model: meta.agentModel || DEFAULT_MODEL, effort: meta.agentEffort || DEFAULT_EFFORT },
       tail: undefined as unknown as TranscriptTail,
       appItems: projects.readChat<ChatItem>(projectId),
       compositionMtime: this.compMtime(dir),
@@ -399,9 +445,10 @@ export class SessionManager {
 
   /** restarts idle sessions so a new MCP setup (e.g. Artlist on/off) takes effect */
   restartIdle() {
-    for (const [id, l] of this.live) {
+    // a snapshot: restart() re-inserts the entry, and a live Map iteration would visit it again (endless restarts)
+    for (const [id, l] of [...this.live]) {
       if (id.startsWith('__')) continue
-      if (l.state.status === 'ready') this.restart(id)
+      if (l.state.status === 'ready' || (l.state.status === 'starting' && l.state.attention !== 'trust')) this.restart(id)
       else if (l.state.status === 'busy') this.pendingRestart.add(id)
     }
   }

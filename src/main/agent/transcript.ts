@@ -16,6 +16,10 @@ type Rec = {
   promptId?: string
   toolUseResult?: unknown
   bridgeSessionId?: string
+  /** queue-operation records: a message typed while Claude was working */
+  operation?: string
+  content?: unknown
+  attachment?: { type?: string; prompt?: unknown; origin?: { kind?: string } }
   message?: {
     id?: string
     role?: string
@@ -139,6 +143,39 @@ export class TranscriptTail {
     return t
   }
 
+  /** messages typed while Claude was busy, by text, until Claude takes them */
+  private queued = new Map<string, ChatItem>()
+  /** delivered queued messages (text → time): a later copy of the same line is not shown twice */
+  private delivered = new Map<string, number>()
+
+  /** marks a queued message as delivered; true if it was shown already */
+  private takeQueued(text: string, initial: boolean, at = Date.now()): boolean {
+    const item = this.queued.get(text)
+    if (!item) {
+      const t = this.delivered.get(text)
+      return t != null && Math.abs(at - t) < 10 * 60_000
+    }
+    this.delivered.set(text, at)
+    this.queued.delete(text)
+    const done = { ...item, queued: false } as ChatItem
+    const i = this.items.findIndex((x) => x.id === item.id)
+    if (i >= 0) this.items[i] = done
+    if (!initial) this.ev.update(done)
+    return true
+  }
+
+  /** a user line, resolving app messages ([모션스튜디오 메시지] feedback/msg-….md) to what the designer typed */
+  private userItem(id: string, at: string, t: string): ChatItem {
+    const m = t.match(MESSAGE_FILE_RE)
+    if (!m) return { id, at, role: 'user', text: t }
+    try {
+      const data = JSON.parse(readFileSync(join(this.projectDir, `${m[1]}.json`), 'utf8')) as { text: string; marks?: never[]; frame?: string; time?: number; attachments?: string[] }
+      return { id, at, role: 'user', text: data.text, marks: data.marks, frame: data.frame, time: data.time, attachments: data.attachments }
+    } catch {
+      return { id, at, role: 'user', text: '(첨부된 메시지)' }
+    }
+  }
+
   private consume(r: Rec, initial: boolean) {
     if (r.type === 'bridge-session' && r.bridgeSessionId) {
       this.ev.remoteUrl(`https://claude.ai/code/session_${r.bridgeSessionId.replace(/^cse_/, '')}`)
@@ -165,19 +202,28 @@ export class TranscriptTail {
         this.emitItem({ id: r.uuid ?? at, at, role: 'notice', text: '작업을 멈췄어요.' }, initial)
         return
       }
-      const m = t.match(MESSAGE_FILE_RE)
-      let item: ChatItem = { id: r.uuid ?? at, at, role: 'user', text: t }
-      if (m) {
-        const side = join(this.projectDir, `${m[1]}.json`)
-        try {
-          const data = JSON.parse(readFileSync(side, 'utf8')) as { text: string; marks?: never[]; frame?: string; time?: number; attachments?: string[] }
-          item = { id: r.uuid ?? at, at, role: 'user', text: data.text, marks: data.marks, frame: data.frame, time: data.time, attachments: data.attachments }
-        } catch {
-          item = { id: r.uuid ?? at, at, role: 'user', text: '(첨부된 메시지)' }
-        }
-      }
-      this.emitItem(item, initial)
+      // already shown when it was queued
+      if (!this.takeQueued(t, initial, Date.parse(at))) this.emitItem(this.userItem(r.uuid ?? at, at, t), initial)
       if (!initial) this.setBusy(true)
+      return
+    }
+    // a message typed while Claude was working: shown at once, marked as waiting
+    if (r.type === 'queue-operation' && r.operation === 'enqueue' && typeof r.content === 'string') {
+      const t = r.content.trim()
+      if (!t || t.startsWith('<')) return
+      const item = { ...this.userItem(`q-${at}`, at, t), queued: true } as ChatItem
+      this.queued.set(t, item)
+      this.emitItem(item, initial)
+      return
+    }
+    // …and handed to Claude in the middle of its turn
+    if (r.type === 'attachment' && r.attachment?.type === 'queued_command' && r.attachment.origin?.kind === 'human' && typeof r.attachment.prompt === 'string') {
+      const t = r.attachment.prompt.trim()
+      if (!t || t.startsWith('<')) return
+      if (!this.takeQueued(t, initial, Date.parse(at))) {
+        this.delivered.set(t, Date.parse(at))
+        this.emitItem(this.userItem(`a-${r.uuid ?? at}`, at, t), initial)
+      }
       return
     }
     if (r.type === 'assistant' && r.message) {

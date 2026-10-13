@@ -1,11 +1,19 @@
-// Model and voice catalogues for the designer's pickers (brief, TTS browser),
-// read from the services' own MCP tools and normalised.
-import type { AiConnectProvider, AiMediaKind, AiModelInfo, AiVoiceInfo } from '@shared/ai'
+// Model and voice catalogues for the designer's pickers (brief, voice finder),
+// read from each service's own MCP tools (formats checked against the live
+// services, 2026-10-13):
+//  - Magnific: images_models_list / video_models_list / audio_voices_list return
+//    compact YAML-like text (see toon.ts); plan-blocked models are listed under
+//    unavailableToThisAccount.
+//  - Higgsfield: models_explore {action:list,type} and list_voices return JSON
+//    (structuredContent), paginated; voices carry a free preview_url.
+import type { AiConnectProvider, AiMediaKind, AiModelInfo, AiModelList, AiVoiceInfo } from '@shared/ai'
 import { activeAccount } from './accounts'
-import { callTool, listTools, type ToolInfo, type ToolResult } from './connect'
+import { callTool, type ToolResult } from './connect'
+import { parseToon } from './toon'
 
 const cache = new Map<string, { at: number; value: unknown }>()
-async function cached<T>(key: string, make: () => Promise<T>, ttl = 10 * 60_000): Promise<T> {
+/** successful results only: a failure is retried next time */
+async function cached<T>(key: string, ttl: number, make: () => Promise<T>): Promise<T> {
   const hit = cache.get(key)
   if (hit && Date.now() - hit.at < ttl) return hit.value as T
   const value = await make()
@@ -14,11 +22,16 @@ async function cached<T>(key: string, make: () => Promise<T>, ttl = 10 * 60_000)
 }
 export const clearCatalog = () => cache.clear()
 
-const KIND_RE: Record<AiMediaKind, RegExp> = { image: /image/i, video: /video/i, audio: /voice|tts|audio|speech/i }
+/** text of a tool result (all text blocks) */
+const textOf = (r: ToolResult) => (r.content ?? []).filter((c) => c.type === 'text' && c.text).map((c) => c.text!).join('\n')
 
-function pickTool(tools: ToolInfo[], subject: RegExp, kind?: RegExp): ToolInfo | undefined {
-  const cand = tools.filter((t) => subject.test(t.name) && (!kind || kind.test(t.name)))
-  return cand.find((t) => /list|search|catalog/i.test(t.name)) ?? cand[0]
+/** turns a service error into a message for the designer */
+function failIfError(r: ToolResult) {
+  if (!r.isError) return
+  const t = textOf(r)
+  if (/free limit|limit .*used up|daily/i.test(t)) throw new Error('오늘 무료 사용 한도를 다 썼어요. 크레딧은 차감되지 않았어요. 내일 다시 시도하거나 유료 플랜이 있는 계정을 써 주세요.')
+  if (/premium|upgrade|plan/i.test(t)) throw new Error('지금 계정의 플랜으로는 쓸 수 없어요. 유료 플랜이 있는 계정으로 바꿔 주세요.')
+  throw new Error(t.slice(0, 300) || '서비스가 오류를 돌려줬어요.')
 }
 
 /** JSON payload of a tool result (structured content, or the first JSON text block) */
@@ -30,14 +43,8 @@ export function payload(r: ToolResult): unknown {
     try {
       return JSON.parse(t)
     } catch {
-      const m = t.match(/[[{][\s\S]*[\]}]/)
-      if (m) {
-        try {
-          return JSON.parse(m[0])
-        } catch {
-          /* not JSON */
-        }
-      }
+      const toon = parseToon(t)
+      if (toon) return toon
     }
   }
   return null
@@ -65,58 +72,134 @@ const str = (o: Record<string, unknown>, ...keys: string[]) => {
   }
   return undefined
 }
+const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : typeof v === 'string' && v ? [v] : [])
 
-export async function listModels(provider: AiConnectProvider, kind: AiMediaKind): Promise<AiModelInfo[]> {
+// ---- models -------------------------------------------------------------------------
+
+/** Magnific catalogue text → models (plan-blocked slugs included, flagged) */
+export function magnificModels(v: unknown, kind: AiMediaKind): AiModelList {
+  const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>
+  const items: AiModelInfo[] = (Array.isArray(o.models) ? o.models : [])
+    // "private" models are feature-flagged: listed only when this account has them
+    .filter((m): m is Record<string, unknown> => !!m && typeof m === 'object')
+    .map((m) => {
+      const rec = (m.agentRecommendation ?? null) as Record<string, unknown> | null
+      return {
+        provider: 'magnific' as const,
+        id: String(m.slug ?? m.id ?? ''),
+        name: String(m.name ?? m.slug ?? ''),
+        kind,
+        description: (rec && typeof rec.summary === 'string' ? rec.summary : undefined) ?? str(m, 'description'),
+        recommended: !!rec,
+        premium: m.requiresPremium === true,
+        _rank: rec && typeof rec.rank === 'number' ? rec.rank : 99,
+      }
+    })
+    .filter((m) => m.id && m.id !== 'auto')
+    .sort((a, b) => Number(b.recommended) - Number(a.recommended) || a._rank - b._rank || a.name.localeCompare(b.name))
+    .map(({ _rank, ...m }) => (void _rank, m))
+  const blocked = strings(o.unavailableToThisAccount)
+  for (const slug of blocked) if (!items.some((m) => m.id === slug)) items.push({ provider: 'magnific', id: slug, name: slug, kind, unavailable: true, premium: true })
+  const what = kind === 'video' ? '영상' : '이미지'
+  const note = !items.some((m) => !m.unavailable)
+    ? blocked.length || o.requiresPremium === true
+      ? `지금 계정의 플랜으로는 ${what} 생성을 쓸 수 없어요(매그니픽 프리미엄 필요).`
+      : `이 계정에서 쓸 수 있는 ${what} 모델이 없어요. 매그니픽 플랜을 확인해 주세요.`
+    : undefined
+  return { items, note }
+}
+
+export function higgsfieldModels(pages: unknown[], kind: AiMediaKind): AiModelList {
+  const items: AiModelInfo[] = []
+  for (const p of pages)
+    for (const m of entries(p)) {
+      const id = str(m, 'id', 'model_id', 'slug')
+      if (!id || items.some((x) => x.id === id)) continue
+      const provider = str(m, 'provider_name')
+      items.push({ provider: 'higgsfield', id, name: `${str(m, 'name') ?? id}${provider && provider !== 'Higgsfield' ? ` · ${provider}` : ''}`, kind, description: str(m, 'description') })
+    }
+  return { items }
+}
+
+export async function listModels(provider: AiConnectProvider, kind: AiMediaKind): Promise<AiModelList> {
   const acc = activeAccount(provider)
-  if (!acc) return []
-  return cached(`models:${acc.id}:${kind}`, async () => {
-    const tools = await listTools(provider)
-    const tool = pickTool(tools, /model/i, KIND_RE[kind])
-    if (!tool) return []
-    const items = entries(payload(await callTool(provider, tool.name, {}, 60_000)))
-    return items
-      .map((o): AiModelInfo | null => {
-        const id = str(o, 'id', 'model_id', 'model', 'slug', 'key', 'name')
-        if (!id) return null
-        const name = str(o, 'display_name', 'displayName', 'title', 'name', 'label') ?? id
-        return { provider, id, name, kind, description: str(o, 'description', 'summary', 'tagline') }
-      })
-      .filter((x): x is AiModelInfo => !!x)
+  if (!acc) return { items: [] }
+  return cached(`models:${acc.id}:${kind}`, 30 * 60_000, async () => {
+    if (provider === 'magnific') {
+      const tool = kind === 'image' ? 'images_models_list' : kind === 'video' ? 'video_models_list' : null
+      if (!tool) return { items: [] }
+      const r = await callTool(provider, tool, {}, 60_000)
+      failIfError(r)
+      return magnificModels(payload(r), kind)
+    }
+    // Higgsfield: models_explore pages
+    const pages: unknown[] = []
+    let after: string | undefined
+    for (let i = 0; i < 6; i++) {
+      const r = await callTool(provider, 'models_explore', { action: 'list', type: kind, limit: 100, ...(after ? { after } : {}) }, 60_000)
+      failIfError(r)
+      const p = payload(r) as { has_more?: boolean; next_page_token?: string } | null
+      pages.push(p)
+      if (!p?.has_more || !p.next_page_token) break
+      after = p.next_page_token
+    }
+    return higgsfieldModels(pages, kind)
   })
 }
 
-export async function listVoices(provider: AiConnectProvider, query = ''): Promise<AiVoiceInfo[]> {
+// ---- voices -------------------------------------------------------------------------
+
+export function magnificVoices(v: unknown): AiVoiceInfo[] {
+  const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>
+  return (Array.isArray(o.voices) ? o.voices : [])
+    .filter((x): x is Record<string, unknown> => !!x && typeof x === 'object')
+    .map((x) => ({
+      provider: 'magnific' as const,
+      id: String(x.id ?? ''),
+      name: String(x.name ?? x.id ?? '').trim(),
+      description: str(x, 'description'),
+      languages: strings(x.languages),
+      multilingual: x.supportsAllLanguages === true,
+      gender: str(x, 'gender'),
+      age: str(x, 'age'),
+      engine: str(x, 'provider'),
+      source: str(x, 'source') ?? 'catalog',
+    }))
+    .filter((x) => x.id)
+}
+
+export function higgsfieldVoices(pages: unknown[]): AiVoiceInfo[] {
+  const out: AiVoiceInfo[] = []
+  for (const p of pages)
+    for (const x of entries(p)) {
+      const id = str(x, 'voice_id', 'id')
+      if (!id || out.some((v) => v.id === id)) continue
+      out.push({ provider: 'higgsfield', id, name: str(x, 'name') ?? id, gender: str(x, 'gender'), previewUrl: str(x, 'preview_url'), thumbnail: str(x, 'logo_url'), voiceType: str(x, 'voice_type') ?? 'preset', description: str(x, 'description') })
+    }
+  return out
+}
+
+export async function listVoices(provider: AiConnectProvider): Promise<AiVoiceInfo[]> {
   const acc = activeAccount(provider)
   if (!acc) return []
-  const tools = await listTools(provider)
-  const tool = pickTool(tools, /voice/i)
-  if (!tool) return []
-  const props = Object.keys((tool.inputSchema as { properties?: Record<string, unknown> })?.properties ?? {})
-  const qKey = props.find((k) => /^(q|query|search|keyword|text|name)$/i.test(k))
-  const all = await cached(`voices:${acc.id}:${qKey ? query : ''}`, async () => {
-    const args: Record<string, unknown> = {}
-    if (qKey && query) args[qKey] = query
-    const lim = props.find((k) => /^(limit|page_size|per_page|count)$/i.test(k))
-    if (lim) args[lim] = 100
-    return entries(payload(await callTool(provider, tool.name, args, 60_000)))
-      .map((o): AiVoiceInfo | null => {
-        const id = str(o, 'id', 'voice_id', 'voiceId', 'slug', 'key', 'name')
-        if (!id) return null
-        const tags = Object.values(o).flatMap((v) => (Array.isArray(v) ? v.filter((t) => typeof t === 'string') : [])) as string[]
-        return {
-          provider,
-          id,
-          name: str(o, 'display_name', 'displayName', 'name', 'title') ?? id,
-          description: str(o, 'description', 'style', 'accent', 'use_case'),
-          language: str(o, 'language', 'lang', 'locale', 'language_code'),
-          gender: str(o, 'gender', 'sex'),
-          tags: tags.slice(0, 8),
-          previewUrl: str(o, 'preview_url', 'previewUrl', 'sample_url', 'sampleUrl', 'preview', 'sample', 'audio_url', 'demo_url'),
-        }
-      })
-      .filter((x): x is AiVoiceInfo => !!x)
+  return cached(`voices:${acc.id}`, 60 * 60_000, async () => {
+    if (provider === 'magnific') {
+      const r = await callTool(provider, 'audio_voices_list', {}, 90_000)
+      failIfError(r)
+      return magnificVoices(payload(r))
+    }
+    const pages: unknown[] = []
+    let cursor: string | undefined
+    for (let i = 0; i < 15; i++) {
+      const r = await callTool(provider, 'list_voices', { size: 100, ...(cursor ? { cursor } : {}) }, 60_000)
+      failIfError(r)
+      const p = payload(r) as { has_more?: boolean; next_cursor?: string } | null
+      pages.push(p)
+      if (!p?.has_more || !p.next_cursor) break
+      cursor = p.next_cursor
+    }
+    return higgsfieldVoices(pages)
   })
-  const q = query.trim().toLowerCase()
-  if (!q || qKey) return all
-  return all.filter((v) => [v.name, v.description, v.language, v.gender, ...(v.tags ?? [])].some((s) => s?.toLowerCase().includes(q)))
 }
+
+export { failIfError, textOf }

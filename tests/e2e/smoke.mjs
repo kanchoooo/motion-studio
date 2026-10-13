@@ -130,6 +130,11 @@ try {
   await shot('08-terminal')
   const state = await win.evaluate(() => document.querySelector('.badge')?.textContent)
   console.log('session badge:', state)
+  // new projects: latest Opus with high effort
+  const { execFileSync } = await import('node:child_process')
+  const args = execFileSync('ps', ['-axo', 'command']).toString().split('\n').find((l) => /^\S*claude-agent-sdk\S*\/claude /.test(l.trim()) && l.includes('E2E 봄 프로모션')) ?? ''
+  if (!/--model opus/.test(args) || !/--effort high/.test(args)) throw new Error(`session should default to opus/high: ${args.slice(0, 200)}`)
+  console.log('session model: opus / high')
 
   step('panels')
   // history folds out of the editor's right edge; chat folds to the left

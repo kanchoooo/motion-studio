@@ -158,6 +158,8 @@ export interface AiBrief {
     provider?: AiProviderId
     voiceId?: string
     voiceName?: string
+    /** Higgsfield voice_type / Magnific source that goes with the id */
+    voiceType?: string
     /** '' = Claude writes the script */
     script: string
     note: string
