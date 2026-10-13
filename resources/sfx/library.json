@@ -1,0 +1,72 @@
+[
+  {
+    "id": "pop",
+    "label": "팝",
+    "use": "요소가 톡 튀어나올 때",
+    "duration": 0.18,
+    "file": "pop.wav"
+  },
+  {
+    "id": "click",
+    "label": "클릭",
+    "use": "UI·버튼·작은 강조",
+    "duration": 0.06,
+    "file": "click.wav"
+  },
+  {
+    "id": "whoosh",
+    "label": "휙",
+    "use": "장면 전환·빠른 이동",
+    "duration": 0.7,
+    "file": "whoosh.wav"
+  },
+  {
+    "id": "swoosh-up",
+    "label": "휙 올라감",
+    "use": "등장·상승 전환",
+    "duration": 0.6,
+    "file": "swoosh-up.wav"
+  },
+  {
+    "id": "ding",
+    "label": "띵",
+    "use": "포인트·완성·정답",
+    "duration": 1.2,
+    "file": "ding.wav"
+  },
+  {
+    "id": "impact",
+    "label": "쿵",
+    "use": "강한 등장·로고 착지",
+    "duration": 0.9,
+    "file": "impact.wav"
+  },
+  {
+    "id": "riser",
+    "label": "상승음",
+    "use": "긴장감 고조·클라이맥스 직전",
+    "duration": 2,
+    "file": "riser.wav"
+  },
+  {
+    "id": "sparkle",
+    "label": "반짝",
+    "use": "반짝임·새로움 강조",
+    "duration": 0.8,
+    "file": "sparkle.wav"
+  },
+  {
+    "id": "type",
+    "label": "타자",
+    "use": "글자가 한 자씩 나올 때",
+    "duration": 0.05,
+    "file": "type.wav"
+  },
+  {
+    "id": "swipe",
+    "label": "스와이프",
+    "use": "화면 밀기·슬라이드",
+    "duration": 0.35,
+    "file": "swipe.wav"
+  }
+]

@@ -1,0 +1,14 @@
+node_modules/
+out/
+dist/
+release/
+resources/bin/
+.vite/
+*.log
+.DS_Store
+Thumbs.db
+poc/results/
+poc/**/renders/
+.env
+.env.*
+tests/e2e/shots*/

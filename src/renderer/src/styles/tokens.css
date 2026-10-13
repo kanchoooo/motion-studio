@@ -1,0 +1,73 @@
+/* Motion Studio design tokens — dark by default (video-tool convention), light on request */
+:root,
+:root[data-theme='dark'] {
+  --bg: #141416;
+  --surface: #1c1c1f;
+  --surface-2: #232327;
+  --surface-3: #2b2b30;
+  --surface-hover: #303036;
+  --border: #303036;
+  --border-strong: #3d3d44;
+  --text: #ececf0;
+  --text-2: #a8a8b3;
+  --text-3: #74747f;
+  --accent: #5b7fff;
+  --accent-hover: #6f8fff;
+  --accent-press: #4a6cf0;
+  --accent-soft: rgba(91, 127, 255, 0.16);
+  --accent-text: #ffffff;
+  --success: #34c27a;
+  --success-soft: rgba(52, 194, 122, 0.14);
+  --warning: #f5a524;
+  --warning-soft: rgba(245, 165, 36, 0.14);
+  --danger: #ff5c5c;
+  --danger-soft: rgba(255, 92, 92, 0.14);
+  --mark: #ff4d8d;
+  --canvas: #0c0c0e;
+  --shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
+  --scrim: rgba(0, 0, 0, 0.55);
+  color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+  --bg: #f3f3f5;
+  --surface: #ffffff;
+  --surface-2: #f7f7f9;
+  --surface-3: #eeeef2;
+  --surface-hover: #e8e8ee;
+  --border: #e3e3e8;
+  --border-strong: #d2d2da;
+  --text: #18181b;
+  --text-2: #55555f;
+  --text-3: #8c8c96;
+  --accent: #3d63f5;
+  --accent-hover: #2f55e8;
+  --accent-press: #2448d4;
+  --accent-soft: rgba(61, 99, 245, 0.1);
+  --accent-text: #ffffff;
+  --success: #1f9d5c;
+  --success-soft: rgba(31, 157, 92, 0.1);
+  --warning: #c77d00;
+  --warning-soft: rgba(199, 125, 0, 0.1);
+  --danger: #e03c3c;
+  --danger-soft: rgba(224, 60, 60, 0.1);
+  --mark: #e62e76;
+  --canvas: #d9d9de;
+  --shadow: 0 8px 32px rgba(20, 20, 40, 0.14);
+  --shadow-sm: 0 2px 8px rgba(20, 20, 40, 0.08);
+  --scrim: rgba(20, 20, 30, 0.35);
+  color-scheme: light;
+}
+
+:root {
+  --font: 'Pretendard', 'Pretendard Variable', 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, sans-serif;
+  --mono: 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --titlebar: 48px;
+  --panel-left: 340px;
+  --panel-right: 280px;
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+}

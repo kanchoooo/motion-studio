@@ -1,0 +1,103 @@
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import type { AgentEvent, ExportProgress, StudioApi } from '@shared/api'
+
+const invoke = (channel: string, ...args: unknown[]) => ipcRenderer.invoke(channel, ...args)
+
+function subscribe<T>(channel: string, cb: (payload: T) => void): () => void {
+  const listener = (_e: Electron.IpcRendererEvent, payload: T) => cb(payload)
+  ipcRenderer.on(channel, listener)
+  return () => ipcRenderer.removeListener(channel, listener)
+}
+
+const api: StudioApi & { internal: { previewBase: string } } = {
+  app: {
+    info: () => invoke('app:info'),
+    doctor: () => invoke('app:doctor'),
+    login: () => invoke('app:login'),
+    installBrowser: () => invoke('app:installBrowser'),
+    openExternal: (url) => invoke('app:openExternal', url),
+    reveal: (path) => invoke('app:reveal', path),
+    pickFiles: (kind) => invoke('app:pickFiles', kind),
+    pickFolder: () => invoke('app:pickFolder'),
+    trustWorkspace: () => invoke('app:trustWorkspace'),
+    pathForFile: (file) => webUtils.getPathForFile(file),
+    capture: (rect) => invoke('app:capture', rect),
+    setTheme: (theme) => invoke('app:setTheme', theme),
+  },
+  projects: {
+    list: () => invoke('projects:list'),
+    create: (input) => invoke('projects:create', input),
+    open: (path) => invoke('projects:open', path),
+    state: (id) => invoke('projects:state', id),
+    rename: (id, name) => invoke('projects:rename', id, name),
+    remove: (path) => invoke('projects:remove', path),
+    saveBrief: (id, brief) => invoke('projects:saveBrief', id, brief),
+    importAssets: (id, files, opts) => invoke('projects:importAssets', id, files, opts),
+    saveOverrides: (id, o, summary) => invoke('projects:saveOverrides', id, o, summary),
+    previewUrl: (id) => invoke('projects:previewUrl', id),
+    check: (id) => invoke('projects:check', id),
+    reportElements: (id, els) => invoke('projects:reportElements', id, els),
+    audio: (id) => invoke('projects:audio', id),
+    sfxLibrary: () => invoke('projects:sfxLibrary'),
+    useSfx: (id, sfxId) => invoke('projects:useSfx', id, sfxId),
+    fileUrl: (id, rel) => invoke('projects:fileUrl', id, rel),
+    diskUsage: (id) => invoke('projects:diskUsage', id),
+    clearCache: (id) => invoke('projects:clearCache', id),
+  },
+  agent: {
+    start: (id) => invoke('agent:start', id),
+    restart: (id) => invoke('agent:restart', id),
+    state: (id) => invoke('agent:state', id),
+    send: (input) => invoke('agent:send', input),
+    interrupt: (id) => invoke('agent:interrupt', id),
+    transcript: (id) => invoke('agent:transcript', id),
+    approveStoryboard: (id, itemId) => invoke('agent:approveStoryboard', id, itemId),
+    onEvent: (cb) => subscribe<AgentEvent>('agent:event', cb),
+  },
+  terminal: {
+    snapshot: (id) => invoke('terminal:snapshot', id),
+    write: (id, data) => ipcRenderer.send('terminal:write', id, data),
+    resize: (id, cols, rows) => ipcRenderer.send('terminal:resize', id, cols, rows),
+  },
+  brands: {
+    list: () => invoke('brands:list'),
+    save: (b, logo) => invoke('brands:save', b, logo),
+    remove: (id) => invoke('brands:remove', id),
+  },
+  references: {
+    list: (id) => invoke('references:list', id),
+    addFiles: (id, files) => invoke('references:addFiles', id, files),
+    addYoutube: (id, url) => invoke('references:addYoutube', id, url),
+    update: (id, refId, patch) => invoke('references:update', id, refId, patch),
+    remove: (id, refId) => invoke('references:remove', id, refId),
+  },
+  variations: {
+    create: (id, req) => invoke('variations:create', id, req),
+    family: (id) => invoke('variations:family', id),
+    exportAll: (id, quality) => invoke('variations:exportAll', id, quality),
+  },
+  history: {
+    list: (id) => invoke('history:list', id),
+    restore: (id, entryId) => invoke('history:restore', id, entryId),
+    restorePartial: (id, entryId, scope) => invoke('history:restorePartial', id, entryId, scope),
+    saveVersion: (id, name) => invoke('history:saveVersion', id, name),
+    star: (id, entryId, starred) => invoke('history:star', id, entryId, starred),
+  },
+  renders: {
+    list: (id) => invoke('renders:list', id),
+    start: (id, opts) => invoke('renders:start', id, opts),
+    cancel: (id, renderId) => invoke('renders:cancel', id, renderId),
+    update: (id, renderId, patch) => invoke('renders:update', id, renderId, patch),
+    remove: (id, renderId) => invoke('renders:remove', id, renderId),
+    fileUrl: (id, renderId) => invoke('renders:fileUrl', id, renderId),
+    onProgress: (cb) => subscribe<ExportProgress>('renders:progress', cb),
+  },
+  fonts: {
+    list: () => invoke('fonts:list'),
+  },
+  internal: {
+    previewBase: (process.argv.find((a) => a.startsWith('--ms-preview-base=')) ?? '').split('=')[1] ?? '',
+  },
+}
+
+contextBridge.exposeInMainWorld('studio', api)

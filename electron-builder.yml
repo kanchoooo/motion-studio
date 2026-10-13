@@ -1,0 +1,77 @@
+# 모션스튜디오 설치 파일 빌드 설정
+# 각 플랫폼은 해당 OS에서 빌드하는 것을 권장합니다 (CI: .github/workflows/build.yml).
+#   npm run dist:mac-x64     Intel Mac (dmg)
+#   npm run dist:mac-arm64   M칩 Mac (dmg)
+#   npm run dist:win         Windows (exe 설치 파일)
+appId: com.motionstudio.app
+# The bundle/executable name must be ASCII: a Korean productName makes the
+# packaged macOS app crash at launch (EXC_BREAKPOINT in Electron Framework).
+# Users still see "모션스튜디오" (CFBundleDisplayName, window title, shortcuts).
+productName: MotionStudio
+artifactName: MotionStudio-${version}-${os}-${arch}.${ext}
+copyright: Copyright © 2026
+
+directories:
+  output: release
+  buildResources: build
+
+# HyperFrames, node-pty and the bundled Claude Code binary are spawned from disk
+asar: false
+
+files:
+  - out/**
+  - package.json
+  - '!**/node_modules/**/{test,tests,__tests__,example,examples,docs}/**'
+  - '!**/node_modules/**/*.{md,map,ts,tsx}'
+  - '!**/node_modules/@anthropic-ai/claude-agent-sdk-{linux,linux-*}*/**'
+
+extraResources:
+  # FFmpeg / ffprobe / yt-dlp for this OS+CPU (scripts/fetch-binaries.mjs)
+  - from: resources/bin/${platform}-${arch}
+    to: bin
+  # HyperFrames authoring skills loaded with --plugin-dir
+  - from: resources/claude-plugin
+    to: claude-plugin
+  # ms-runtime.js copied into every project
+  - from: src/runtime
+    to: runtime
+  # built-in sound effects (scripts/make-sfx.mjs)
+  - from: resources/sfx
+    to: sfx
+
+# ELECTRON_RUN_AS_NODE must stay enabled: HyperFrames runs on the app's own Node
+electronFuses:
+  runAsNode: true
+  enableNodeCliInspectArguments: false
+
+mac:
+  category: public.app-category.video
+  target: dmg
+  # unsigned internal build: first launch via right-click → 열기 (see INSTALL.md)
+  identity: null
+  hardenedRuntime: false
+  extendInfo:
+    CFBundleDisplayName: 모션스튜디오
+    LSHasLocalizedDisplayName: true
+  files:
+    - '!**/node_modules/@anthropic-ai/claude-agent-sdk-win32-*/**'
+    - '!**/node_modules/node-pty/prebuilds/win32-*/**'
+
+dmg:
+  title: 모션스튜디오 ${version}
+
+win:
+  target: nsis
+  executableName: MotionStudio
+  # rcedit/signing need Windows (or Wine); keep unsigned internal builds simple
+  signAndEditExecutable: false
+  files:
+    - '!**/node_modules/@anthropic-ai/claude-agent-sdk-darwin-*/**'
+    - '!**/node_modules/node-pty/prebuilds/darwin-*/**'
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  shortcutName: 모션스튜디오
+  artifactName: MotionStudio-Setup-${version}-${arch}.${ext}

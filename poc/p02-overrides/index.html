@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script src="ms/overrides.js"></script>
+    <script src="ms/runtime.js"></script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: #101418; }
+      #root { position: relative; width: 1920px; height: 1080px; font-family: "Apple SD Gothic Neo", sans-serif; color: #fff; }
+      .scene { position: absolute; inset: 0; }
+      #title { position: absolute; left: 160px; top: 380px; font-size: 110px; font-weight: 800; letter-spacing: -2px; }
+      #sub { position: absolute; left: 164px; top: 540px; font-size: 44px; font-weight: 400; color: #9fb3c8; line-height: 1.3; }
+      #badge { position: absolute; right: 220px; top: 380px; width: 240px; height: 240px; border-radius: 32px; background: #ff5a36; }
+      #clock { position: absolute; left: 40px; bottom: 30px; right: 40px; font: 600 22px monospace; color: #6cf; white-space: normal; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="6" data-width="1920" data-height="1080">
+      <div id="s1" class="clip scene" data-start="0" data-duration="6" data-track-index="0">
+        <h1 id="title" data-ms-id="title" data-ms-type="text" data-ms-label="메인 타이틀">신제품 출시</h1>
+        <div id="badge" data-ms-id="badge" data-ms-type="shape" data-ms-label="배지"></div>
+        <div id="clock">0.00</div>
+      </div>
+      <p id="sub" class="clip" data-start="1.5" data-duration="4.5" data-track-index="1" data-ms-id="sub" data-ms-type="text" data-ms-label="서브 카피">지금 바로 만나보세요</p>
+    </div>
+    <script>
+      const tl = gsap.timeline({ paused: true });
+      tl.from("#title", { y: 80, opacity: 0, duration: 0.8, ease: "power3.out" }, 0.3);
+      tl.to("#title", { scale: 1.1, duration: 1.0, ease: "power1.inOut" }, 2.0);
+      tl.to("#badge", { rotation: 360, duration: 4, ease: "none" }, 1);
+      const clock = { t: 0 };
+      tl.to(clock, { t: 6, duration: 6, ease: "none", onUpdate() { const T=document.getElementById("title"); document.getElementById("clock").textContent = "authored " + clock.t.toFixed(2) + " | inline.tf=" + T.style.transform + " | inline.tr=" + T.style.translate + " | cs.tr=" + getComputedStyle(T).translate + " | sheets=" + document.querySelectorAll("style[id^=ms-]").length } }, 0);
+      window.__timelines["main"] = tl;
+      tl.seek(0);
+    </script>
+  </body>
+</html>
