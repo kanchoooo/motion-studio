@@ -72,6 +72,8 @@ app.whenReady().then(async () => {
   // nothing in the app needs device permissions
   session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false))
   const sessions = registerIpc(() => win)
+  // automated tests (isolated profile) can ask why the app would not quit
+  if (process.env.MS_USER_DATA) (globalThis as Record<string, unknown>).__msQuitState = () => ({ exporting: runningExports(), busy: sessions.busyProjects() })
   createWindow(previewBase)
   let confirmedQuit = false
   app.on('before-quit', (e) => {

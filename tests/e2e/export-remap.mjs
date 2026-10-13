@@ -9,6 +9,8 @@ import { fileURLToPath } from 'node:url'
 import { grantAccess, toHome } from './access.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
+// unique per run: earlier runs' exports stay in the gallery
+const exportName = `remap-check-${Date.now()}`
 const sandbox = process.env.MS_SANDBOX
 grantAccess(join(sandbox, 'userdata'))
 const app = await electron.launch({ args: [join(root, 'out', 'main', 'index.js')], cwd: root, env: { ...process.env, MS_PROJECTS_DIR: join(sandbox, 'projects'), MS_USER_DATA: join(sandbox, 'userdata') } })
@@ -41,11 +43,11 @@ try {
     return !(Math.abs(now - expected(a)) < 0.01)
   })
   check(`sound effects move with the picture (${sfx.length})`, sfx.length > 0 && wrong.length === 0, wrong.join('\n').slice(0, 400))
-  await win.evaluate((id) => window.studio.renders.start(id, { format: 'mp4-h264', quality: 'draft', fileName: 'remap-check' }), p.id)
+  await win.evaluate(([id, name]) => window.studio.renders.start(id, { format: 'mp4-h264', quality: 'draft', fileName: name }), [p.id, exportName])
   let rec = null
   for (let i = 0; i < 600 && !rec; i++) {
     await win.waitForTimeout(1000)
-    rec = (await win.evaluate((id) => window.studio.renders.list(id), p.id)).find((r) => r.fileName.startsWith('remap-check'))
+    rec = (await win.evaluate((id) => window.studio.renders.list(id), p.id)).find((r) => r.fileName.startsWith(exportName))
   }
   const dur = rec ? parseFloat(execFileSync(join(root, 'resources', 'bin', `${process.platform}-${process.arch}`, 'ffprobe'), ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', join(p.path, rec.file)]).toString()) : 0
   check('exported video keeps the whole 10s (end card not cut)', Math.abs(dur - 10) < 0.15, String(dur))
