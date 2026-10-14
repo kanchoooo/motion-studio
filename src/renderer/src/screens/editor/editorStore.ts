@@ -11,9 +11,14 @@ interface EditorState {
   time: number
   duration: number
   playing: boolean
+  /** the playhead is being dragged: element boxes are measured once it is let go */
+  scrubbing: boolean
   ready: boolean
   elements: RuntimeElement[]
+  /** the reference element (first picked); edits of several elements start from its values */
   selected: string | null
+  /** every picked element in picking order; selection[0] === selected */
+  selection: string[]
   /** audio clips parsed from the composition (Claude's + designer BGM) */
   audio: AudioClipInfo[]
   timing: ElementTiming[]
@@ -31,6 +36,8 @@ interface EditorState {
   /** composition size the overlay maps onto */
   comp: { w: number; h: number }
   set(p: Partial<EditorState>): void
+  /** pick one element (null clears); add: Shift/⌘ adds it to the selection, or takes it out again */
+  select(id: string | null, add?: boolean): void
   addMark(m: Omit<FeedbackMark, 'n' | 'id' | 'resolved'>): void
   updateMark(id: string, patch: Partial<FeedbackMark>): void
   removeMark(id: string): void
@@ -42,9 +49,11 @@ export const useEditor = create<EditorState>((set, get) => ({
   time: 0,
   duration: 0,
   playing: false,
+  scrubbing: false,
   ready: false,
   elements: [],
   selected: null,
+  selection: [],
   audio: [],
   timing: [],
   motions: [],
@@ -58,6 +67,14 @@ export const useEditor = create<EditorState>((set, get) => ({
   markTime: null,
   comp: { w: 1920, h: 1080 },
   set: (p) => set(p),
+  select: (id, add = false) => {
+    const { selection: picked, selected } = get()
+    const cur = picked.length ? picked : selected ? [selected] : []
+    if (!id) return set({ selected: null, selection: [] })
+    if (!add) return set({ selected: id, selection: [id] })
+    const selection = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]
+    set({ selection, selected: selection[0] ?? null })
+  },
   addMark: (m) => {
     const marks = get().marks
     set({ marks: [...marks, { ...m, id: crypto.randomUUID(), n: marks.length + 1, resolved: false }], markTime: get().markTime ?? m.time })
@@ -112,6 +129,7 @@ onLeaveProject(() => {
     ready: false,
     elements: [],
     selected: null,
+    selection: [],
     audio: [],
     timing: [],
     motions: [],

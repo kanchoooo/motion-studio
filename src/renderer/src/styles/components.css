@@ -698,15 +698,54 @@
   opacity: 0.8;
   pointer-events: none;
 }
+/* playhead: a 2px line with a wider grab area, and a head on the ruler */
 .tl-playhead {
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 2px;
-  margin-left: -1px;
-  background: var(--accent);
-  pointer-events: none;
+  width: 9px;
+  margin-left: -4.5px;
+  background: linear-gradient(var(--accent), var(--accent)) center / 2px 100% no-repeat;
+  cursor: ew-resize;
   z-index: 2;
+  touch-action: none;
+}
+.tl-head {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  z-index: 3;
+  touch-action: none;
+}
+/* grip: a pointed tab right on the time, wide enough to grab */
+.tl-head i {
+  position: absolute;
+  left: -7px;
+  top: 3px;
+  width: 14px;
+  height: 18px;
+  background: var(--accent);
+  clip-path: polygon(0 0, 100% 0, 100% 60%, 50% 100%, 0 60%);
+  cursor: ew-resize;
+}
+.tl-head span {
+  position: absolute;
+  left: 10px;
+  top: 4px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+  line-height: 15px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: ew-resize;
+}
+.tl-head span.left {
+  left: auto;
+  right: 10px;
 }
 
 /* caret drawn after masked dots (the real caret sits in transparent text) */

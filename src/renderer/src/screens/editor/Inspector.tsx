@@ -5,6 +5,7 @@ import { ColorField, NumberField, Segmented } from '../../components/ui'
 import { useStore } from '../../store'
 import { useEditor } from './editorStore'
 import { MotionPanel } from './MotionPanel'
+import { MultiEditor } from './MultiEditor'
 import { lastSaved, rgbToHex, useOverrides } from './overrides'
 import { SoundPanel } from './SoundPanel'
 
@@ -12,9 +13,10 @@ const ICON: Record<string, typeof Type> = { text: Type, image: ImageIcon, shape:
 
 export function Inspector() {
   const { project, fonts, loadFonts } = useStore()
-  const { elements, selected, panel } = useEditor()
+  const { elements, selected, selection, panel, select } = useEditor()
   const { value: ov, load, past, future, undo, redo } = useOverrides()
   const sel = elements.find((e) => e.id === selected)
+  const many = selection.length > 1
 
   useEffect(() => {
     // take the saved overrides unless the designer has unsaved edits (restore, Claude turn, first open);
@@ -51,14 +53,14 @@ export function Inspector() {
       <div style={{ flex: 1, overflow: 'auto', padding: 12 }} className="col">
         {panel === 'sound' && project?.hasVideo && <SoundPanel />}
         {panel === 'motion' && project?.hasVideo && <MotionPanel />}
-        {panel === 'elements' && sel && (
+        {panel === 'elements' && sel && !many && (
           <div className="row" style={{ marginBottom: 4 }}>
-            <button className="icon-btn" title="요소 목록" onClick={() => useEditor.setState({ selected: null })} style={{ marginLeft: -6 }}>
+            <button className="icon-btn" title="요소 목록 (Esc)" onClick={() => select(null)} style={{ marginLeft: -6 }}>
               ←
             </button>
             <span className="ellipsis grow" style={{ fontWeight: 650 }}>{sel.label}</span>
             {sel.parent && (
-              <button className="btn ghost sm" title="이 요소를 감싸는 그룹을 골라요" onClick={() => useEditor.setState({ selected: sel.parent })}>
+              <button className="btn ghost sm" title="이 요소를 감싸는 그룹을 골라요" onClick={() => select(sel.parent)}>
                 <ArrowUpLeft size={12} />
                 상위 요소
               </button>
@@ -68,7 +70,7 @@ export function Inspector() {
         {!project?.hasVideo && <div className="small muted">영상이 만들어지면 여기에서 요소와 사운드를 직접 다듬을 수 있어요.</div>}
         {panel === 'elements' && project?.hasVideo && !sel && (
           <>
-            <div className="section-label">요소 · 캔버스나 아래 타임라인에서 골라도 돼요</div>
+            <div className="section-label">요소 · 캔버스나 아래 타임라인에서 골라도 돼요 (Shift/⌘ 클릭: 여러 개)</div>
             {elements.length === 0 && <div className="small muted">영상을 멈추면 요소 목록이 보여요.</div>}
             {elements.filter((e) => !['sfx', 'bgm', 'voice'].includes(e.type)).map((e) => {
               const Icon = ICON[e.type] ?? Box
@@ -77,7 +79,8 @@ export function Inspector() {
                 <button
                   key={e.id}
                   className="row"
-                  onClick={() => useEditor.setState({ selected: e.id })}
+                  onClick={(ev) => select(e.id, ev.shiftKey || ev.metaKey || ev.ctrlKey)}
+                  title="Shift/⌘ 클릭으로 여러 개를 함께 골라요"
                   style={{ height: 30, border: 'none', background: 'transparent', borderRadius: 6, padding: `0 8px 0 ${8 + e.depth * 14}px`, cursor: 'pointer', opacity: e.visible ? 1 : 0.45, color: 'var(--text)' }}
                 >
                   <Icon size={13} color="var(--text-3)" />
@@ -89,7 +92,8 @@ export function Inspector() {
             })}
           </>
         )}
-        {panel === 'elements' && sel && ov && <ElementEditor key={sel.id} id={sel.id} fontsReady={fonts.length > 0} />}
+        {panel === 'elements' && many && ov && <MultiEditor />}
+        {panel === 'elements' && sel && !many && ov && <ElementEditor key={sel.id} id={sel.id} fontsReady={fonts.length > 0} />}
       </div>
     </div>
   )

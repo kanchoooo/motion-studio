@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Clapperboard, Loader2 } from 'lucide-react'
+import { Clapperboard, Loader2, Smartphone } from 'lucide-react'
 import { studio, useStore } from '../../store'
 import { elementsForMark, elementsUnder, useEditor } from './editorStore'
+import { useLayout } from './layout'
 import { useOverrides } from './overrides'
 import { MsPlayer, queryElements, queryMotions, queryTiming } from './player'
 
@@ -21,7 +22,8 @@ export function Preview({ active }: { active: boolean }) {
   const [frame, setFrame] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [draft, setDraft] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null)
-  const drag = useRef<{ id: string; label: string; px: number; py: number; x: number; y: number; moved: boolean } | null>(null)
+  const drag = useRef<{ items: { id: string; label: string; x: number; y: number }[]; px: number; py: number; moved: boolean } | null>(null)
+  const { guides, set: setLayout } = useLayout()
   const pid = project!.meta.id
   const out = project!.brief.output
 
@@ -84,8 +86,8 @@ export function Preview({ active }: { active: boolean }) {
     void studio.projects.reportElements(pid, els.map((e) => ({ id: e.id, label: e.label, movable: e.movable })))
   }, [pid])
   useEffect(() => {
-    if (!ed.playing) void refreshElements()
-  }, [ed.time, ed.playing, refreshElements])
+    if (!ed.playing && !ed.scrubbing) void refreshElements()
+  }, [ed.time, ed.playing, ed.scrubbing, refreshElements])
 
   const scale = frame ? frame.w / out.width : 1
   const toComp = (clientX: number, clientY: number) => {
@@ -99,14 +101,26 @@ export function Preview({ active }: { active: boolean }) {
       if (ed.tool === 'select' && frame) {
         const p = toComp(e.clientX, e.clientY)
         const hits = elementsUnder(ed.elements, { x: p.x, y: p.y, w: 1, h: 1 })
-        // keep the current selection when clicking inside it, so it can be dragged
-        const hit = hits.find((h) => h.id === ed.selected) ?? hits[0]
-        useEditor.setState({ selected: hit?.id ?? null })
-        const el = hit && ed.elements.find((x) => x.id === hit.id)
-        if (el?.movable) {
+        const add = e.shiftKey || e.metaKey || e.ctrlKey
+        if (!hits.length) {
+          // empty canvas: nothing selected
+          if (!add) ed.select(null)
+          return
+        }
+        if (add) {
+          // Shift/⌘: add the element under the pointer, or take it out again
+          ed.select(hits[0].id, true)
+          return
+        }
+        // clicking inside the current selection keeps it, so all of it can be dragged
+        const inside = hits.find((h) => ed.selection.includes(h.id))
+        if (!inside) ed.select(hits[0].id)
+        const ids = inside ? ed.selection : [hits[0].id]
+        const movable = ids.map((id) => ed.elements.find((x) => x.id === id)).filter((x) => x?.movable) as typeof ed.elements
+        if (movable.length) {
           playerRef.current?.pause()
-          const t = useOverrides.getState().value?.elements[el.id]?.transform ?? {}
-          drag.current = { id: el.id, label: el.label, px: p.x, py: p.y, x: t.x ?? 0, y: t.y ?? 0, moved: false }
+          const all = useOverrides.getState().value?.elements ?? {}
+          drag.current = { items: movable.map((el) => ({ id: el.id, label: el.label, x: all[el.id]?.transform?.x ?? 0, y: all[el.id]?.transform?.y ?? 0 })), px: p.x, py: p.y, moved: false }
           ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
         }
       }
@@ -132,7 +146,10 @@ export function Preview({ active }: { active: boolean }) {
       // Shift locks to one axis, like design tools
       const lockX = e.shiftKey && Math.abs(dy) > Math.abs(dx)
       const lockY = e.shiftKey && !lockX
-      useOverrides.getState().patchElement(d.id, d.label, { transform: { x: lockX ? d.x : d.x + dx, y: lockY ? d.y : d.y + dy } }, ['x', 'y'])
+      useOverrides.getState().patchElements(
+        d.items.map((it) => ({ id: it.id, label: it.label, patch: { transform: { x: lockX ? it.x : it.x + dx, y: lockY ? it.y : it.y + dy } } })),
+        ['x', 'y'],
+      )
       return
     }
     if (!draft) return
@@ -173,6 +190,7 @@ export function Preview({ active }: { active: boolean }) {
 
   const sel = ed.elements.find((x) => x.id === ed.selected)
   const safe = SAFE[out.safeZone]
+  const many = ed.selection.length > 1
   const markMode = ed.tool !== 'select'
   const visibleMarks = ed.marks.filter((m) => ed.markTime == null || Math.abs(m.time - ed.time) < 0.05 || !ed.ready)
 
@@ -193,6 +211,18 @@ export function Preview({ active }: { active: boolean }) {
         }}
       />
       {error && <div className="empty" style={{ position: 'absolute', inset: 0 }}>{error}</div>}
+      {safe && (
+        <button
+          className={`btn sm${guides ? ' primary' : ''}`}
+          style={{ position: 'absolute', top: 8, right: 8, zIndex: 3, opacity: guides ? 1 : 0.8 }}
+          title="쇼츠·릴스에서 버튼·글자가 덮는 영역을 점선으로 보여줘요"
+          onClick={() => setLayout({ guides: !guides })}
+          data-testid="guide-toggle"
+        >
+          <Smartphone size={13} />
+          가이드 {guides ? '끄기' : '켜기'}
+        </button>
+      )}
       {frame && (
         <div
           data-capture-frame
@@ -201,8 +231,8 @@ export function Preview({ active }: { active: boolean }) {
           onPointerUp={onUp}
           style={{ position: 'absolute', left: frame.x, top: frame.y, width: frame.w, height: frame.h, cursor: markMode ? 'crosshair' : 'default', zIndex: 2 }}
         >
-          {/* safe zone */}
-          {safe && (
+          {/* safe zone (where Shorts / Reels buttons sit), only when the guide is on */}
+          {safe && guides && (
             <div
               style={{
                 position: 'absolute',
@@ -229,7 +259,7 @@ export function Preview({ active }: { active: boolean }) {
                     top: x.rect.y * scale,
                     width: x.rect.w * scale,
                     height: x.rect.h * scale,
-                    outline: x.id === ed.selected ? '2px solid var(--accent)' : '1px solid transparent',
+                    outline: ed.selection.includes(x.id) || x.id === ed.selected ? `2px ${x.id === ed.selected || !many ? 'solid' : 'dashed'} var(--accent)` : '1px solid transparent',
                     pointerEvents: 'none',
                   }}
                   className="el-box"
@@ -237,7 +267,7 @@ export function Preview({ active }: { active: boolean }) {
               ))}
           {sel && !markMode && !ed.playing && (
             <div className="badge accent" style={{ position: 'absolute', left: sel.rect.x * scale, top: Math.max(0, sel.rect.y * scale - 24), pointerEvents: 'none' }}>
-              {sel.label}
+              {many ? `${sel.label} 외 ${ed.selection.length - 1}개 · 기준` : sel.label}
             </div>
           )}
           {/* markup */}

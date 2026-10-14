@@ -47,8 +47,8 @@ type Drag =
 export function Timeline() {
   const { project } = useStore()
   const ed = useEditor()
-  const { player, time, duration, playing, marks, audio, selectedAudio, timing, selected, elements, motions, selectedMotion, openLayers } = ed
-  const { value: ov, setRemap, patchElement, patchMotion } = useOverrides()
+  const { player, time, duration, playing, marks, audio, selectedAudio, timing, selection, elements, motions, selectedMotion, openLayers } = ed
+  const { value: ov, setRemap, patchElement, patchElements, patchMotion } = useOverrides()
   const { layerW, zoom, set: setLayout } = useLayout()
   const scroller = useRef<HTMLDivElement>(null)
   const [viewW, setViewW] = useState(800)
@@ -90,7 +90,49 @@ export function Timeline() {
 
   const seek = (t: number) => {
     player?.pause()
-    player?.seek(Math.max(0, Math.min(d, t)))
+    const at = Math.max(0, Math.min(d, t))
+    player?.seek(at)
+    // the playhead and timecode follow the pointer at once; the frame catches up
+    useEditor.setState({ time: at })
+  }
+
+  // ---- scrubbing: ruler, playhead head or line (one seek per frame while dragging) ----
+  const scrub = (e: React.PointerEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const el = e.currentTarget as HTMLElement
+    el.setPointerCapture(e.pointerId)
+    useEditor.setState({ scrubbing: true })
+    let want = tFromX(e.clientX)
+    let raf = 0
+    const flush = () => {
+      raf = 0
+      seek(want)
+    }
+    flush()
+    const move = (ev: PointerEvent) => {
+      want = tFromX(ev.clientX)
+      if (!raf) raf = requestAnimationFrame(flush)
+    }
+    const up = () => {
+      el.removeEventListener('pointermove', move)
+      el.removeEventListener('pointerup', up)
+      el.removeEventListener('pointercancel', up)
+      if (raf) cancelAnimationFrame(raf)
+      seek(want)
+      useEditor.setState({ scrubbing: false })
+    }
+    el.addEventListener('pointermove', move)
+    el.addEventListener('pointerup', up)
+    el.addEventListener('pointercancel', up)
+  }
+
+  /** layer click: Shift/⌘ adds or removes it, a click on the only selected layer clears the selection */
+  const pickLayer = (id: string, e: React.MouseEvent | React.PointerEvent) => {
+    const add = e.shiftKey || e.metaKey || e.ctrlKey
+    if (!add && selection.length === 1 && selection[0] === id) ed.select(null)
+    else ed.select(id, add)
+    useEditor.setState({ selectedMotion: null, panel: 'elements' })
   }
 
   // ---- layer tree (document order already lists parents before children) ----
@@ -99,14 +141,14 @@ export function Timeline() {
   const motionsOf = (id: string) => motions.filter((m) => m.owners[0] === id).sort((a, b) => a.start - b.start)
   const toggleOpen = (id: string) => useEditor.setState({ openLayers: openLayers.includes(id) ? openLayers.filter((x) => x !== id) : [...openLayers, id] })
 
-  // ---- ruler: seek or pick a section ----
+  // ---- ruler: scrub, or pick a section ----
   const onRulerDown = (e: React.PointerEvent) => {
+    if (!rangeMode) return scrub(e)
     const el = e.currentTarget as HTMLElement
     el.setPointerCapture(e.pointerId)
     const t0 = tFromX(e.clientX)
-    if (rangeMode) setSel({ a: t0, b: t0 })
-    else seek(t0)
-    const move = (ev: PointerEvent) => (rangeMode ? setSel({ a: t0, b: tFromX(ev.clientX) }) : seek(tFromX(ev.clientX)))
+    setSel({ a: t0, b: t0 })
+    const move = (ev: PointerEvent) => setSel({ a: t0, b: tFromX(ev.clientX) })
     const up = () => {
       el.removeEventListener('pointermove', move)
       el.removeEventListener('pointerup', up)
@@ -150,7 +192,10 @@ export function Timeline() {
     el.addEventListener('pointerup', up)
   }
 
-  const selectMotion = (m: RuntimeMotion) => useEditor.setState({ selectedMotion: m.key, selected: m.owners[0], panel: 'motion' })
+  const selectMotion = (m: RuntimeMotion) => {
+    ed.select(m.owners[0])
+    useEditor.setState({ selectedMotion: m.key, panel: 'motion' })
+  }
 
   const moveMotion = (m: RuntimeMotion, dt: number) => {
     // the bar shows output time; edits are stored in authored time
@@ -183,16 +228,16 @@ export function Timeline() {
     const Icon = ICON[el.type] ?? Box
     const ms = motionsOf(el.id)
     const open = openLayers.includes(el.id)
-    const isSel = selected === el.id
+    const isSel = selection.includes(el.id)
     const start = t ? Math.max(0, t.start) : 0
     const end = t?.end ?? d
-    const layerDx = drag?.kind === 'layer' && drag.id === el.id ? drag.dx : 0
+    const layerDx = drag?.kind === 'layer' && (drag.id === el.id || (isSel && selection.includes(drag.id) && selection.length > 1)) ? drag.dx : 0
     rows.push(
       <div
         key={`l-${el.id}`}
         className={`tl-layer${isSel ? ' sel' : ''}`}
         style={{ paddingLeft: 4 + el.depth * 14, opacity: el.visible || !ed.ready ? 1 : 0.6 }}
-        onClick={() => useEditor.setState({ selected: el.id, selectedMotion: null, panel: 'elements' })}
+        onClick={(e) => pickLayer(el.id, e)}
         data-layer={el.id}
       >
         <button className="icon-btn" style={{ width: 18, height: 18 }} title={ms.length ? '모션 펼치기/접기' : '모션 없음'} disabled={!ms.length} onClick={(e) => {
@@ -211,17 +256,26 @@ export function Timeline() {
         <span className="ellipsis grow" title={el.label}>{el.label}</span>
         {o && <Lock size={10} color="var(--accent)" style={{ flex: 'none' }} aria-label="직접 수정함" />}
       </div>,
-      <div key={`t-${el.id}`} className="tl-track" onPointerDown={() => useEditor.setState({ selected: el.id, selectedMotion: null, panel: 'elements' })}>
+      <div key={`t-${el.id}`} className="tl-track" onPointerDown={(e) => e.target === e.currentTarget && pickLayer(el.id, e)}>
         {t && (
           <div
             className={`tl-bar${isSel ? ' sel' : ''}`}
             title={`${el.label} · ${start.toFixed(2)}~${end.toFixed(2)}초 · 끌어서 요소 전체의 등장 시점 옮기기`}
             style={{ left: px(start) + layerDx, width: Math.max(4, px(Math.min(d, end) - start)) }}
             onPointerDown={(e) => {
-              useEditor.setState({ selected: el.id, selectedMotion: null, panel: 'elements' })
+              // a bar of an already selected layer drags the whole selection
+              const group = isSel && selection.length > 1
+              if (!group) {
+                ed.select(el.id, e.shiftKey || e.metaKey || e.ctrlKey)
+                useEditor.setState({ selectedMotion: null, panel: 'elements' })
+              }
               startDrag(e, { kind: 'layer', id: el.id, dx: 0 }, (dt) => {
-                const prev = o?.timing?.shift ?? 0
-                patchElement(el.id, el.label, { timing: { shift: +(prev + dt).toFixed(2) } }, ['shift'])
+                const ids = group ? selection : [el.id]
+                const items = ids.map((id) => elements.find((x) => x.id === id)).filter((x): x is NonNullable<typeof x> => !!x)
+                patchElements(
+                  items.map((x) => ({ id: x.id, label: x.label, patch: { timing: { shift: +((ov?.elements[x.id]?.timing?.shift ?? 0) + dt).toFixed(2) } } })),
+                  ['shift'],
+                )
               })
             }}
           >
@@ -378,6 +432,10 @@ export function Timeline() {
       <div
         ref={scroller}
         className="tl-scroll"
+        onPointerDown={(e) => {
+          // the empty space below the layers: nothing selected
+          if (e.target === e.currentTarget || (e.target as HTMLElement).classList.contains('tl-grid')) ed.select(null)
+        }}
         onWheel={(e) => {
           if (!(e.metaKey || e.ctrlKey)) return
           e.preventDefault()
@@ -423,6 +481,13 @@ export function Timeline() {
             {marks.map((m) => (
               <div key={m.id} title={`${m.n}번 표시`} style={{ position: 'absolute', left: px(m.time) - 4, top: 2, width: 8, height: 8, borderRadius: 4, background: 'var(--mark)', pointerEvents: 'none' }} />
             ))}
+            {project?.hasVideo && (
+              // the grip sits on the exact time; the time label goes to whichever side has room
+              <div className="tl-head" style={{ left: px(time) }} onPointerDown={scrub} title="끌어서 원하는 장면으로" data-testid="playhead">
+                <i />
+                <span className={px(time) > trackW - 70 ? 'left' : ''}>{formatTime(time)}</span>
+              </div>
+            )}
           </div>
           {rows}
           {!layers.length && (
@@ -433,8 +498,9 @@ export function Timeline() {
               <div className="tl-track" style={{ height: 40 }} />
             </>
           )}
-          {/* playhead over every track */}
-          <div className="tl-playhead" style={{ left: layerW + px(time), gridRow: '1 / -1' }} />
+          {/* playhead over every track: the line can be grabbed too */}
+          {/* no grid placement: the rows are implicit, so '1 / -1' would be zero rows tall */}
+          <div className="tl-playhead" style={{ left: layerW + px(time) }} onPointerDown={project?.hasVideo ? scrub : undefined} data-testid="playhead-line" />
         </div>
       </div>
 

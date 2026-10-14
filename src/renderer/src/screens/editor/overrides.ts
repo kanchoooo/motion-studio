@@ -39,6 +39,8 @@ interface OverrideState {
   reload: boolean
   load(o: Overrides): void
   patchElement(id: string, label: string, patch: ElementOverride, keys: string[]): void
+  /** the same kind of edit on several elements at once (one undo step, one history line) */
+  patchElements(items: { id: string; label: string; patch: ElementOverride }[], keys: string[]): void
   resetElement(id: string, label: string): void
   setRemap(sections: TimeRemapSection[], keepTotal: boolean, summary: string): void
   patchAudio(id: string, patch: AudioEdit | null, summary: string): void
@@ -147,22 +149,17 @@ export const useOverrides = create<OverrideState>((set, get) => ({
     set({ value: next, future: future.slice(1), past: [...past, value].slice(-100), reload: true })
     schedule(['text'], '다시 실행')
   },
-  patchElement: (id, label, patch, keys) => {
+  patchElement: (id, label, patch, keys) => get().patchElements([{ id, label, patch }], keys),
+  patchElements: (items, keys) => {
     const cur = get().value
-    if (!cur) return
-    const prev = cur.elements[id] ?? {}
-    const merged: ElementOverride = {
-      ...prev,
-      ...patch,
-      style: patch.style ? { ...prev.style, ...patch.style } : prev.style,
-      transform: patch.transform ? { ...prev.transform, ...patch.transform } : prev.transform,
-      timing: patch.timing ? { ...prev.timing, ...patch.timing } : prev.timing,
-      locked: true,
-    }
-    const next: Overrides = { ...cur, elements: { ...cur.elements, [id]: merged } }
+    if (!cur || !items.length) return
+    const elements = { ...cur.elements }
+    for (const { id, patch } of items) elements[id] = mergeElement(elements[id] ?? {}, patch)
+    const next: Overrides = { ...cur, elements }
     set({ value: next, ...pushUndo(cur) })
     if (!keys.some((k) => NEEDS_RELOAD.has(k))) void livePreview(next)
-    schedule(keys, `${label}: ${keys.map((k) => LABEL[k] ?? k).join('·')}`)
+    const what = keys.map((k) => LABEL[k] ?? k).join('·')
+    schedule(keys, items.length === 1 ? `${items[0].label}: ${what}` : `요소 ${items.length}개: ${what}`)
   },
   resetElement: (id, label) => {
     const cur = get().value
@@ -217,6 +214,17 @@ export const useOverrides = create<OverrideState>((set, get) => ({
     schedule(['timeRemap'], summary)
   },
 }))
+
+function mergeElement(prev: ElementOverride, patch: ElementOverride): ElementOverride {
+  return {
+    ...prev,
+    ...patch,
+    style: patch.style ? { ...prev.style, ...patch.style } : prev.style,
+    transform: patch.transform ? { ...prev.transform, ...patch.transform } : prev.transform,
+    timing: patch.timing ? { ...prev.timing, ...patch.timing } : prev.timing,
+    locked: true,
+  }
+}
 
 // a drag or a scrub produces many patches; keep one undo step per gesture
 let lastPush = 0

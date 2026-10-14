@@ -49,7 +49,11 @@ export function EditorTab({ active }: { active: boolean }) {
         e.preventDefault()
         ed.player?.pause()
         ed.player?.seek(Math.max(0, ed.time + (e.key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 1 : 1 / fps)))
-      } else if (e.key === 'v' || e.key === 'V' || e.key === 'Escape') useEditor.setState({ tool: 'select' })
+      } else if (e.key === 'Escape') {
+        // Esc leaves the markup tool first, then clears the selection
+        if (ed.tool !== 'select') useEditor.setState({ tool: 'select' })
+        else ed.select(null)
+      } else if (e.key === 'v' || e.key === 'V') useEditor.setState({ tool: 'select' })
       else if (e.key === 'm' || e.key === 'M') useEditor.setState({ tool: 'box' })
       else if (e.key === 'p' || e.key === 'P') useEditor.setState({ tool: 'pin' })
     }

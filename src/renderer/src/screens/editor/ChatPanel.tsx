@@ -6,7 +6,8 @@ import { studio, useStore } from '../../store'
 import { useEditor } from './editorStore'
 import { captureAnnotatedFrame } from './Preview'
 
-const QUICK = ['브리프대로 콘티 먼저 보여줘', '전체적으로 더 경쾌하게', '타이틀이 더 크게 들어왔으면 좋겠어']
+// the first request of a new project (edit requests come later, once there is a video)
+const FIRST = '브리프대로 콘티 먼저 보여줘'
 
 export function ChatPanel({ onFold }: { onFold?(): void }) {
   const { project, chat, session, toast, setTerminal } = useStore()
@@ -128,12 +129,10 @@ export function ChatPanel({ onFold }: { onFold?(): void }) {
         {chat.length === 0 && (
           <div className="col" style={{ gap: 10, padding: '20px 4px' }}>
             <div className="title">무엇을 만들까요?</div>
-            <div className="small muted">브리프를 정리했다면 아래처럼 시작해 보세요. 영상 화면에 직접 표시해서 수정을 요청할 수도 있어요.</div>
-            {QUICK.map((q) => (
-              <button key={q} className="btn sm" style={{ justifyContent: 'flex-start' }} onClick={() => send(q)}>
-                {q}
-              </button>
-            ))}
+            <div className="small muted">브리프를 정리했다면 아래 버튼으로 시작해 보세요. Claude가 콘티를 먼저 보여 주고, 승인하면 영상을 만들어요.</div>
+            <button className="btn sm primary" style={{ justifyContent: 'flex-start', alignSelf: 'flex-start' }} onClick={() => send(FIRST)} data-testid="quick-first">
+              {FIRST}
+            </button>
           </div>
         )}
         {collapse(chat).map(({ item, count }) => (

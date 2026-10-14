@@ -13,10 +13,12 @@ export interface EditorLayout {
   chatOpen: boolean
   historyOpen: boolean
   zoom: number
+  /** safe-zone guide on the preview */
+  guides: boolean
 }
 
 const KEY = 'ms-editor-layout'
-export const LAYOUT_DEFAULTS: EditorLayout = { chatW: 340, inspectorW: 320, historyW: 300, timelineH: 250, terminalH: 280, layerW: 230, chatOpen: true, historyOpen: false, zoom: 1 }
+export const LAYOUT_DEFAULTS: EditorLayout = { chatW: 340, inspectorW: 320, historyW: 300, timelineH: 250, terminalH: 280, layerW: 230, chatOpen: true, historyOpen: false, zoom: 1, guides: false }
 export const LAYOUT_LIMITS: Record<'chatW' | 'inspectorW' | 'historyW' | 'timelineH' | 'terminalH' | 'layerW', [number, number]> = {
   terminalH: [140, 700],
   chatW: [260, 640],
