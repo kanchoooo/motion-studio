@@ -21,6 +21,8 @@ export interface EditorElementInfo {
 export interface AuditInfo {
   loose: { id: string; label: string; text: string; images: number }[]
   stale: string[]
+  /** every editable element; transformable=false = still placed by flex/grid/flow */
+  elements?: { id: string; label: string; transformable?: boolean }[]
 }
 
 /** latest element list reported by the editor preview, per project */
@@ -97,6 +99,14 @@ export function staticFindings(html: string, brief: Brief, overrides: Overrides,
     if (!e.movable) out.push({ severity: 'warning', code: 'ms_not_absolute', message: `"${e.label}"(${e.id})가 position:absolute가 아니라서 디자이너가 위치를 옮길 수 없어요. 절대 위치로 배치해 주세요.`, elementId: e.id })
   }
   // groups (phone mockups, cards, UI screens): everything inside must be editable on its own
+  // 편집 준비: elements still placed by the layout can only be moved, not scaled / rotated on their own
+  const flow = (audit?.elements ?? []).filter((e) => e.transformable === false)
+  if (flow.length)
+    out.push({
+      severity: 'warning',
+      code: 'ms_not_edit_ready',
+      message: `편집 준비 전이에요: 흐름 배치(flex·grid 등)로 놓인 편집 요소 ${flow.length}개 (${flow.slice(0, 12).map((e) => e.label || e.id).join(', ')}${flow.length > 12 ? ' …' : ''}). 마지막 단계에서 layout_snapshot(before) → measure_layout 값으로 절대 위치 → layout_snapshot(after)로 바꿔 주세요.`,
+    })
   for (const l of audit?.loose ?? []) {
     const what = [l.text && `글자("${l.text}")`, l.images && `이미지 ${l.images}개`].filter(Boolean).join('와 ')
     out.push({

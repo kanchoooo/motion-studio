@@ -37,7 +37,7 @@
     "electron-updater": "6.8.9",
     "fontkit": "2.0.4",
     "gsap": "3.14.2",
-    "hyperframes": "0.8.151",
+    "hyperframes": "0.8.157",
     "isomorphic-git": "1.44.2",
     "node-pty": "1.1.0",
     "sharp": "0.35.5",

@@ -28,7 +28,8 @@ import { setFamilyStatus } from '../variations'
 import { refreshThumbnail } from '../thumbnail'
 import { mcpTokenFor, setToolHooks } from './mcp-http'
 import { endPermissions } from './permissions'
-import { STUDIO_PROMPT } from './prompt'
+import { sessionPath } from './cliShims'
+import { COMPOSITION_CONTRACT, STUDIO_PROMPT } from './prompt'
 import { TranscriptTail } from './transcript'
 
 type Emit = (e: AgentEvent) => void
@@ -270,6 +271,8 @@ export class SessionManager {
     mkdirSync(studioDir, { recursive: true })
     const promptFile = join(studioDir, 'system-prompt.md')
     writeText(promptFile, STUDIO_PROMPT)
+    // subagents do not get the appended prompt: they read the composition rules from here
+    writeText(join(studioDir, 'motion-studio-rules.md'), `# Motion Studio — composition rules\n\nYou are building a video inside Motion Studio. composition/ is the HyperFrames project, composition/index.html the root. Run the HyperFrames CLI as \`hyperframes <command>\` inside composition/. Do not run init, render, preview, publish or skills update.\n\n${COMPOSITION_CONTRACT}`)
     // Artlist signs in through Claude Code itself (/mcp in the terminal): the app never sees its token
     const artlist = aiSettings().artlist
     const mcpConfig = JSON.stringify({
@@ -282,7 +285,8 @@ export class SessionManager {
       disableClaudeAiConnectors: true,
       permissions: {
         // Read(path) covers every file-reading tool (Glob, Grep), Edit(path) every writing tool
-        allow: ['mcp__studio', ...(artlist ? ['mcp__artlist'] : []), 'Skill', 'Read(./**)', 'Edit(./composition/**)'],
+        // the HyperFrames CLI (check, snapshot, add <block> …) runs without asking: it only works inside the project
+        allow: ['mcp__studio', ...(artlist ? ['mcp__artlist'] : []), 'Skill', 'Agent', 'Read(./**)', 'Edit(./composition/**)', 'Bash(hyperframes:*)', 'Bash(npx hyperframes:*)', 'Bash(npx -y hyperframes:*)', 'Bash(npx --yes hyperframes:*)', 'Bash(cd composition && hyperframes:*)', 'Bash(cd composition && npx hyperframes:*)'],
         // files the app manages: denied in every mode, never even asked
         deny: ['Edit(./composition/ms/**)', 'Edit(./composition/vendor/**)', 'Edit(./composition/assets/**)', 'Edit(./composition/fonts/**)', 'Edit(./brief.json)', 'Edit(./overrides.json)', 'Edit(./references/**)', 'Edit(./project.json)', 'Edit(./.history/**)', 'Edit(./.studio/**)'],
       },
@@ -303,7 +307,8 @@ export class SessionManager {
       // acceptEdits: edits inside the project need no question (the deny rules above still hold);
       // its footer ("shift+tab to cycle") also tells us the input box is drawn
       '--permission-mode', 'acceptEdits',
-      '--tools', 'Read,Write,Edit,Glob,Grep,Skill,Bash,WebFetch,WebSearch',
+      // Agent: the HyperFrames workflows hand planning / building / repairs to subagents
+      '--tools', 'Read,Write,Edit,Glob,Grep,Skill,Agent,Bash,WebFetch,WebSearch',
       '--plugin-dir', pluginDir(),
       '--add-dir', pluginDir(),
       '--append-system-prompt-file', promptFile,
@@ -317,7 +322,8 @@ export class SessionManager {
     this.sizes.delete(projectId)
     const cols = existing?.cols ?? kept?.cols ?? 110
     const rows = existing?.rows ?? kept?.rows ?? 34
-    const term = pty.spawn(claudeBinary(), args, { name: 'xterm-256color', cols, rows, cwd: dir, env: claudeEnv(), useConpty: true })
+    // PATH: `hyperframes` / `npx hyperframes` reach the CLI inside the app (no Node needed on this computer)
+    const term = pty.spawn(claudeBinary(), args, { name: 'xterm-256color', cols, rows, cwd: dir, env: claudeEnv({ PATH: sessionPath() }), useConpty: true })
 
     const l: Live = {
       projectId,

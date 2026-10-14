@@ -1,5 +1,5 @@
 {
   "name": "motion-studio-hyperframes",
-  "version": "0.8.151",
-  "description": "HyperFrames authoring skills bundled with Motion Studio (Apache-2.0, heygen-com/hyperframes)"
+  "version": "0.8.157",
+  "description": "HyperFrames skills bundled with Motion Studio (Apache-2.0, heygen-com/hyperframes): router, authoring rules, workflows, registry, audio, media — plus svg-character-motion"
 }

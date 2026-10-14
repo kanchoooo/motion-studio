@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { serveFolder } from './preview-server'
 
 export interface AuditResult {
-  elements: { id: string; label: string; movable: boolean; parent: string | null }[]
+  elements: { id: string; label: string; movable: boolean; transformable?: boolean; parent: string | null }[]
   loose: { id: string; label: string; text: string; images: number }[]
   stale: string[]
 }

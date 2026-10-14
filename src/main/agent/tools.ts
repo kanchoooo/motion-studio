@@ -26,6 +26,7 @@ import { bin } from '../paths'
 import * as projects from '../projects'
 import { characterParts, embedCharacter, readCharacter, tagCharacter } from '../character/convert'
 import { addWebFont, listWebFonts } from '../webfonts'
+import { layoutSnapshot, measureLayout } from '../editReady'
 
 const run = promisify(execFile)
 const text = (t: string) => ({ content: [{ type: 'text' as const, text: t }] })
@@ -406,6 +407,35 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
           1,
         ),
       )
+    },
+  )
+
+  server.registerTool(
+    'measure_layout',
+    {
+      description:
+        "편집 준비 (last step): every editable element's box relative to its PARENT element at second `at`, read with transforms switched off — the layout your CSS produces. Use these numbers to place each element with position:absolute; left/top/width/height (and make the parent position:relative/absolute with its parentSize if it was sized by its content), so nothing moves. inFlow=true marks the ones still placed by flex/grid/flow.",
+      inputSchema: { at: z.number().min(0).optional().describe('seconds (default: the middle of the video)') },
+    },
+    async ({ at }) => {
+      const { brief } = st()
+      const boxes = await measureLayout(dir(), brief.output, at ?? brief.output.duration / 2)
+      return text(JSON.stringify({ at: at ?? brief.output.duration / 2, inFlow: boxes.filter((b) => b.inFlow).length, boxes }, null, 1).slice(0, 60_000))
+    },
+  )
+
+  server.registerTool(
+    'layout_snapshot',
+    {
+      description:
+        "편집 준비 check: call with label 'before' BEFORE changing the layout to absolute (photographs moments of the video), then with label 'after' when done: it photographs the same moments and reports how many pixels changed per moment (aim for ≈0%; a changed moment comes with a red-marked image you can Read).",
+      inputSchema: { label: z.enum(['before', 'after']), times: z.array(z.number().min(0)).max(16).optional() },
+    },
+    async ({ label, times }) => {
+      const { brief } = st()
+      const r = await layoutSnapshot(dir(), brief.output, label, times)
+      if (label === 'before') return text(`Photographed ${r.times.length} moments (${r.times.join(', ')}s). Change the layout, then call layout_snapshot with label 'after'.`)
+      return text(JSON.stringify(r.results, null, 1))
     },
   )
 
