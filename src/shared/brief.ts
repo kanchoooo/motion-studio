@@ -1,5 +1,5 @@
 // Brief: everything the designer configures before/while talking to Claude.
-import type { CharacterInfo, Framing, GenStyle } from './assetGen'
+import type { CharacterInfo, Framing, GenRequest, GenStyle, VideoGenRequest } from './assetGen'
 
 export type OutputPresetId = 'youtube-16x9' | 'shorts-9x16' | 'feed-4x5' | 'square-1x1' | 'custom'
 export type OutputFormat = 'mp4-h264' | 'mp4-h265' | 'mov-prores4444' | 'webm-vp9' | 'png-sequence'
@@ -65,7 +65,16 @@ export interface AssetMeta {
 export interface Asset {
   id: string
   /** made in 소재 > AI로 만들기 */
-  generated?: { provider: string; model: string; prompt: string; style: GenStyle; framing: Framing }
+  generated?: {
+    provider: string
+    model: string
+    prompt: string
+    style: GenStyle
+    framing: Framing
+    /** the whole request (made with 0.2.9 or later): 수정해서 다시 만들기 starts from it */
+    request?: GenRequest
+    video?: VideoGenRequest
+  }
   /** flat character style: its SVG conversion (and Claude's part tags) */
   character?: CharacterInfo
   /** path relative to composition/, e.g. "assets/logo.png" */

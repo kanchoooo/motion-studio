@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ArrowLeft, Copy, Download, Radio, Sparkles, SquareTerminal } from 'lucide-react'
+import { ArrowLeft, Copy, Download, LayoutTemplate, Radio, Sparkles, SquareTerminal } from 'lucide-react'
 import { ConnectionsModal } from '../components/ai/ConnectionsModal'
 import { ThemeSwitch } from '../components/ThemeSwitch'
 import { studio, useStore, type ProjectTab } from '../store'
@@ -9,6 +9,8 @@ import { ExportModal } from './ExportModal'
 import { ResultsTab } from './history/ResultsTab'
 import { FamilyMenu } from './variations/FamilyMenu'
 import { VariationModal } from './variations/VariationModal'
+import { TemplateCreateModal } from './templates/TemplateCreateModal'
+import { TemplateSlotsModal } from './templates/TemplateSlotsModal'
 
 const TABS: { id: ProjectTab; label: string }[] = [
   { id: 'brief', label: '브리프' },
@@ -20,6 +22,8 @@ export function Project() {
   const { project, tab, setTab, closeProject, session, terminalOpen, setTerminal, exportProgress, aiOpen } = useStore()
   const [exporting, setExporting] = useState(false)
   const [varying, setVarying] = useState(false)
+  const [templating, setTemplating] = useState(false)
+  const [slots, setSlots] = useState(false)
   if (!project) return null
 
   const status = {
@@ -36,7 +40,7 @@ export function Project() {
         <button className="icon-btn no-drag" title="홈으로" onClick={closeProject}>
           <ArrowLeft size={16} />
         </button>
-        <FamilyMenu onCreate={() => setVarying(true)} />
+        <FamilyMenu onCreate={() => setVarying(true)} onTemplate={() => setTemplating(true)} />
         <div className="seg no-drag" style={{ marginLeft: 8 }}>
           {TABS.map((t) => (
             <button key={t.id} className={tab === t.id ? 'on' : ''} onClick={() => setTab(t.id)}>
@@ -68,6 +72,12 @@ export function Project() {
             <SquareTerminal size={16} />
           </button>
           <ThemeSwitch />
+          {project.meta.template && (
+            <button className="btn sm" onClick={() => setSlots(true)} title={`템플릿 "${project.meta.template.name}"의 글자·이미지·내레이션 바꾸기`} data-testid="template-slots-open">
+              <LayoutTemplate size={14} />
+              템플릿 칸
+            </button>
+          )}
           <button className="btn sm" disabled={!project.hasVideo} onClick={() => setVarying(true)} title="다른 크기·길이 버전 만들기">
             <Copy size={14} />
             베리에이션
@@ -88,6 +98,8 @@ export function Project() {
       </div>
       {exporting && <ExportModal onClose={() => setExporting(false)} />}
       {varying && <VariationModal onClose={() => setVarying(false)} />}
+      {templating && <TemplateCreateModal folder="" sourcePath={project.path} onClose={() => setTemplating(false)} />}
+      {slots && <TemplateSlotsModal onClose={() => setSlots(false)} />}
       {aiOpen && <ConnectionsModal onClose={() => useStore.setState({ aiOpen: false })} />}
     </div>
   )

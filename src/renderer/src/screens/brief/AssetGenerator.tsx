@@ -55,9 +55,43 @@ const remember = (v: { style: GenStyle; kind: GenKind }) => {
   }
 }
 
-export function AssetGenerator({ brief, onAdd }: { brief: Brief; onAdd(a: Asset): void }) {
+/** an AI-made asset of the brief the designer wants changed (수정해서 다시 만들기) */
+export interface ReviseTarget {
+  asset: Asset
+  nonce: number
+}
+
+const nearestRatio = (w?: number, h?: number): Ratio => {
+  if (!w || !h) return '1:1'
+  return RATIOS.reduce((best, r) => {
+    const [a, b] = r.split(':').map(Number)
+    const [x, y] = best.split(':').map(Number)
+    return Math.abs(Math.log(a / b / (w / h))) < Math.abs(Math.log(x / y / (w / h))) ? r : best
+  })
+}
+
+/** the request an AI asset was made with (older assets only kept the main fields) */
+export function assetRequest(a: Asset): { image?: GenRequest; video?: VideoGenRequest } | null {
+  const g = a.generated
+  if (!g) return null
+  if (a.meta.mime.startsWith('video/')) {
+    if (g.video) return { video: g.video }
+    if (g.provider !== 'higgsfield' && g.provider !== 'magnific') return null
+    const ratio = (a.meta.width ?? 16) >= (a.meta.height ?? 9) * 1.2 ? '16:9' : (a.meta.height ?? 9) >= (a.meta.width ?? 16) * 1.2 ? '9:16' : '1:1'
+    return { video: { provider: g.provider, model: '', modelLabel: g.model, lang: defaultPromptLang(g.model), prompt: g.prompt, ratio, duration: Math.round(a.meta.duration ?? 5) } }
+  }
+  if (g.request) return { image: g.request }
+  if (g.provider !== 'higgsfield' && g.provider !== 'magnific' && g.provider !== 'codex') return null
+  return {
+    image: { provider: g.provider, model: g.provider === 'codex' ? 'gpt-image' : '', modelLabel: g.model, style: g.style, kind: g.style === 'flat-character' ? 'character' : 'free', framing: g.framing, ratio: nearestRatio(a.meta.width, a.meta.height), lang: defaultPromptLang(g.model), prompt: g.prompt, references: [] },
+  }
+}
+
+export function AssetGenerator({ brief, onAdd, onReplace, revise }: { brief: Brief; onAdd(a: Asset): void; onReplace?(oldId: string, a: Asset): void; revise?: ReviseTarget | null }) {
   const { project, toast } = useStore()
   const pid = project!.meta.id
+  const box = useRef<HTMLDivElement>(null)
+  const [revising, setRevising] = useState<Asset | null>(null)
   // folded until the designer wants it (the brief's own assets come first)
   const [open, setOpen] = useState(false)
   const [media, setMedia] = useState<Media>('image')
@@ -91,6 +125,12 @@ export function AssetGenerator({ brief, onAdd }: { brief: Brief; onAdd(a: Asset)
     void studio.projects.fileUrl(pid, '').then(setBase)
   }, [pid])
   useEffect(() => remember({ style, kind }), [style, kind])
+  useEffect(() => {
+    if (!revise) return
+    setRevising(revise.asset)
+    setOpen(true)
+    setTimeout(() => box.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
+  }, [revise])
 
   const flat = style === 'flat-character'
   const showFraming = flat || kind === 'character'
@@ -117,6 +157,8 @@ export function AssetGenerator({ brief, onAdd }: { brief: Brief; onAdd(a: Asset)
       const c = await studio.ai.generate(pid, req)
       setCandidates((l) => [c, ...l.filter((x) => x.id !== c.id)])
       if (c.character && !c.character.pass) toast('SVG로 바꿨지만 기준에 못 미쳐요. 후보 카드에서 확인해 주세요.', 'info')
+      else if (req.revision?.length) toast('고친 후보를 만들었어요. 아래 후보에서 확인해 주세요.', 'success')
+      return c
     } catch (e) {
       toast(errText(e), 'error')
     } finally {
@@ -135,11 +177,26 @@ export function AssetGenerator({ brief, onAdd }: { brief: Brief; onAdd(a: Asset)
     try {
       const c = await studio.ai.generateVideo(pid, req)
       setCandidates((l) => [c, ...l.filter((x) => x.id !== c.id)])
+      return c
     } catch (e) {
       toast(errText(e), 'error')
     } finally {
       setBusy(null)
     }
+  }
+
+  // 수정해서 다시 만들기: the same request plus the designer's change (and the previous image when the model takes it)
+  const reviseImage = (req: GenRequest, from: string, note: string, useImage: boolean) => generate({ ...req, revision: [...(req.revision ?? []), note], revisedFrom: useImage ? from : undefined })
+  const reviseVideo = (req: VideoGenRequest, from: string, note: string) => generateVideo({ ...req, revision: [...(req.revision ?? []), note], revisedFrom: from })
+  const reviseAsset = (a: Asset, note: string, useImage: boolean) => {
+    const r = assetRequest(a)
+    if (r?.video) return reviseVideo(r.video, `composition/${a.file}`, note)
+    if (r?.image) return reviseImage(r.image, `composition/${a.file}`, note, useImage)
+  }
+  /** a revision of a brief asset can take that asset's place */
+  const replaces = (c: GenCandidate) => {
+    const from = c.video ? c.video.request.revisedFrom : c.request.revisedFrom
+    return from ? brief.assets.find((a) => from === `composition/${a.file}`) : undefined
   }
 
   const imageAssets = brief.assets.filter((a) => a.meta.mime.startsWith('image/'))
@@ -155,7 +212,7 @@ export function AssetGenerator({ brief, onAdd }: { brief: Brief; onAdd(a: Asset)
   }
 
   return (
-    <div className="card" style={{ padding: 0, overflow: 'hidden' }} data-testid="asset-generator">
+    <div ref={box} className="card" style={{ padding: 0, overflow: 'hidden' }} data-testid="asset-generator">
       <button className="row" style={{ width: '100%', padding: '12px 14px', border: 'none', background: 'var(--surface-2)', cursor: 'pointer', color: 'var(--text)' }} onClick={() => setOpen(!open)} data-testid="gen-toggle" aria-expanded={open}>
         <Sparkles size={15} color="var(--accent)" />
         <span style={{ fontWeight: 650, textAlign: 'left' }} className="grow">
@@ -167,6 +224,32 @@ export function AssetGenerator({ brief, onAdd }: { brief: Brief; onAdd(a: Asset)
       </button>
       {open && (
         <div className="col" style={{ gap: 12, padding: 14 }}>
+          {revising && (
+            <div className="card" style={{ padding: 10, display: 'grid', gridTemplateColumns: '84px 1fr', gap: 12, borderColor: 'var(--accent)', background: 'var(--accent-soft)' }} data-testid="revise-asset">
+              <div style={{ width: 84, height: 84, borderRadius: 6, overflow: 'hidden', background: 'var(--canvas)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {base && (revising.meta.mime.startsWith('video/') ? <video src={`${base}composition/${revising.file}`} muted style={{ maxWidth: '100%', maxHeight: '100%' }} /> : <img src={`${base}composition/${revising.file}`} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />)}
+              </div>
+              <div className="col" style={{ gap: 6, minWidth: 0 }}>
+                <div className="row small" style={{ gap: 6 }}>
+                  <Wand2 size={13} color="var(--accent)" />
+                  <b className="grow ellipsis">고칠 소재 · {revising.originalName}</b>
+                </div>
+                <div className="tiny muted ellipsis" title={revising.generated?.prompt}>
+                  처음 프롬프트: {revising.generated?.prompt || '(없음)'}
+                </div>
+                {assetRequest(revising) ? (
+                  <ReviseForm
+                    video={revising.meta.mime.startsWith('video/')}
+                    busy={!!busy}
+                    onSubmit={(note, useImage) => void reviseAsset(revising, note, useImage)}
+                    onCancel={() => setRevising(null)}
+                  />
+                ) : (
+                  <div className="tiny" style={{ color: 'var(--warning)' }}>이 소재는 만든 서비스 정보가 없어 다시 만들 수 없어요. 아래에서 새로 만들어 주세요.</div>
+                )}
+              </div>
+            </div>
+          )}
           <Segmented
             value={media}
             onChange={setMedia}
@@ -381,6 +464,22 @@ export function AssetGenerator({ brief, onAdd }: { brief: Brief; onAdd(a: Asset)
                       setCandidates(await studio.ai.discardCandidate(pid, c.id))
                     }}
                     onAgain={() => void (c.video ? generateVideo(c.video.request) : generate(c.request))}
+                    onRevise={(note, useImage) => void (c.video ? reviseVideo(c.video.request, c.file, note) : reviseImage(c.request, c.file, note, useImage))}
+                    replaces={onReplace ? replaces(c) : undefined}
+                    onReplace={async () => {
+                      const old = replaces(c)
+                      if (!old || !onReplace) return
+                      try {
+                        const a = await studio.ai.keepCandidate(pid, c.id)
+                        // the new picture takes the old one's place, role and notes
+                        onReplace(old.id, { ...a, kind: old.kind, required: old.required, timing: old.timing, position: old.position, transform: old.transform, note: old.note })
+                        setCandidates((l) => l.filter((x) => x.id !== c.id))
+                        setRevising(null)
+                        toast('소재를 고친 것으로 바꿨어요', 'success')
+                      } catch (e) {
+                        toast(errText(e), 'error')
+                      }
+                    }}
                     onFrame={c.video ? undefined : (which) => useAsFrame(which, c.file)}
                     onReconvert={async () => {
                       try {
@@ -465,9 +564,11 @@ function FrameSlot({ label, value, base, choices, onChange, testId }: { label: s
   )
 }
 
-function CandidateCard({ c, base, busy, onKeep, onDiscard, onAgain, onReconvert, onFrame }: { c: GenCandidate; base: string; busy: boolean; onKeep(): void; onDiscard(): void; onAgain(): void; onReconvert(): Promise<void>; onFrame?(which: 'start' | 'end'): void }) {
+function CandidateCard({ c, base, busy, onKeep, onDiscard, onAgain, onRevise, onReconvert, onFrame, replaces, onReplace }: { c: GenCandidate; base: string; busy: boolean; onKeep(): void; onDiscard(): void; onAgain(): void; onRevise(note: string, useImage: boolean): void; onReconvert(): Promise<void>; onFrame?(which: 'start' | 'end'): void; replaces?: Asset; onReplace?(): void }) {
   const [compare, setCompare] = useState(false)
   const [working, setWorking] = useState(false)
+  const [revising, setRevising] = useState(false)
+  const notes = (c.video ? c.video.request.revision : c.request.revision) ?? []
   return (
     <div className="card" style={{ padding: 8, display: 'flex', flexDirection: 'column', gap: 8 }} data-testid="gen-candidate">
       <div style={{ aspectRatio: '1', background: 'var(--canvas)', borderRadius: 6, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
@@ -483,9 +584,21 @@ function CandidateCard({ c, base, busy, onKeep, onDiscard, onAgain, onReconvert,
       <div className="tiny muted ellipsis" title={c.request.prompt}>
         {[c.request.style !== 'none' && !c.video ? STYLE_LABELS[c.request.style] : '', c.request.kind && c.request.kind !== 'free' ? KIND_LABELS[c.request.kind] : '', c.request.prompt].filter(Boolean).join(' · ')}
       </div>
+      {notes.length > 0 && (
+        <div className="tiny" style={{ color: 'var(--accent)' }} title={notes.join('\n')} data-testid="candidate-revision">
+          고친 점: {notes[notes.length - 1]}
+          {notes.length > 1 ? ` (${notes.length}번째 수정)` : ''}
+        </div>
+      )}
       {c.character && <CharacterLine info={c.character} onCompare={() => setCompare(true)} />}
       <div className="row" style={{ gap: 4, flexWrap: 'wrap' }}>
-        <button className="btn sm primary" onClick={onKeep}>
+        {replaces && onReplace && (
+          <button className="btn sm primary" onClick={onReplace} title={`브리프의 "${replaces.originalName}" 자리에 넣어요`} data-testid="candidate-replace">
+            <RefreshCw size={12} />
+            기존 소재와 바꾸기
+          </button>
+        )}
+        <button className={`btn sm${replaces ? '' : ' primary'}`} onClick={onKeep}>
           <ImagePlus size={12} />
           소재에 추가
         </button>
@@ -508,10 +621,26 @@ function CandidateCard({ c, base, busy, onKeep, onDiscard, onAgain, onReconvert,
             다시 변환
           </button>
         )}
-        <button className="btn sm ghost" disabled={busy} onClick={onAgain} title="같은 설정으로 다시 만들어요">
+        <button className={`btn sm${revising ? ' primary' : ' ghost'}`} disabled={busy} onClick={() => setRevising(!revising)} title="고칠 점을 적어 다시 만들어요" data-testid="candidate-revise">
+          <Wand2 size={12} />
           다시 만들기
         </button>
       </div>
+      {revising && (
+        <ReviseForm
+          video={!!c.video}
+          busy={busy}
+          onSubmit={(note, useImage) => {
+            setRevising(false)
+            onRevise(note, useImage)
+          }}
+          onSame={() => {
+            setRevising(false)
+            onAgain()
+          }}
+          onCancel={() => setRevising(false)}
+        />
+      )}
       {onFrame && (
         <div className="row tiny" style={{ gap: 4 }}>
           <Film size={11} color="var(--text-3)" />
@@ -525,6 +654,48 @@ function CandidateCard({ c, base, busy, onKeep, onDiscard, onAgain, onReconvert,
         </div>
       )}
       {compare && c.character && <CompareModal dir={c.character.dir} base={base} onClose={() => setCompare(false)} />}
+    </div>
+  )
+}
+
+/** what to change in an image / clip the designer did not like: only the change is written, the rest of the request stays */
+function ReviseForm({ video, busy, onSubmit, onSame, onCancel }: { video: boolean; busy: boolean; onSubmit(note: string, useImage: boolean): void; onSame?(): void; onCancel(): void }) {
+  const [note, setNote] = useState('')
+  const [useImage, setUseImage] = useState(true)
+  const submit = () => note.trim() && !busy && onSubmit(note.trim(), useImage)
+  return (
+    <div className="col" style={{ gap: 6 }} data-testid="revise-form">
+      <textarea
+        className="textarea"
+        rows={2}
+        autoFocus
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && (e.metaKey || e.ctrlKey) && submit()}
+        placeholder={video ? '어떻게 고칠까요? 예) 카메라를 더 천천히, 마지막에 제품 쪽으로 다가가게' : '어떻게 고칠까요? 예) 머리를 더 짧게, 배경은 연한 하늘색으로'}
+        data-testid="revise-note"
+      />
+      {!video && (
+        <label className="row tiny muted" style={{ gap: 6, cursor: 'pointer' }} title="이미지를 받는 모델이면 지금 그림을 함께 보내 그대로 두고 고친 점만 바꿔요. 받지 않는 모델이면 글로만 고쳐요.">
+          <input type="checkbox" checked={useImage} onChange={(e) => setUseImage(e.target.checked)} />
+          지금 그림을 바탕으로 고치기
+        </label>
+      )}
+      <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+        <button className="btn sm primary" disabled={busy || !note.trim()} onClick={submit} data-testid="revise-run">
+          {busy ? <Loader2 size={12} className="spin" /> : <Wand2 size={12} />}
+          고쳐서 다시 만들기
+        </button>
+        {onSame && (
+          <button className="btn sm ghost" disabled={busy} onClick={onSame} title="고칠 점 없이 같은 설정으로 한 번 더 만들어요">
+            같은 설정으로 다시
+          </button>
+        )}
+        <div className="grow" />
+        <button className="btn sm ghost" onClick={onCancel}>
+          닫기
+        </button>
+      </div>
     </div>
   )
 }

@@ -3,7 +3,7 @@
 // its family. Re-layouts are done by Claude one at a time; same-ratio length
 // changes can be a plain speed change, same-ratio size changes a scale at export.
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import git from 'isomorphic-git'
 import fs from 'node:fs'
 import { app } from 'electron'
@@ -12,7 +12,6 @@ import { normalizeOverrides, type Overrides } from '@shared/overrides'
 import type { FamilyInfo, ProjectMeta, ProjectState, VariationMethod } from '@shared/project'
 import * as history from './history'
 import * as projects from './projects'
-import { projectsDir } from './paths'
 import { newId, nowIso, readJson, safeName, uniquePath, writeJson } from './util'
 
 export interface VariationTarget {
@@ -22,6 +21,8 @@ export interface VariationTarget {
   duration: number
   /** only used when the aspect ratio is unchanged and the length changes */
   lengthMethod?: 'claude' | 'retime'
+  /** what else the designer wants in this variation (always done by Claude) */
+  note?: string
 }
 
 export interface VariationRequest {
@@ -36,7 +37,7 @@ export function ratioLabel(w: number, h: number): string {
 }
 
 export function methodFor(base: { width: number; height: number; duration: number }, t: VariationTarget): VariationMethod {
-  if (!sameAspect(base, t)) return 'claude'
+  if (!sameAspect(base, t) || t.note?.trim()) return 'claude'
   if (Math.abs(base.duration - t.duration) > 0.01) return t.lengthMethod ?? 'claude'
   return 'scale'
 }
@@ -116,7 +117,8 @@ function adaptationMessage(parent: ProjectState, baseBrief: Brief, t: VariationT
         : '- 길이는 같아요',
     '- 루트의 data-width / data-height / data-duration과 html·body·#root 크기를 새 사양으로 변경',
     '- data-ms-id는 원본과 같은 요소에 그대로 유지',
-    '- 콘티 승인 없이 바로 만들고, check_video와 look_at_frames로 확인한 뒤 한국어로 짧게 보고',
+    ...(t.note?.trim() ? ['', `디자이너의 추가 요청 (이 베리에이션에만 적용): ${t.note.trim()}`] : []),
+    '- 콘티 승인 없이 바로 만들고, hyperframes snapshot 시트와 look_at_frames로 장면마다 확인해 원본과 같은 브랜드·톤인지 보고 check_video로 검사하고 한국어로 짧게 보고',
     ...(edits.length ? ['', '원본에서 디자이너가 직접 정한 값 (그대로 적용되고 있어요. 레이아웃에 맞게 어울리도록 구성해 주세요):', ...edits] : []),
   ].join('\n')
 }
@@ -130,11 +132,12 @@ export async function createVariations(projectId: string, req: VariationRequest)
   const messages: { projectId: string; text: string }[] = []
 
   for (const t of req.targets) {
-    const label = `${ratioLabel(t.width, t.height)} · ${+t.duration.toFixed(2)}초`
+    const label = `${ratioLabel(t.width, t.height)} · ${+t.duration.toFixed(2)}초${t.note?.trim() ? ` · ${t.note.trim().replace(/\s+/g, ' ').slice(0, 12)}` : ''}`
     // display name keeps "9:16"; the folder name can't contain ":" (Windows/macOS)
     const name = `${rootName} · ${label}`
     const folder = safeName(name.replace(/(\d+):(\d+)/g, '$1x$2'))
-    const dir = uniquePath((n) => join(projectsDir(), `${folder}${n ? ` (${n + 1})` : ''}.msproj`))
+    // next to the original (in the same project folder)
+    const dir = uniquePath((n) => join(dirname(parent.path), `${folder}${n ? ` (${n + 1})` : ''}.msproj`))
     const { brief: baseBrief, overrides: baseOverrides } = await copyBase(parent.path, dir, req.base)
     const method = methodFor(baseBrief.output, t)
     const preset = OUTPUT_PRESETS.find((p) => p.id === t.preset)

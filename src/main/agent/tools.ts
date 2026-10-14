@@ -14,7 +14,7 @@ import { codexImage, codexStatus } from '../ai/codex'
 import { callTool, connectedProviders, listTools } from '../ai/connect'
 import { importUrl, saveResultMedia } from '../ai/media'
 import { aiSettings } from '../ai/settings'
-import { recordGenerated } from '../ai/generated'
+import { keptArgs, recordGenerated } from '../ai/generated'
 import { sfxLibrary, useBuiltinSfx } from '../audio'
 import { listReferences, nearDuplicates, referenceFramesAt } from '../references'
 import { auditComposition } from '../audit'
@@ -512,7 +512,7 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
       let saved: Awaited<ReturnType<typeof saveResultMedia>> = []
       if (save_media && !r.isError) {
         saved = await saveResultMedia(join(dir(), 'composition'), provider, r)
-        recordGenerated(dir(), saved.map((m) => ({ file: m.file, kind: m.kind, provider, tool, label: label ?? (typeof args.prompt === 'string' ? args.prompt : typeof args.text === 'string' ? args.text : undefined) })))
+        recordGenerated(dir(), saved.map((m) => ({ file: m.file, kind: m.kind, provider, tool, label: label ?? (typeof args.prompt === 'string' ? args.prompt : typeof args.text === 'string' ? args.text : undefined), args: keptArgs(args) })))
         const visual = saved.filter((m) => m.kind === 'image' || m.kind === 'video')
         if (visual.length) hooks.onGenerated(projectId, visual.map((m) => ({ file: m.file, kind: m.kind })), label)
       }

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron'
-import type { AgentEvent, ExportOptions, ExportProgress, SendMessageInput, AgentPermission, HelperContext } from '@shared/api'
+import type { AgentEvent, ExportOptions, ExportProgress, SendMessageInput, AgentPermission, HelperContext, TemplateValues } from '@shared/api'
 import type { Brief } from '@shared/brief'
 import type { Overrides } from '@shared/overrides'
 import { hasAccess, unlock } from './access'
@@ -15,6 +15,8 @@ import * as history from './history'
 import { projectsDir, serveFolderUrl } from './ipc-helpers'
 import { previewBase } from './preview-server'
 import * as projects from './projects'
+import * as folders from './folders'
+import * as templates from './templates'
 import { cancelExport, exportAll, listRenders, removeRender, startExport, updateRender } from './renders'
 import { createVariations, setFamilyStatus } from './variations'
 import { listBrands, removeBrand, saveBrand } from './brands'
@@ -110,6 +112,75 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
     return list
   })
   handle('projects:renameAt', (path: string, name: string) => projects.renameAt(path, name))
+  // ---- folders (홈의 폴더 트리) ----
+  /** a project (or a folder of projects) Claude is working on must not move under it */
+  const notWhileWorking = (dir: string, what: string) => {
+    const working = projects.openIds().filter((id) => {
+      try {
+        return folders.isInside(projects.pathOf(id), dir) && (agent.state(id).status === 'busy' || agent.isAdapting(id))
+      } catch {
+        return false
+      }
+    })
+    if (working.length) throw new Error(`Claude가 작업 중인 프로젝트가 있어요. 작업이 끝난 뒤에 ${what}.`)
+    // idle sessions there are closed: their working folder is about to change
+    for (const id of projects.openIds()) {
+      try {
+        if (folders.isInside(projects.pathOf(id), dir)) agent.kill(id)
+      } catch {
+        /* already gone */
+      }
+    }
+  }
+  handle('folders:list', () => folders.scan().folders)
+  handle('folders:create', (parent: string, name: string) => folders.createFolder(String(parent ?? ''), String(name ?? '')))
+  handle('folders:rename', (rel: string, name: string) => {
+    notWhileWorking(folders.folderPath(rel), '이름을 바꿔 주세요')
+    const r = folders.renameFolder(rel, name)
+    projects.forgetInside(r.from)
+    projects.movedOnDisk(r.from, r.to)
+    return r.rel
+  })
+  handle('folders:remove', async (rel: string) => {
+    const dir = folders.folderPath(rel)
+    if (!rel) throw new Error('맨 위 폴더는 지울 수 없어요.')
+    if (folders.projectsIn(dir).length) throw new Error('폴더 안에 프로젝트가 있어요. 먼저 다른 폴더로 옮기거나 휴지통으로 보내 주세요.')
+    await shell.trashItem(dir)
+  })
+  // ---- templates ----
+  handle('templates:list', () => templates.listTemplates())
+  handle('templates:detect', (path: string) => ({ slots: templates.detectSlots(path), url: serveFolderUrl(path) }))
+  handle('templates:create', (path: string, input: Parameters<typeof templates.createTemplate>[1]) => templates.createTemplate(path, input))
+  handle('templates:rename', (id: string, name: string) => templates.renameTemplate(id, name))
+  handle('templates:remove', (id: string) => templates.removeTemplate(id))
+  handle('templates:createProject', async (input: Parameters<typeof templates.projectFromTemplate>[0] & { check: boolean }) => {
+    const r = await templates.projectFromTemplate(input)
+    const st = projects.openProject(r.dir)
+    const msg = templates.claudeMessage(r.template.name, r.changed, r.todo, !!input.check)
+    // new narration (and the optional check) is Claude's part: it starts in the background
+    if (msg) void agent.send({ projectId: st.meta.id, text: msg }).catch(() => {})
+    return r.dir
+  })
+  handle('templates:slots', (id: string) => templates.projectSlots(projects.pathOf(id)))
+  handle('templates:apply', async (id: string, values: TemplateValues, check: boolean) => {
+    notWhileBusy(id, '템플릿 칸을 바꿔 주세요')
+    const dir = projects.pathOf(id)
+    const t = templates.projectSlots(dir)
+    if (!t) throw new Error('템플릿으로 만든 프로젝트가 아니에요.')
+    const r = await templates.applySlots(dir, t.slots, values)
+    projects.refreshFontCss(dir)
+    projects.applyAudioEdits(dir)
+    projects.touch(id)
+    if (r.changed.length) await history.record(dir, { actor: 'designer', summary: `템플릿 칸을 바꿨어요 (${r.changed.join(', ')})` })
+    send('agent:event', { type: 'composition-changed', projectId: id } satisfies AgentEvent)
+    const msg = templates.claudeMessage(t.name, r.changed, r.todo, !!check)
+    if (msg) await agent.send({ projectId: id, text: msg })
+    return projects.state(id)
+  })
+  handle('projects:move', (path: string, folder: string) => {
+    notWhileWorking(path, '옮겨 주세요')
+    return projects.moveProject(path, String(folder ?? ''))
+  })
   handle('projects:webFonts', (id: string) => listWebFonts(projects.pathOf(id)).map((f) => ({ family: f.family, weights: f.weights })))
   handle('projects:create', (input: Parameters<typeof projects.createProject>[0]) => projects.createProject(input))
   handle('projects:open', (path: string) => projects.openProject(path))

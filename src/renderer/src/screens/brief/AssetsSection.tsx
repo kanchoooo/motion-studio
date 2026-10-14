@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
-import { Film, ImagePlus, Music, Trash2, Upload } from 'lucide-react'
+import { Film, ImagePlus, Music, Trash2, Upload, Wand2 } from 'lucide-react'
 import { ASSET_KIND_LABELS, type Asset, type AssetKind, type AssetTransform, type Brief, type PositionHint } from '@shared/brief'
 import { POSITION_OPTIONS, TimingField } from '../../components/TimingField'
 import { Field, formatBytes, Modal, Segmented, Toggle } from '../../components/ui'
 import { studio, useStore } from '../../store'
 import { SectionHeader } from './BriefTab'
-import { AssetGenerator, CharacterLine, CompareModal } from './AssetGenerator'
+import { AssetGenerator, assetRequest, CharacterLine, CompareModal, type ReviseTarget } from './AssetGenerator'
 import { WebCollector } from './WebCollector'
 
 export function AssetsSection({ brief, onChange }: { brief: Brief; onChange: (b: Brief) => void }) {
@@ -17,6 +17,7 @@ export function AssetsSection({ brief, onChange }: { brief: Brief; onChange: (b:
   const [psdAsk, setPsdAsk] = useState<string[] | null>(null)
   const [compare, setCompare] = useState<string | null>(null)
   const [projectBase, setProjectBase] = useState('')
+  const [revise, setRevise] = useState<ReviseTarget | null>(null)
   useEffect(() => {
     void studio.projects.fileUrl(pid, '').then(setProjectBase)
   }, [pid])
@@ -84,7 +85,12 @@ export function AssetsSection({ brief, onChange }: { brief: Brief; onChange: (b:
         </button>
       </div>
 
-      <AssetGenerator brief={brief} onAdd={(a) => onChange({ ...brief, assets: [...brief.assets, a] })} />
+      <AssetGenerator
+        brief={brief}
+        revise={revise}
+        onAdd={(a) => onChange({ ...brief, assets: [...brief.assets, a] })}
+        onReplace={(oldId, a) => onChange({ ...brief, assets: brief.assets.map((x) => (x.id === oldId ? a : x)) })}
+      />
       <WebCollector
         brief={brief}
         onKeep={(r, name) => {
@@ -128,6 +134,12 @@ export function AssetsSection({ brief, onChange }: { brief: Brief; onChange: (b:
               )}
             </div>
             <div className="tiny muted ellipsis" title={a.generated?.prompt ?? a.originalName}>{a.originalName}</div>
+            {a.generated && assetRequest(a) && (
+              <button className="btn sm" style={{ alignSelf: 'flex-start' }} onClick={() => setRevise({ asset: a, nonce: Date.now() })} title="고칠 점만 적으면 이 소재를 바탕으로 다시 만들어요" data-testid="asset-revise">
+                <Wand2 size={12} />
+                수정해서 다시 만들기
+              </button>
+            )}
             {a.character && (
               <div className="col" style={{ gap: 4 }}>
                 <CharacterLine info={a.character} onCompare={() => setCompare(a.character!.dir)} />

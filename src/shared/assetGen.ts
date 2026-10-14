@@ -177,6 +177,10 @@ export interface GenRequest {
   prompt: string
   /** reference images (composition-relative, e.g. assets/logo.png) */
   references: string[]
+  /** 수정해서 다시 만들기: the designer's change requests, oldest first (the last one is new) */
+  revision?: string[]
+  /** the image being revised (project-relative: .studio/generations/<id>/source.png or composition/assets/…); sent along when the model takes images */
+  revisedFrom?: string
 }
 
 /** SVG conversion of a character image and what Claude did with it */
@@ -216,6 +220,32 @@ export interface VideoGenRequest {
   /** first / last frame: project-relative images (composition/assets/… or .studio/generations/<id>/source.png) */
   start?: string
   end?: string
+  /** 수정해서 다시 만들기: the designer's change requests, oldest first */
+  revision?: string[]
+  /** the clip being revised (project-relative; not sent, it tells which asset a revision may replace) */
+  revisedFrom?: string
+}
+
+const REVISE_WITH_IMAGE: Record<PromptLang, string> = {
+  en: 'REVISION: The attached image is the previous version of this image. Keep its subject, composition, framing, style and palette, and change only this:',
+  zh: '修改要求：附带的图片是这张图的上一版。保持主体、构图、取景、风格和配色不变，只修改以下内容：',
+  ko: '수정 요청: 첨부한 이미지는 이 그림의 이전 결과물이다. 대상·구도·화면 구성·스타일·색감은 그대로 두고 아래만 바꾼다:',
+}
+const REVISE_TEXT: Record<PromptLang, string> = {
+  en: 'REVISION: apply these changes to the description above (later lines win):',
+  zh: '修改要求：在上面的描述中加入以下改动（后面的优先）：',
+  ko: '수정 요청: 위 설명에 아래 변경을 반영한다 (뒤의 줄이 우선):',
+}
+
+/**
+ * The change request put after the prompt. With the previous image attached only the newest
+ * request is needed (the image already has the earlier ones); without it every request is listed.
+ */
+export function withRevision(sent: string, lang: PromptLang, revision: string[] | undefined, withImage: boolean): string {
+  const notes = (revision ?? []).map((r) => r.trim()).filter(Boolean)
+  if (!notes.length) return sent
+  const body = withImage ? `${REVISE_WITH_IMAGE[lang]}\n${notes[notes.length - 1]}` : `${REVISE_TEXT[lang]}\n${notes.map((n) => `- ${n}`).join('\n')}`
+  return `${sent}\n\n${body}`
 }
 
 /** a generated image or clip waiting for the designer to keep or discard it */

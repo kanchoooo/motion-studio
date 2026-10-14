@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { AlertCircle, Check, ChevronDown, Clock, Copy, Download, Loader2 } from 'lucide-react'
+import { AlertCircle, Check, ChevronDown, Clock, Copy, Download, LayoutTemplate, Loader2 } from 'lucide-react'
 import type { ProjectSummary } from '@shared/project'
 import { studio, useStore } from '../../store'
 
@@ -11,7 +11,7 @@ const STATUS = {
 }
 
 /** project name in the title bar: switch between the original and its variations */
-export function FamilyMenu({ onCreate }: { onCreate: () => void }) {
+export function FamilyMenu({ onCreate, onTemplate }: { onCreate: () => void; onTemplate: () => void }) {
   const { project, familyNonce, openProject, toast } = useStore()
   const [open, setOpen] = useState(false)
   const [family, setFamily] = useState<ProjectSummary[]>([])
@@ -84,6 +84,16 @@ export function FamilyMenu({ onCreate }: { onCreate: () => void }) {
           >
             <Copy size={14} />
             베리에이션 만들기…
+          </button>
+          <button
+            disabled={!project!.hasVideo}
+            onClick={() => {
+              setOpen(false)
+              onTemplate()
+            }}
+          >
+            <LayoutTemplate size={14} />
+            템플릿으로 저장…
           </button>
           {family.length > 1 && (
             <button

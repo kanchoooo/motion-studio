@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { AudioCandidateList } from '@shared/ai'
-import type { AgentEvent, ChatItem, DoctorReport, ExportProgress, FontFamily, SessionState, PermissionAsk } from '@shared/api'
+import type { AgentEvent, ChatItem, DoctorReport, ExportProgress, FontFamily, SessionState, PermissionAsk, TemplateInfo } from '@shared/api'
 import type { ProjectState, ProjectSummary } from '@shared/project'
 
 export const studio = window.studio
@@ -19,6 +19,9 @@ interface State {
   theme: 'dark' | 'light'
   doctor: DoctorReport | null
   projects: ProjectSummary[]
+  /** project folders ("직방/숏츠") */
+  folders: string[]
+  templates: TemplateInfo[]
   project: ProjectState | null
   tab: ProjectTab
   chat: ChatItem[]
@@ -74,6 +77,8 @@ export const useStore = create<State>((set, get) => ({
   theme: (localStorage.getItem('ms-theme') as 'dark' | 'light') || 'dark',
   doctor: null,
   projects: [],
+  folders: [],
+  templates: [],
   project: null,
   tab: 'brief',
   chat: [],
@@ -99,7 +104,10 @@ export const useStore = create<State>((set, get) => ({
     void studio.app.setTheme(theme)
     set({ theme })
   },
-  refreshProjects: async () => set({ projects: await studio.projects.list() }),
+  refreshProjects: async () => {
+    const [projects, folders, templates] = await Promise.all([studio.projects.list(), studio.folders.list(), studio.templates.list()])
+    set({ projects, folders, templates })
+  },
   openProject: async (path) => {
     await leaveProject()
     const project = await studio.projects.open(path)

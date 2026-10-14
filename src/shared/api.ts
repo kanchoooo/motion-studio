@@ -134,11 +134,50 @@ export interface VariationTargetInput {
   height: number
   duration: number
   lengthMethod?: 'claude' | 'retime'
+  /** what else the designer wants in this variation (Claude does it) */
+  note?: string
 }
 export interface VariationRequestInput {
   base: { kind: 'current' } | { kind: 'history'; id: string; label: string }
   targets: VariationTargetInput[]
 }
+
+// ---- templates ---------------------------------------------------------------------
+
+/** a fill-in slot of a template: an editable element of the finished video */
+export interface TemplateSlot {
+  /** data-ms-id of the element */
+  id: string
+  kind: 'text' | 'image' | 'video' | 'voice'
+  /** what the designer calls it ("메인 문구", "제품 사진") */
+  label: string
+  /** the text, or the composition-relative file (assets/…) in the original */
+  original: string
+  /** a note for whoever fills it in ("10자 안팎", "투명 배경 PNG") */
+  hint?: string
+  /** how a narration was recorded (the same voice is used for a new script) */
+  voice?: { provider: string; tool: string; args: Record<string, unknown>; label?: string }
+}
+
+export interface TemplateInfo {
+  id: string
+  name: string
+  createdAt: string
+  /** the project it was made from */
+  sourceName: string
+  /** the folder it was made in (shown there first) */
+  folder?: string
+  output: { preset: Brief['output']['preset']; width: number; height: number; duration: number }
+  slots: TemplateSlot[]
+  /** cover picture, relative to url */
+  cover?: string
+  path: string
+  /** file URL of the template folder (cover, composition/…) */
+  url: string
+}
+
+/** new values per slot id: text, a picked file (absolute path), or a new narration script */
+export type TemplateValues = Record<string, { text?: string; file?: string; script?: string }>
 
 // ---- environment -------------------------------------------------------------
 
@@ -269,7 +308,9 @@ export interface StudioApi {
     renameAt(path: string, name: string): Promise<void>
     /** project list pictures were made in the background */
     onChanged(cb: () => void): () => void
-    create(input: { name: string; presetId: Brief['output']['preset']; duration: number }): Promise<ProjectState>
+    create(input: { name: string; presetId: Brief['output']['preset']; duration: number; folder?: string }): Promise<ProjectState>
+    /** moves a project into a folder ('' = top); returns its new path */
+    move(path: string, folder: string): Promise<string>
     open(path: string): Promise<ProjectState>
     /** current state of an already-open project (no side effects) */
     state(projectId: string): Promise<ProjectState>
@@ -290,6 +331,28 @@ export interface StudioApi {
     addFeedbackImage(projectId: string, file: string): Promise<string>
     diskUsage(projectId: string): Promise<Record<'renders' | 'assets' | 'references' | 'history' | 'cache' | 'total', number>>
     clearCache(projectId: string): Promise<void>
+  }
+  templates: {
+    list(): Promise<TemplateInfo[]>
+    /** the slots a finished project could offer (project folder path; the project need not be open) */
+    detect(projectPath: string): Promise<{ slots: TemplateSlot[]; url: string }>
+    create(projectPath: string, input: { name: string; slots: TemplateSlot[]; folder?: string }): Promise<TemplateInfo>
+    rename(id: string, name: string): Promise<void>
+    remove(id: string): Promise<void>
+    /** a new project from a template; returns its path (narration scripts / a layout check go to Claude) */
+    createProject(input: { templateId: string; name: string; folder: string; values: TemplateValues; check: boolean }): Promise<string>
+    /** the slots of an open project made from a template, with their current values */
+    slots(projectId: string): Promise<{ name: string; slots: TemplateSlot[]; current: Record<string, string> } | null>
+    /** changes slots of an open project made from a template */
+    apply(projectId: string, values: TemplateValues, check: boolean): Promise<ProjectState>
+  }
+  /** project folders inside the projects folder (relative paths like "직방/숏츠") */
+  folders: {
+    list(): Promise<string[]>
+    create(parent: string, name: string): Promise<string>
+    rename(path: string, name: string): Promise<string>
+    /** to the Trash; only an empty folder (no projects inside) */
+    remove(path: string): Promise<void>
   }
   agent: {
     /** starts the live Claude Code session (or returns the running one) */

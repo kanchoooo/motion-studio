@@ -39,6 +39,8 @@ export const pluginDir = () => (isDev ? join(appRoot(), 'resources', 'claude-plu
 /** project default unless the designer picks another in the chat panel: latest Opus, high effort */
 export const DEFAULT_MODEL = 'opus'
 export const DEFAULT_EFFORT = 'high'
+/** variation re-layouts running at the same time (each is a Claude session of its own) */
+export const MAX_ADAPTING = 4
 
 const REPLAY = 512 * 1024
 const ENTER_DELAY = 800
@@ -83,9 +85,9 @@ function markLines(marks: FeedbackMark[]): string {
 
 export class SessionManager {
   private live = new Map<string, Live>()
-  /** variation re-layouts waiting for Claude, processed one at a time */
+  /** variation re-layouts waiting for Claude; up to MAX_ADAPTING run side by side */
   private adaptQueue: { projectId: string; text: string }[] = []
-  private adapting: string | null = null
+  private adapting = new Set<string>()
   /** projects whose model/effort change waits for the running turn */
   private pendingRestart = new Set<string>()
 
@@ -251,7 +253,7 @@ export class SessionManager {
   /** keeps few Claude processes alive: idle sessions of other projects are closed (fewer token refreshes racing) */
   pruneIdle(keepProjectId: string) {
     for (const [id, l] of this.live) {
-      if (id === keepProjectId || id.startsWith('__') || id === this.adapting) continue
+      if (id === keepProjectId || id.startsWith('__') || this.adapting.has(id)) continue
       if (this.adaptQueue.some((q) => q.projectId === id)) continue
       if (l.state.status === 'ready' || l.state.status === 'exited') this.kill(id)
     }
@@ -376,9 +378,13 @@ export class SessionManager {
       // nothing to resume: start a new conversation right away instead of showing "종료됨"
       if (failedResume) setTimeout(() => current() && this.start(projectId), 300)
       // a variation re-layout that was running here will not finish
-      if (this.adapting === projectId) {
-        this.adapting = null
-        setFamilyStatus(projectId, 'error')
+      if (this.adapting.has(projectId)) {
+        this.adapting.delete(projectId)
+        try {
+          setFamilyStatus(projectId, 'error')
+        } catch {
+          /* folder gone */
+        }
         this.emit({ type: 'family-changed', projectId })
         setTimeout(() => void this.pump(), 500)
       }
@@ -423,9 +429,12 @@ export class SessionManager {
   }
 
   private async pump() {
-    if (this.adapting || !this.adaptQueue.length) return
-    const next = this.adaptQueue.shift()!
-    this.adapting = next.projectId
+    // several variations are re-laid out at once, each in its own Claude session
+    while (this.adapting.size < MAX_ADAPTING && this.adaptQueue.length) void this.runAdaptation(this.adaptQueue.shift()!)
+  }
+
+  private async runAdaptation(next: { projectId: string; text: string }) {
+    this.adapting.add(next.projectId)
     try {
       setFamilyStatus(next.projectId, 'working')
       this.emit({ type: 'family-changed', projectId: next.projectId })
@@ -439,7 +448,7 @@ export class SessionManager {
       this.emit({ type: 'family-changed', projectId: next.projectId })
       const l = this.live.get(next.projectId)
       if (l) this.addApp(l, { id: newId(), at: nowIso(), role: 'error', text: '베리에이션을 시작하지 못했어요.', detail: e instanceof Error ? e.message : String(e) })
-      this.adapting = null
+      this.adapting.delete(next.projectId)
       void this.pump()
     }
   }
@@ -453,7 +462,7 @@ export class SessionManager {
     projects.touch(projectId, { agentModel: opts.model || undefined, agentEffort: (opts.effort || undefined) as never })
     const l = this.live.get(projectId)
     if (!l) return this.state(projectId)
-    if (l.state.status === 'busy' || this.adapting === projectId) {
+    if (l.state.status === 'busy' || this.adapting.has(projectId)) {
       this.pendingRestart.add(projectId)
       this.setState(l, { pendingRestart: true })
       return l.state
@@ -462,8 +471,8 @@ export class SessionManager {
   }
 
   private async onTurnEnd(l: Live, lastText: string, how: 'done' | 'stopped' | 'failed' = 'done') {
-    if (this.adapting === l.projectId) {
-      this.adapting = null
+    if (this.adapting.has(l.projectId)) {
+      this.adapting.delete(l.projectId)
       try {
         // a stopped or failed re-layout is not a finished variation
         setFamilyStatus(l.projectId, how === 'done' ? 'done' : 'error')
@@ -636,7 +645,7 @@ export class SessionManager {
 
   /** a variation still waiting or being re-laid out in this run */
   isAdapting(projectId: string): boolean {
-    return this.adapting === projectId || this.adaptQueue.some((q) => q.projectId === projectId)
+    return this.adapting.has(projectId) || this.adaptQueue.some((q) => q.projectId === projectId)
   }
 
   restart(projectId: string): SessionState {

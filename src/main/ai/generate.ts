@@ -5,10 +5,10 @@
 // Results wait for the service's queue, are saved as source.png in a candidate
 // folder (.studio/generations/<id>/) and, for the flat character style, turned
 // into an SVG right away.
-import { mkdirSync, readFileSync, rmSync } from 'node:fs'
-import { basename, extname, join } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { basename, extname, join, relative, resolve } from 'node:path'
 import sharp from 'sharp'
-import { buildPrompt, negativeFor, type GenCandidate, type GenRequest, type Ratio } from '@shared/assetGen'
+import { buildPrompt, negativeFor, withRevision, type GenCandidate, type GenRequest, type Ratio } from '@shared/assetGen'
 import { convertCharacter } from '../character/convert'
 import { newId, nowIso, readJson, writeJson } from '../util'
 import { failIfError, payload } from './catalog'
@@ -136,15 +136,36 @@ export async function referenceValues(provider: McpProvider, files: string[], pr
   return out
 }
 
-/** the tool arguments for one image, following the tool's own schema */
-async function argumentsFor(req: GenRequest & { provider: McpProvider }, sent: string, references: string[]): Promise<{ tool: string; args: Record<string, unknown> }> {
-  const tools = (await listTools(req.provider)) as { name: string; inputSchema?: unknown }[]
-  const tool = tools.find((t) => GENERATE_TOOL[req.provider].test(t.name))
+const REF_KEY = /reference|ref_?images?|input_?images?|image_?urls?|init_?image|source_?image|^images?$/i
+
+/** the image tool of a service and its (possibly nested) parameters */
+async function imageTool(provider: McpProvider) {
+  const tools = (await listTools(provider)) as { name: string; inputSchema?: unknown }[]
+  const tool = tools.find((t) => GENERATE_TOOL[provider].test(t.name))
   if (!tool) throw new Error('이 서비스에서 이미지 만들기 도구를 찾지 못했어요. AI 연결을 다시 확인해 주세요.')
   const top = ((tool.inputSchema as Schema | undefined)?.properties ?? {}) as Record<string, Schema>
   // Higgsfield nests everything under "params"
   const nested = top.params && (top.params.type === 'object' || top.params.properties) ? 'params' : null
   const props = (nested ? top.params.properties : top) ?? {}
+  return { tools, tool, nested, props }
+}
+
+/** whether the chosen image tool takes reference images (else a revision goes as words only) */
+async function takesImages(provider: McpProvider): Promise<boolean> {
+  const { props } = await imageTool(provider)
+  return !Object.keys(props).length || !!keyOf(props, REF_KEY, /prompt|negative/i)
+}
+
+/** a reference path: composition-relative (assets/…), or project-relative (.studio/…, composition/…) */
+export function referencePath(projectDir: string, rel: string): string {
+  const abs = /^(\.studio|composition)\//.test(rel) ? resolve(projectDir, rel) : resolve(projectDir, 'composition', rel)
+  if (relative(projectDir, abs).startsWith('..')) throw new Error('프로젝트 밖의 이미지는 참고로 쓸 수 없어요.')
+  return abs
+}
+
+/** the tool arguments for one image, following the tool's own schema */
+async function argumentsFor(req: GenRequest & { provider: McpProvider }, sent: string, references: string[]): Promise<{ tool: string; args: Record<string, unknown> }> {
+  const { tools, tool, nested, props } = await imageTool(req.provider)
   const free = !Object.keys(props).length
   const a: Record<string, unknown> = {}
   a[keyOf(props, /^prompt$/i) ?? keyOf(props, /prompt/i, /negative/i) ?? 'prompt'] = sent
@@ -158,7 +179,7 @@ async function argumentsFor(req: GenRequest & { provider: McpProvider }, sent: s
   const negative = negativeFor(req.style)
   if (negKey && negative) a[negKey] = negative
   if (references.length) {
-    const refKey = keyOf(props, /reference|ref_?images?|input_?images?|image_?urls?|init_?image|source_?image|^images?$/i, /prompt|negative/i)
+    const refKey = keyOf(props, REF_KEY, /prompt|negative/i)
     if (!refKey) throw new Error('고른 모델에는 참고 이미지를 함께 보낼 수 없어요. 참고 소재를 빼거나 다른 모델을 골라 주세요.')
     const values = await referenceValues(req.provider, references, props[refKey], tools)
     a[refKey] = props[refKey].type === 'array' ? values : values[0]
@@ -172,8 +193,12 @@ export async function generateCandidate(projectDir: string, req: GenRequest): Pr
   const folder = join(genDir(projectDir), id)
   mkdirSync(folder, { recursive: true })
   try {
-    const sent = buildPrompt(req.style, req.framing, req.lang, req.prompt, req.kind)
-    const refs = req.references.map((r) => join(projectDir, 'composition', r))
+    // 수정해서 다시 만들기: the previous image goes along when the model takes images
+    const previous = req.revisedFrom ? referencePath(projectDir, req.revisedFrom) : null
+    if (previous && !existsSync(previous)) throw new Error('고칠 이미지를 찾을 수 없어요. 후보가 지워졌다면 처음부터 다시 만들어 주세요.')
+    const withImage = !!previous && (req.provider === 'codex' || (await takesImages(req.provider)))
+    const sent = withRevision(buildPrompt(req.style, req.framing, req.lang, req.prompt, req.kind), req.lang, req.revision, withImage)
+    const refs = [...req.references.map((r) => referencePath(projectDir, r)), ...(withImage ? [previous!] : [])]
     let raw: string
     if (req.provider === 'codex') raw = await codexImage({ prompt: sent, ratio: req.ratio, references: refs, workDir: folder })
     else {

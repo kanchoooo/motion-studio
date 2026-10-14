@@ -30,6 +30,8 @@ export interface ProjectMeta {
   agentEffort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   /** 'ask' (default): Claude asks in the chat before acting outside its standing permissions; 'all': allowed */
   agentPermission?: 'ask' | 'all'
+  /** made from a template: its fill-in slots are in .studio/template.json */
+  template?: { id: string; name: string }
 }
 
 export interface ProjectSummary {
@@ -44,6 +46,9 @@ export interface ProjectSummary {
   thumbnail?: string
   hasVideo: boolean
   family?: FamilyInfo
+  /** folder inside the projects folder ("직방/숏츠"; '' = top) */
+  folder: string
+  template?: ProjectMeta['template']
 }
 
 export interface ProjectState {

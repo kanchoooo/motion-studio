@@ -1,4 +1,4 @@
-import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs'
 import { basename, extname, join } from 'node:path'
 import { app, shell } from 'electron'
 import { emptyBrief, normalizeBrief, OUTPUT_PRESETS, type Asset, type AssetKind, type Brief, type OutputPresetId } from '@shared/brief'
@@ -12,7 +12,8 @@ import { probeMedia } from './media'
 import { candidateFolder, candidateTarget, discardCandidate } from './ai/generate'
 import type { GenCandidate } from '@shared/assetGen'
 import type { CollectItem } from '@shared/api'
-import { dataDir, projectsDir, runtimeFiles } from './paths'
+import { dataDir, runtimeFiles } from './paths'
+import { folderOf, folderPath, isInside, moveTarget, scan } from './folders'
 import { serveFolder } from './preview-server'
 import { compositionHasVideo, HYPERFRAMES_JSON, starterComposition } from './template'
 import { newId, nowIso, readJson, safeName, uniquePath, writeJson, writeText } from './util'
@@ -63,21 +64,20 @@ export function familyOf(projectId: string): ProjectSummary[] {
 
 export function listProjects(): ProjectSummary[] {
   const seen = new Set<string>()
-  const candidates = [...readJson<string[]>(recentPath(), [])]
-  try {
-    for (const name of readdirSync(projectsDir())) {
-      if (name.endsWith('.msproj')) candidates.push(join(projectsDir(), name))
-    }
-  } catch {
-    /* documents folder unavailable */
-  }
+  // projects in the projects folder and its folders, and ones opened from elsewhere
+  // (the projects folder first; a recent entry elsewhere with an id already listed is a stale copy and is skipped,
+  // while a Finder duplicate inside the projects folder still shows: it gets its own id when opened)
+  const scanned = scan().projects
+  const candidates = [...scanned, ...readJson<string[]>(recentPath(), [])]
+  const ids = new Set<string>()
   const out: ProjectSummary[] = []
-  for (const dir of candidates) {
+  for (const [i, dir] of candidates.entries()) {
     if (seen.has(dir) || !existsSync(f.meta(dir))) continue
     seen.add(dir)
     const meta = readJson<ProjectMeta | null>(f.meta(dir), null)
     const brief = readJson<Brief | null>(f.brief(dir), null)
-    if (!meta || !brief) continue
+    if (!meta || !brief || (i >= scanned.length && ids.has(meta.id))) continue
+    ids.add(meta.id)
     const preset = OUTPUT_PRESETS.find((p) => p.id === brief.output.preset)
     const thumb = join(dir, 'thumbnails', 'latest.jpg')
     out.push({
@@ -90,6 +90,8 @@ export function listProjects(): ProjectSummary[] {
       width: brief.output.width,
       height: brief.output.height,
       family: meta.family,
+      folder: folderOf(dir),
+      template: meta.template,
       thumbnail: existsSync(thumb) ? `${serveFolder(dir)}thumbnails/latest.jpg?v=${Math.round(statSync(thumb).mtimeMs)}` : undefined,
       hasVideo: existsSync(f.index(dir)) && compositionHasVideo(readFileSync(f.index(dir), 'utf8')),
     })
@@ -140,9 +142,11 @@ export function refreshFontCss(dir: string, overrides?: Overrides): string[] {
 
 // ---- create / open -----------------------------------------------------------------
 
-export async function createProject(input: { name: string; presetId: OutputPresetId; duration: number }): Promise<ProjectState> {
+export async function createProject(input: { name: string; presetId: OutputPresetId; duration: number; folder?: string }): Promise<ProjectState> {
   const name = safeName(input.name, '새 프로젝트')
-  const dir = uniquePath((n) => join(projectsDir(), `${name}${n ? ` ${n + 1}` : ''}.msproj`))
+  const base = folderPath(input.folder ?? '')
+  mkdirSync(base, { recursive: true })
+  const dir = uniquePath((n) => join(base, `${name}${n ? ` ${n + 1}` : ''}.msproj`))
   mkdirSync(dir, { recursive: true })
   const meta: ProjectMeta = { id: newId(), name, createdAt: nowIso(), updatedAt: nowIso(), appVersion: app.getVersion() }
   const brief = emptyBrief(name, input.presetId, Math.max(1, Math.min(180, input.duration || 15)))
@@ -213,6 +217,30 @@ export function renameAt(dir: string, name: string): void {
   const meta = readJson<ProjectMeta | null>(f.meta(dir), null)
   if (!meta) throw new Error('프로젝트 정보(project.json)를 읽을 수 없어요.')
   writeJson(f.meta(dir), { ...meta, name: safeName(name, '새 프로젝트'), updatedAt: nowIso() })
+}
+
+/** projects under `dir` stop being open (their folder moves; they are opened again from the new place) */
+export function forgetInside(dir: string): void {
+  for (const [id, p] of [...open]) if (isInside(p, dir)) open.delete(id)
+}
+
+/** recent-list entries follow a moved project or folder */
+export function movedOnDisk(from: string, to: string): void {
+  writeJson(
+    recentPath(),
+    readJson<string[]>(recentPath(), []).map((p) => (isInside(p, from) ? to + p.slice(from.length) : p)),
+  )
+}
+
+/** moves a project into another folder ('' = the top); returns its new path */
+export function moveProject(dir: string, folder: string): string {
+  if (!existsSync(f.meta(dir))) throw new Error('프로젝트 폴더를 찾을 수 없어요.')
+  if (folderOf(dir) === folder) return dir
+  const to = moveTarget(dir, folder)
+  forgetInside(dir)
+  renameSync(dir, to)
+  movedOnDisk(dir, to)
+  return to
 }
 
 export async function removeProject(dir: string): Promise<void> {
@@ -350,7 +378,7 @@ export async function keepCandidate(projectId: string, candidate: GenCandidate):
     transform: 'free',
     note: '',
     meta: { ...meta, bytes: statSync(join(to, main)).size },
-    generated: { provider: r.provider, model: r.modelLabel ?? r.model, prompt: r.prompt, style: r.style, framing: r.framing },
+    generated: { provider: r.provider, model: r.modelLabel ?? r.model, prompt: r.prompt, style: r.style, framing: r.framing, request: candidate.video ? undefined : r, video: candidate.video?.request },
     character,
   }
   discardCandidate(dir, candidate.id)

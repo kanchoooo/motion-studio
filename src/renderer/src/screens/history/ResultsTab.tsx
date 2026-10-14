@@ -179,8 +179,9 @@ export function ResultsTab() {
         />
       )}
       {playing && (
-        <Modal title={playing.fileName} onClose={() => setPlaying(null)} width={960}>
-          <video src={`${base}${playing.file}`} controls autoPlay style={{ width: '100%', borderRadius: 8, background: '#000' }} />
+        <Modal title={playing.fileName} onClose={() => setPlaying(null)} width={playing.height > playing.width ? 640 : 960}>
+          {/* the whole picture fits the window (a vertical short used to be twice as tall as the screen) */}
+          <video src={`${base}${playing.file}`} controls autoPlay data-testid="result-player" style={{ display: 'block', width: '100%', height: 'auto', maxHeight: 'calc(100vh - 330px)', minHeight: 200, objectFit: 'contain', borderRadius: 8, background: '#000' }} />
           <div className="row">
             <textarea
               className="textarea grow"

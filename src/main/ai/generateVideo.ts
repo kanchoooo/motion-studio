@@ -10,7 +10,7 @@
 // candidate folder (.studio/generations/<id>/), and is kept or discarded like an image.
 import { mkdirSync, renameSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
-import type { GenCandidate, VideoGenRequest } from '@shared/assetGen'
+import { withRevision, type GenCandidate, type VideoGenRequest } from '@shared/assetGen'
 import { probeMedia, thumbnailFromVideo } from '../media'
 import { newId, nowIso } from '../util'
 import { failIfError, payload } from './catalog'
@@ -40,7 +40,7 @@ export async function videoArguments(req: VideoGenRequest, frames: { start?: str
   const props = (nested ? top.params.properties : top) ?? {}
   const free = !Object.keys(props).length
   const a: Record<string, unknown> = {}
-  a[keyOf(props, /^prompt$/i) ?? keyOf(props, /prompt/i, /negative/i) ?? 'prompt'] = req.prompt
+  a[keyOf(props, /^prompt$/i) ?? keyOf(props, /prompt/i, /negative/i) ?? 'prompt'] = withRevision(req.prompt, req.lang, req.revision, false)
   const modelKey = keyOf(props, /^(model|slug|mode|model_?id)$/i) ?? (free ? (req.provider === 'magnific' ? 'slug' : 'model') : undefined)
   if (req.model && modelKey) a[modelKey] = req.model
   const ratioKey = keyOf(props, /aspect/i) ?? (free ? (req.provider === 'magnific' ? 'aspectRatio' : 'aspect_ratio') : undefined)
@@ -111,8 +111,8 @@ export async function generateVideoCandidate(projectDir: string, req: VideoGenRe
       id,
       at: nowIso(),
       file: `.studio/generations/${id}/video.mp4`,
-      request: { provider: req.provider, model: req.model, modelLabel: req.modelLabel, style: 'none', framing: 'auto', ratio: req.ratio, lang: req.lang, prompt: req.prompt, references: [req.start, req.end].filter(Boolean) as string[] },
-      sent: req.prompt,
+      request: { provider: req.provider, model: req.model, modelLabel: req.modelLabel, style: 'none', framing: 'auto', ratio: req.ratio, lang: req.lang, prompt: req.prompt, references: [req.start, req.end].filter(Boolean) as string[], revision: req.revision },
+      sent: withRevision(req.prompt, req.lang, req.revision, false),
       video: { request: req, poster: `.studio/generations/${id}/poster.jpg`, duration: meta.duration },
     }
     writeCandidates(projectDir, [candidate, ...listCandidates(projectDir)].slice(0, 60))

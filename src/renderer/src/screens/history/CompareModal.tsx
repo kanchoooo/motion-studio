@@ -36,7 +36,7 @@ export function CompareModal({ a, b, base, onClose, onRestore }: { a: RenderReco
 
   const Side = ({ r, refEl }: { r: RenderRecord; refEl: React.RefObject<HTMLVideoElement | null> }) => (
     <div className="col" style={{ gap: 6, minWidth: 0 }}>
-      <video ref={refEl} src={base + r.file} muted={refEl === vb} style={{ width: '100%', aspectRatio: `${r.width} / ${r.height}`, maxHeight: 420, background: '#000', borderRadius: 8 }} onEnded={() => setPlaying(false)} />
+      <video ref={refEl} src={base + r.file} muted={refEl === vb} style={{ display: 'block', width: '100%', aspectRatio: `${r.width} / ${r.height}`, maxHeight: 'min(420px, calc(100vh - 340px))', objectFit: 'contain', background: '#000', borderRadius: 8 }} onEnded={() => setPlaying(false)} />
       <div className="row">
         <div className="col grow" style={{ gap: 0, minWidth: 0 }}>
           <span className="small ellipsis" style={{ fontWeight: 600 }}>{r.versionName ?? r.fileName}</span>

@@ -13,6 +13,8 @@ export function ChatPanel({ onFold }: { onFold?(): void }) {
   const { project, chat, session, toast, setTerminal, asks } = useStore()
   const { marks, markTime, removeMark, updateMark, clearMarks, player } = useEditor()
   const [text, setText] = useState('')
+  // the designer's direction for the very first storyboard (optional)
+  const [direction, setDirection] = useState('')
   const [sending, setSending] = useState(false)
   const [attachments, setAttachments] = useState<string[]>([])
   const [dropping, setDropping] = useState(false)
@@ -119,6 +121,7 @@ export function ChatPanel({ onFold }: { onFold?(): void }) {
       <div
         ref={list}
         data-testid="chat-list"
+        className="chat-list"
         onScroll={(e) => {
           const el = e.currentTarget
           atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40
@@ -130,7 +133,21 @@ export function ChatPanel({ onFold }: { onFold?(): void }) {
           <div className="col" style={{ gap: 10, padding: '20px 4px' }}>
             <div className="title">무엇을 만들까요?</div>
             <div className="small muted">브리프를 정리했다면 아래 버튼으로 시작해 보세요. Claude가 콘티를 먼저 보여 주고, 승인하면 영상을 만들어요.</div>
-            <button className="btn sm primary" style={{ justifyContent: 'flex-start', alignSelf: 'flex-start' }} onClick={() => send(FIRST)} data-testid="quick-first">
+            <div className="col" style={{ gap: 4 }}>
+              <label className="tiny muted" htmlFor="first-direction">
+                원하는 방향 (선택)
+              </label>
+              <textarea
+                id="first-direction"
+                className="textarea"
+                rows={3}
+                value={direction}
+                onChange={(e) => setDirection(e.target.value)}
+                placeholder="예) 첫 3초 안에 앱 화면을 크게 보여 주고, 경쾌한 리듬으로 문구를 툭툭 끊어서 등장시켜 줘"
+                data-testid="first-direction"
+              />
+            </div>
+            <button className="btn sm primary" style={{ justifyContent: 'flex-start', alignSelf: 'flex-start' }} disabled={sending} onClick={() => send(direction.trim() ? `${FIRST}. 원하는 방향: ${direction.trim()}` : FIRST)} data-testid="quick-first">
               {FIRST}
             </button>
           </div>

@@ -281,6 +281,13 @@
   flex: none;
 }
 
+/* ---------- chat ---------- */
+/* a full list must scroll, never squash its rows: a card with overflow:hidden (the storyboard)
+   could otherwise shrink to a sliver once Claude's reply arrived below it */
+.chat-list > * {
+  flex-shrink: 0;
+}
+
 /* ---------- modal ---------- */
 .scrim {
   position: fixed;
@@ -803,4 +810,61 @@
 }
 .lock-fieldset:disabled {
   opacity: 0.5;
+}
+
+/* ---------- home: folder tree ---------- */
+.tree-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding-right: 6px;
+  border-radius: 7px;
+  cursor: pointer;
+  color: var(--text-2);
+  font-size: 13px;
+  user-select: none;
+}
+.tree-row:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.tree-row[data-on] {
+  background: var(--accent-soft);
+  color: var(--text);
+  font-weight: 600;
+}
+.tree-row[data-drop] {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+  background: var(--accent-soft);
+}
+.tree-toggle,
+.tree-more {
+  width: 16px;
+  height: 18px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--text-3);
+  cursor: pointer;
+  border-radius: 4px;
+}
+.tree-more {
+  width: 20px;
+  visibility: hidden;
+}
+.tree-row:hover .tree-more,
+.tree-row[data-on] .tree-more {
+  visibility: visible;
+}
+.tree-toggle:hover,
+.tree-more:hover {
+  background: var(--surface-3);
+  color: var(--text);
 }
