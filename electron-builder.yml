@@ -33,6 +33,8 @@ files:
   # compile caches written by tools at dev time: thousands of files, and codesign
   # would try to sign each one
   - '!**/node_modules/**/{.v8-cache,.cache}/**'
+  # image → SVG character tools run as plain CommonJS files (worker thread)
+  - src/main/character/img2svg/*.cjs
 
 extraResources:
   # FFmpeg / ffprobe / yt-dlp for this OS+CPU (scripts/fetch-binaries.mjs)

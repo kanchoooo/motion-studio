@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=1920, height=1080" />
+  <title>P3 비아냥 → 놀람 → 울음</title>
+  <script src="vendor/gsap.min.js"></script>
+  <script src="cl/svgrig.js"></script>
+  <link rel="stylesheet" href="cl/base.css" />
+  <style>
+    #root { background: #FA3C3F; }
+    #host { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; }
+    svg { position: absolute; left: 0; top: 0; }
+    .lab-tag { opacity: 0; background: rgba(30, 6, 10, 0.72); }
+  </style>
+</head>
+<body>
+<div id="root" data-composition-id="main" data-start="0" data-width="1920" data-height="1080" data-duration="12.5" data-fps="30">
+  <div id="host">
+  <svg id="sc" viewBox="-487.7 0 2229.3 1254" width="1920" height="1080">
+  /*SVG*/
+  </svg>
+  </div>
+  <div class="lab-tag" id="t1"><b>1</b>게슴츠레 · 비아냥</div>
+  <div class="lab-tag" id="t2"><b>2</b>놀람</div>
+  <div class="lab-tag" id="t3"><b>3</b>울먹울먹</div>
+  <div class="lab-tag" id="t4"><b>4</b>오열</div>
+</div>
+<script>
+(function () {
+  var host = document.getElementById('host')
+  var $ = function (id) { return document.getElementById(id) }
+  var clamp = SvgRig.clamp, lerp = SvgRig.lerp, noise = SvgRig.noise
+  function tr(x, y) { return 'translate(' + x + ' ' + y + ')' }
+  function rot(a, x, y) { return 'rotate(' + a + ' ' + x + ' ' + y + ')' }
+  function sc(x, y, sx, sy) { return 'translate(' + x + ' ' + y + ') scale(' + sx + ' ' + sy + ') translate(' + (-x) + ' ' + (-y) + ')' }
+  function f(n) { return Math.round(n * 10) / 10 }
+  function content(id) { return document.querySelector('#' + id + ' [data-role="content"]') }
+  // 눈 기하 (태그 SVG의 data-pivot·도형 bbox에서 가져온 값)
+  var EYE = {
+    l: { cx: 512, cy: 595, rx: 92.5, top: 488, bot: 688, pc: [552, 601], outer: -1 },
+    r: { cx: 778.5, cy: 598.5, rx: 88.5, top: 495, bot: 687, pc: [803, 600], outer: 1 }
+  }
+  var drops = [].slice.call(document.querySelectorAll('#drops .drop'))
+
+  SvgRig.add(host, {
+    breathe: 0, lid: 0, 'lid-tilt': 0, blink: 0, 'look-x': 0, 'look-y': 0, pupil: 0, 'eye-big': 0, tremble: 0,
+    tilt: 0, turn: 0, sq: 0, 'head-y': 0, 'hair-y': 0, 'hair-rot': 0, shrug: 0, sob: 0,
+    'brow-l': 0, 'brow-r': 0, 'brow-l-rot': 0, 'brow-r-rot': 0, 'brow-sad': 0,
+    smirk: 0, 'm-o': 0, 'm-wave': 0, quiver: 0, 'm-wail': 0, squeeze: 0,
+    pool: 0, tears: 0, spray: 0, flush: 0, sweat: 0
+  }, function (P, t) {
+    // 흐느낌: 0.46초 주기로 어깨가 들썩, 머리·입이 따라감
+    var ph = Math.sin(t * 2 * Math.PI / 0.46), sobUp = P.sob * Math.max(0, ph)
+    var br = Math.sin(t * 2 * Math.PI / 3.4) * P.breathe
+    var shrug = P.shrug + sobUp * 0.8 + br * 0.25
+    $('body').setAttribute('transform', sc(638, 1254, 1, 1 + 0.03 * shrug))
+    var lift = -11.2 * shrug
+    var tilt = P.tilt + P.sob * 1.2 * Math.sin(t * 2.3)
+    $('head').setAttribute('transform', tr(0, P['head-y'] + lift + P.sob * 3 * ph) + ' ' + rot(tilt, 638, 880) + ' ' + sc(638, 880, 1 + P.sq * 0.7, 1 - P.sq))
+    var turn = P.turn
+    $('hair').setAttribute('transform', tr(turn * 8, P['hair-y'] + P.sob * 3 * Math.sin(t * 2 * Math.PI / 0.46 - 0.9)) + ' ' + rot(P['hair-rot'], 630, 330))
+    $('ear-l').setAttribute('transform', tr(-turn * 10, 0)); $('ear-r').setAttribute('transform', tr(-turn * 10, 0))
+
+    // 눈: 눈꺼풀(lid 0 뜸 ~ 1 감음, lid-tilt + 바깥쪽 처짐), 크기, 눈동자, 눈물 고임, >< 교체
+    var sqz = P.squeeze, lidV = clamp(Math.max(P.lid, P.blink, sqz * 2), 0, 1)
+    var jx = P.tremble * 3 * Math.sin(t * 61), jy = P.tremble * 2 * Math.sin(t * 47 + 1)
+    var ps = 1 - 0.25 * P.pupil, eb = 1 + 0.12 * P['eye-big']
+    ;['l', 'r'].forEach(function (s) {
+      var E = EYE[s], g = $('eye-' + s)
+      g.setAttribute('transform', tr(turn * 18, 0) + ' ' + sc(E.cx, E.cy, eb, eb))
+      g.setAttribute('opacity', sqz >= 0.5 ? 0 : 1)
+      var y = lerp(E.top, E.bot, lidV), tl = P['lid-tilt'] * 20
+      var xo = E.cx + E.outer * (E.rx + 14), xi = E.cx - E.outer * (E.rx + 14)
+      var yo = y + tl, yi = y - tl, xa = Math.min(xo, xi), xb = Math.max(xo, xi), ya = xa === xo ? yo : yi, yb = xa === xo ? yi : yo
+      var yc = (ya + yb) / 2 + 28 * (1 - Math.abs(lidV - 0.5))
+      $('lid-' + s + '-skin').setAttribute('d', 'M' + f(xa - 40) + ' ' + (E.top - 90) + 'H' + f(xb + 40) + 'V' + f(yb) + 'L' + f(xb) + ' ' + f(yb) + 'Q' + E.cx + ' ' + f(yc) + ' ' + f(xa) + ' ' + f(ya) + 'L' + f(xa - 40) + ' ' + f(ya) + 'Z')
+      var line = $('lid-' + s + '-line')
+      line.setAttribute('d', 'M' + f(xa) + ' ' + f(ya) + 'Q' + E.cx + ' ' + f(yc) + ' ' + f(xb) + ' ' + f(yb))
+      line.setAttribute('opacity', clamp(lidV * 7, 0, 1))
+      content('pupil-' + s).setAttribute('transform', tr(P['look-x'] * 16 + jx, P['look-y'] * 14 + jy) + ' ' + sc(E.pc[0], E.pc[1], ps, ps))
+      var pool = $('pool-' + s)
+      pool.setAttribute('opacity', clamp(P.pool, 0, 1))
+      pool.setAttribute('transform', tr(0, (1 - clamp(P.pool, 0, 1)) * 40 + 2 * Math.sin(t * 9 + (s === 'l' ? 0 : 1.3))))
+      var cross = $('cross-' + s), ck = clamp(sqz * 2 - 1, 0, 1)
+      cross.setAttribute('opacity', sqz >= 0.5 ? 1 : 0)
+      cross.setAttribute('transform', tr(turn * 18, 0) + ' ' + sc(E.cx, E.cy, 0.6 + 0.4 * ck + 0.04 * sobUp, 0.6 + 0.4 * ck - 0.06 * sobUp))
+    })
+    document.querySelectorAll('.spark').forEach(function (c) { c.setAttribute('opacity', clamp(P.pool, 0, 1)) })
+
+    // 눈썹: 개별 높이·기울기 + 슬픔(안쪽 끝 올라감)
+    var sad = P['brow-sad']
+    $('brow-l').setAttribute('transform', tr(turn * 18, P['brow-l'] - 6 * sad) + ' ' + rot(P['brow-l-rot'] - 15 * sad, 508, 446))
+    $('brow-r').setAttribute('transform', tr(turn * 18, P['brow-r'] - 6 * sad) + ' ' + rot(P['brow-r-rot'] + 15 * sad, 783, 464))
+    $('nose').setAttribute('transform', tr(turn * 18, 0))
+
+    // 입: 기본(비웃음은 기울여서) ↔ O ↔ 떨리는 입 ↔ 우는 입 (중간에 교체, 크기로 이어줌)
+    var wo = P['m-o'], ww = P['m-wave'], wl = P['m-wail'], wmax = Math.max(wo, ww, wl)
+    var sm = P.smirk
+    $('mouth').setAttribute('transform', tr(turn * 18, 0) + ' ' + rot(-9 * sm, 600, 752) + ' ' + sc(600, 752, 1 - 0.12 * sm - 0.3 * wmax, 1 - 0.3 * wmax))
+    $('mouth').setAttribute('opacity', wmax < 0.5 ? 1 : 0)
+    var so = 0.55 + 0.45 * wo
+    $('mouth-o').setAttribute('transform', tr(turn * 18, 0) + ' ' + sc(658, 745, so, so))
+    $('mouth-o').setAttribute('opacity', wo >= 0.5 ? 1 : 0)
+    var q = P.quiver, pts = []
+    for (var k = 0; k <= 6; k++) {
+      var x = 604 + k * 20, base = 750 - 10 * Math.sin(Math.PI * k / 6)          // 살짝 처진 입(∩)
+      pts.push([x, base + (k % 2 ? 1 : -1) * q * (4 + 3 * noise(t * 14, k))])
+    }
+    var d = 'M' + pts[0][0] + ' ' + f(pts[0][1])
+    for (k = 1; k < pts.length; k++) d += 'L' + pts[k][0] + ' ' + f(pts[k][1])
+    $('mouth-wave-path').setAttribute('d', d)
+    $('mouth-wave').setAttribute('transform', tr(turn * 18, 0) + ' ' + sc(664, 745, 0.6 + 0.4 * ww, 0.6 + 0.4 * ww))
+    $('mouth-wave').setAttribute('opacity', ww >= 0.5 ? 1 : 0)
+    var sl = 0.55 + 0.45 * wl
+    $('mouth-wail').setAttribute('transform', tr(turn * 18, 0) + ' ' + sc(658, 720, sl * (1 + 0.04 * ph * P.sob), sl * (1 + 0.16 * ph * P.sob)))
+    $('mouth-wail').setAttribute('opacity', wl >= 0.5 ? 1 : 0)
+
+    // 눈물 줄기(그려지며 내려옴, 흔들림), 튀는 방울, 볼 홍조, 땀
+    var tk = clamp(P.tears, 0, 1), w1 = 6 * Math.sin(t * 11), w2 = 6 * Math.sin(t * 10 + 2)
+    var dl = 'M468 676 C' + f(448 + w1) + ' 740 ' + f(476 - w1) + ' 800 ' + f(446 + w1 * 0.5) + ' 900'
+    var dr = 'M822 676 C' + f(842 + w2) + ' 740 ' + f(814 - w2) + ' 800 ' + f(846 + w2 * 0.5) + ' 900'
+    ;[['tear-l', dl], ['tear-l2', dl], ['tear-r', dr], ['tear-r2', dr]].forEach(function (a) {
+      var p = $(a[0]); p.setAttribute('d', a[1]); p.setAttribute('stroke-dasharray', tk + ' 1')
+    })
+    $('tears').setAttribute('opacity', tk > 0 ? 1 : 0)
+    $('tears').setAttribute('transform', tr(turn * 18, 0))
+    drops.forEach(function (el, i) {
+      var side = i % 2 ? 1 : -1, ph2 = ((t * 1.7 + i * 0.137) % 1 + 1) % 1
+      var ox = side < 0 ? 430 : 870, x = ox + side * (60 + 150 * ph2 + 25 * (i % 3)), y = 590 - 150 * ph2 + 330 * ph2 * ph2
+      el.setAttribute('cx', f(x)); el.setAttribute('cy', f(y))
+      el.setAttribute('opacity', P.spray * (ph2 < 0.85 ? 1 : (1 - ph2) / 0.15))
+    })
+    $('flush').setAttribute('opacity', 0.45 * clamp(P.flush, 0, 1))
+    var sw = clamp(P.sweat, 0, 1)
+    $('sweat').setAttribute('transform', tr(866, 340 + 60 * sw) + ' scale(' + (0.6 + 0.4 * Math.min(1, sw * 3)) + ')')
+    $('sweat').setAttribute('opacity', sw > 0 && sw < 1 ? Math.min(1, sw * 14, (1 - sw) * 6) : 0)
+  })
+
+  var tl = gsap.timeline({ paused: true })
+  function at(t, vars, dur, ez) {
+    var o = { duration: dur == null ? 0.3 : dur, ease: ez || 'power2.inOut' }
+    for (var k in vars) o['--' + k] = vars[k]
+    tl.to(host, o, t)
+  }
+  function tag(id, a, b) { tl.to('#' + id, { opacity: 1, duration: 0.2 }, a); tl.to('#' + id, { opacity: 0, duration: 0.2 }, b) }
+  tag('t1', 0.2, 3.85); tag('t2', 4.0, 5.3); tag('t3', 5.45, 7.45); tag('t4', 7.6, 12.3)
+
+  // 1. 게슴츠레 · 비아냥: 눈꺼풀 반쯤, 곁눈질, 한쪽 눈썹, 비웃는 입, 턱 들기 → 피식 → 눈 굴리기
+  at(0.1, { breathe: 1 }, 0.4)
+  at(0.35, { lid: 0.5, 'lid-tilt': 0.2, 'look-x': 0.9, 'look-y': 0.15, 'brow-l': -20, 'brow-l-rot': 5, 'brow-r': 6, 'brow-r-rot': -5, smirk: 1, tilt: -4, turn: -0.2, 'head-y': -4 }, 0.55, 'power2.out')
+  ;[1.35, 1.6, 1.85].forEach(function (b, i) {            // 피식피식
+    at(b, { shrug: 0.5 - i * 0.1, 'head-y': -8, smirk: 1.25 }, 0.1, 'power2.out')
+    at(b + 0.1, { shrug: 0, 'head-y': -4, smirk: 1 }, 0.15, 'power2.in')
+  })
+  at(2.4, { lid: 0.3, 'look-y': -1, 'look-x': 0.6 }, 0.22, 'power2.out')    // 눈 굴리기
+  at(2.62, { 'look-x': -0.9 }, 0.45, 'sine.inOut')
+  at(2.62, { tilt: 3, turn: 0.1 }, 0.6, 'power2.inOut')
+  at(3.1, { lid: 0.55, 'look-y': 0.15, 'look-x': 0.9 }, 0.35, 'power2.inOut')
+  at(3.5, { blink: 1 }, 0.12, 'power2.in'); at(3.62, { blink: 0 }, 0.22, 'power2.out')
+
+  // 2. 놀람: 움츠림 → 확 늘어남(눈 커짐·동공 작아짐·눈썹 확·O 입·어깨 올라감) → 정착, 떨림, 식은땀
+  at(4.0, { sq: 0.06, 'head-y': 6, lid: 0.75, 'brow-l': 8, 'brow-r': 10, 'brow-l-rot': 0, 'brow-r-rot': 0, smirk: 0, tilt: 0, turn: 0 }, 0.15, 'power2.out')
+  at(4.15, { sq: -0.08, 'head-y': -14, lid: 0, 'lid-tilt': 0, 'eye-big': 1, pupil: 1, 'look-x': 0, 'look-y': 0, 'brow-l': -36, 'brow-r': -36, 'm-o': 1, shrug: 1 }, 0.12, 'power3.out')
+  at(4.18, { 'hair-y': 12 }, 0.1, 'power2.out'); at(4.28, { 'hair-y': 0 }, 0.9, 'elastic.out(1,0.3)')
+  at(4.27, { sq: 0, 'head-y': -6 }, 0.6, 'elastic.out(1,0.4)')
+  at(4.35, { tremble: 1 }, 0.1); at(5.15, { tremble: 0 }, 0.1)
+  at(4.3, { sweat: 1 }, 1.1, 'none')
+  at(5.0, { shrug: 0 }, 0.4)
+
+  // 3. 울먹울먹: 슬픈 눈썹, 눈꺼풀 처짐, 눈물 고임 + 반짝임, 떨리는 입, 훌쩍
+  at(5.4, { 'eye-big': 0.3, pupil: -0.6, 'brow-sad': 1, 'brow-l': 0, 'brow-r': 0, lid: 0.22, 'lid-tilt': 0.55, 'head-y': 6, flush: 0.5 }, 0.5); at(5.4, { 'm-o': 0 }, 0.16)
+  at(5.46, { 'm-wave': 1, quiver: 1 }, 0.16)
+  at(5.6, { pool: 1 }, 0.9, 'power1.out')
+  at(6.2, { shrug: 0.6 }, 0.08, 'power2.out'); at(6.28, { shrug: 0 }, 0.25)   // 훌쩍
+  at(6.8, { shrug: 0.7, quiver: 1.6, tremble: 0.4 }, 0.08, 'power2.out'); at(6.88, { shrug: 0 }, 0.25)
+  at(7.25, { sq: 0.05, 'head-y': 12, squeeze: 0.4, 'brow-sad': 1.2 }, 0.3, 'power2.in')
+
+  // 4. 오열: >< 눈, 우는 입, 눈물 줄기·방울, 흐느낌(자동 반복), 고개 흔들림
+  at(7.6, { squeeze: 1, 'm-wave': 0, 'm-wail': 1, sq: -0.06, 'head-y': -8, pool: 0, tremble: 0, 'brow-sad': 1.35, flush: 1 }, 0.14, 'power3.out')
+  at(7.62, { tears: 1 }, 0.4, 'power1.out')
+  at(7.7, { sob: 1, spray: 1 }, 0.3)
+  at(7.74, { 'hair-y': -10 }, 0.1); at(7.84, { 'hair-y': 0 }, 0.8, 'elastic.out(1,0.35)')
+  at(8.0, { sq: 0 }, 0.4)
+  at(8.4, { tilt: 5 }, 0.9, 'sine.inOut'); at(9.4, { tilt: -5 }, 1.0, 'sine.inOut'); at(10.5, { tilt: 4 }, 1.0, 'sine.inOut'); at(11.6, { tilt: -2 }, 0.8, 'sine.inOut')
+  tl.to({}, { duration: 0.01 }, 12.49)
+
+  window.__timelines = window.__timelines || {}
+  window.__timelines['main'] = SvgRig.attach(tl)
+})()
+</script>
+</body>
+</html>

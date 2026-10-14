@@ -45,8 +45,13 @@ export const hyperframes = {
 /** files copied into every project's composition/ (ms runtime, local GSAP) */
 export const runtimeFiles = {
   msRuntime: () => join(isDev ? join(appRoot(), 'src', 'runtime') : join(process.resourcesPath, 'runtime'), 'ms-runtime.js'),
+  /** SVG character acting helper (ms-svg-character) */
+  svgrig: () => join(isDev ? join(appRoot(), 'src', 'runtime') : join(process.resourcesPath, 'runtime'), 'svgrig.js'),
   gsap: () => join(nodeModules(), 'gsap', 'dist', 'gsap.min.js'),
 }
+
+/** image → SVG character tools: plain CommonJS shipped as files (they load sharp / vtracer from node_modules) */
+export const characterTools = () => join(appRoot(), 'src', 'main', 'character', 'img2svg')
 
 export function projectsDir(): string {
   // MS_PROJECTS_DIR lets tests use a throwaway folder

@@ -1,0 +1,44 @@
+{
+  "source": "vector.svg",
+  "note": "AI가 원본(man.webp)과 man_shapes.png를 비교해 작성. 피부 s01은 얼굴·귀·목이 한 덩어리라 clip으로 나눔. 왼눈 흰자는 초승달이라 눈동자 밑을 타원으로 채움. 머리카락 아래 두피는 머리색 타원으로 채움.",
+  "parts": [
+    { "id": "body", "label": "몸", "pivot": [638, 1254], "children": [
+      { "id": "neck-skin", "label": "목 피부", "shapes": ["s01"], "clip": "rect 545 840 187 414" },
+      { "id": "jacket-back-l", "label": "재킷 어깨 그늘 L", "shapes": ["s03"] },
+      { "id": "jacket-back-r", "label": "재킷 어깨 그늘 R", "shapes": ["s04"] },
+      { "id": "shirt", "label": "터틀넥", "shapes": ["s05"] },
+      { "id": "jacket-front-l", "label": "재킷 앞판·옷깃 L", "shapes": ["s06"] },
+      { "id": "jacket-front-r", "label": "재킷 앞판·옷깃 R", "shapes": ["s07"] },
+      { "id": "sleeve-l", "label": "소매 L", "shapes": ["s11"] },
+      { "id": "sleeve-r", "label": "소매 R", "shapes": ["s12"] },
+      { "id": "pocket-square", "label": "행커치프", "shapes": ["s21"] },
+      { "id": "neck-shadow", "label": "목 그늘", "shapes": ["s13"] },
+      { "id": "neck-front", "label": "목 앞(밝은 부분)", "shapes": ["s18"] }
+    ] },
+    { "id": "head", "label": "머리", "pivot": [638, 880], "children": [
+      { "id": "hair-back", "label": "두피 채움", "shapes": [{ "svg": "<ellipse cx=\"615\" cy=\"300\" rx=\"265\" ry=\"160\" fill=\"#261617\"/>", "note": "머리카락이 움직여도 빈틈 없게" }] },
+      { "id": "ear-l", "label": "귀 L", "pivot": [372, 640], "shapes": ["s01"], "clip": "rect 250 555 135 170" },
+      { "id": "ear-r", "label": "귀 R", "pivot": [897, 640], "shapes": ["s01"], "clip": "rect 885 555 135 170" },
+      { "id": "face", "label": "얼굴", "shapes": ["s01"], "clip": "M0 0 H1254 V555 H905 Q890 640 897 725 H1254 V900 H726 V874 Q638 899 551 877 V900 H0 V725 H378 Q362 640 372 555 H0 Z" },
+      { "id": "hair", "label": "머리카락", "pivot": [630, 330], "children": [
+        { "id": "hair-main", "label": "앞머리·윗머리", "shapes": ["s02"] },
+        { "id": "hair-side", "label": "옆머리(가르마 오른쪽)", "shapes": ["s08"] },
+        { "id": "hair-shine", "label": "머리 결 하이라이트", "shapes": ["s19", "s20", "s23"] }
+      ] },
+      { "id": "eye-l", "label": "눈 L", "pivot": [512, 595], "children": [
+        { "id": "eye-l-white", "label": "흰자 L", "shapes": [{ "svg": "<ellipse cx=\"512\" cy=\"595\" rx=\"92.5\" ry=\"90.5\" fill=\"#FEFEFE\"/>", "note": "눈동자 밑 가려진 흰자" }, "s09"] },
+        { "id": "pupil-l", "label": "눈동자 L", "pivot": [552, 601], "shapes": ["s16"], "clip": "ellipse 512 595 92.5 90.5" },
+        { "id": "lash-l", "label": "윗눈선 L", "shapes": ["s24"] }
+      ] },
+      { "id": "eye-r", "label": "눈 R", "pivot": [778.5, 598.5], "children": [
+        { "id": "eye-r-white", "label": "흰자 R", "shapes": ["s10"] },
+        { "id": "pupil-r", "label": "눈동자 R", "pivot": [803, 600], "shapes": ["s17"], "clip": "shape:s10" },
+        { "id": "lash-r", "label": "윗눈선 R", "shapes": ["s25"] }
+      ] },
+      { "id": "brow-l", "label": "눈썹 L", "pivot": [508, 446], "shapes": ["s14"] },
+      { "id": "brow-r", "label": "눈썹 R", "pivot": [783, 464], "shapes": ["s15"] },
+      { "id": "nose", "label": "코", "pivot": [640, 673], "shapes": ["s22"] },
+      { "id": "mouth", "label": "입", "pivot": [660, 735], "shapes": ["s26"] }
+    ] }
+  ]
+}

@@ -5,6 +5,7 @@ import { POSITION_OPTIONS, TimingField } from '../../components/TimingField'
 import { Field, formatBytes, Modal, Segmented, Toggle } from '../../components/ui'
 import { studio, useStore } from '../../store'
 import { SectionHeader } from './BriefTab'
+import { AssetGenerator, CharacterLine, CompareModal } from './AssetGenerator'
 
 export function AssetsSection({ brief, onChange }: { brief: Brief; onChange: (b: Brief) => void }) {
   const { project, toast } = useStore()
@@ -13,6 +14,11 @@ export function AssetsSection({ brief, onChange }: { brief: Brief; onChange: (b:
   const [drag, setDrag] = useState(false)
   const [busy, setBusy] = useState(false)
   const [psdAsk, setPsdAsk] = useState<string[] | null>(null)
+  const [compare, setCompare] = useState<string | null>(null)
+  const [projectBase, setProjectBase] = useState('')
+  useEffect(() => {
+    void studio.projects.fileUrl(pid, '').then(setProjectBase)
+  }, [pid])
 
   useEffect(() => {
     void studio.projects.fileUrl(pid, 'composition/').then(setBase)
@@ -77,6 +83,9 @@ export function AssetsSection({ brief, onChange }: { brief: Brief; onChange: (b:
         </button>
       </div>
 
+      <AssetGenerator brief={brief} onAdd={(a) => onChange({ ...brief, assets: [...brief.assets, a] })} />
+      {compare && <CompareModal dir={compare} base={projectBase} onClose={() => setCompare(null)} />}
+
       {psdAsk && (
         <Modal title="PSD 가져오기" onClose={() => setPsdAsk(null)} width={520}>
           <div className="small" style={{ lineHeight: 1.7 }}>
@@ -108,7 +117,28 @@ export function AssetsSection({ brief, onChange }: { brief: Brief; onChange: (b:
                 <Music size={28} color="var(--text-3)" />
               )}
             </div>
-            <div className="tiny muted ellipsis" title={a.originalName}>{a.originalName}</div>
+            <div className="tiny muted ellipsis" title={a.generated?.prompt ?? a.originalName}>{a.originalName}</div>
+            {a.character && (
+              <div className="col" style={{ gap: 4 }}>
+                <CharacterLine info={a.character} onCompare={() => setCompare(a.character!.dir)} />
+                {a.character.status === 'done' && !a.character.pass && (
+                  <button
+                    className="btn sm"
+                    style={{ alignSelf: 'flex-start' }}
+                    onClick={async () => {
+                      try {
+                        const info = await studio.ai.reconvert(pid, a.character!.dir, a.character!.framing ?? 'auto', Math.max(6, (a.character!.colors ?? 14) - 4))
+                        set(a.id, { character: { ...info, tagged: false } })
+                      } catch (e) {
+                        toast(e instanceof Error ? e.message : String(e), 'error')
+                      }
+                    }}
+                  >
+                    색 줄여 다시 변환
+                  </button>
+                )}
+              </div>
+            )}
             <div className="tiny faint">
               {a.meta.width ? `${a.meta.width}×${a.meta.height} · ` : ''}
               {a.meta.duration ? `${a.meta.duration.toFixed(1)}초 · ` : ''}

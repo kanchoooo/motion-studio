@@ -1,0 +1,189 @@
+// 소재 > AI로 만들기: one image straight from the designer's account, with the
+// prompt exactly as built (style + framing + what the designer typed). The tool's
+// own input schema decides the parameter names (model / aspect ratio / count /
+// negative prompt / reference images), so small service changes do not break it.
+// Results wait for the service's queue, are saved as source.png in a candidate
+// folder (.studio/generations/<id>/) and, for the flat character style, turned
+// into an SVG right away.
+import { mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { basename, extname, join } from 'node:path'
+import sharp from 'sharp'
+import { buildPrompt, FLAT_NEGATIVE, type GenCandidate, type GenRequest, type Ratio } from '@shared/assetGen'
+import { convertCharacter } from '../character/convert'
+import { newId, nowIso, readJson, writeJson } from '../util'
+import { failIfError, payload } from './catalog'
+import { callTool, listTools, type ToolResult } from './connect'
+import { saveResultMedia } from './media'
+
+type Schema = { type?: string; properties?: Record<string, Schema>; enum?: unknown[]; description?: string; items?: Schema }
+
+const GENERATE_TOOL: Record<GenRequest['provider'], RegExp> = { magnific: /^images?_generate$/, higgsfield: /^generate_image$/ }
+const genDir = (projectDir: string) => join(projectDir, '.studio', 'generations')
+const listFile = (projectDir: string) => join(genDir(projectDir), 'candidates.json')
+
+export const listCandidates = (projectDir: string) => readJson<GenCandidate[]>(listFile(projectDir), [])
+export const writeCandidates = (projectDir: string, list: GenCandidate[]) => writeJson(listFile(projectDir), list)
+const saveList = writeCandidates
+
+const keyOf = (props: Record<string, Schema>, re: RegExp, not?: RegExp) => Object.keys(props).find((k) => re.test(k) && !not?.test(k))
+
+/** an aspect-ratio value the schema accepts: "3:4", or the nearest enum entry ("traditional_3_4", …) */
+export function pickRatio(s: Schema | undefined, ratio: Ratio): string {
+  const [w, h] = ratio.split(':').map(Number)
+  const want = w / h
+  const options = (s?.enum ?? []).filter((x): x is string => typeof x === 'string')
+  if (!options.length) return ratio
+  let best = options[0]
+  let gap = Infinity
+  for (const o of options) {
+    const n = o.match(/(\d+(?:\.\d+)?)\D+(\d+(?:\.\d+)?)/)
+    if (!n) continue
+    const g = Math.abs(Math.log(+n[1] / +n[2] / want))
+    if (g < gap) {
+      gap = g
+      best = o
+    }
+  }
+  return best
+}
+
+/** creation / job ids in a queued result */
+function queued(v: unknown, out: string[] = []): string[] {
+  if (Array.isArray(v)) v.forEach((x) => queued(x, out))
+  else if (v && typeof v === 'object')
+    for (const [k, x] of Object.entries(v)) {
+      if (/^(identifiers?|creationIdentifier|job_?ids?|job_?set_?id|request_?id|task_?id)$/i.test(k)) (Array.isArray(x) ? x : [x]).forEach((i) => (typeof i === 'string' || typeof i === 'number') && !out.includes(String(i)) && out.push(String(i)))
+      else queued(x, out)
+    }
+  return out
+}
+
+const still = (r: ToolResult) => /in[_ -]?progress|queued|pending|processing|running|poll_after|not[_ ]ready/i.test(JSON.stringify(payload(r)) ?? '')
+
+/** waits for a queued generation and returns the result that holds its files */
+async function waitFor(provider: GenRequest['provider'], ids: string[]): Promise<ToolResult | null> {
+  for (let i = 0; i < 12; i++) {
+    if (provider === 'magnific') {
+      const w = await callTool('magnific', 'creations_wait', { identifiers: ids, timeoutSeconds: 25 }, 60_000)
+      failIfError(w)
+      if (still(w)) continue
+      const got = await callTool('magnific', 'creations_get', { identifiers: ids }, 60_000)
+      failIfError(got)
+      return got
+    }
+    const w = await callTool('higgsfield', 'jobs_wait', { jobs: ids }, 120_000)
+    failIfError(w)
+    if (!still(w)) return w
+  }
+  return null
+}
+
+/** reference images in the form the tool takes: base64 when its description says so, else an uploaded URL */
+async function referenceValues(provider: GenRequest['provider'], files: string[], prop: Schema, tools: { name: string; inputSchema?: unknown }[]): Promise<string[]> {
+  const base64 = /base64/i.test(prop.description ?? '') || /base64/i.test(prop.items?.description ?? '')
+  if (base64) return files.map((f) => readFileSync(f).toString('base64'))
+  const upload = tools.find((t) => /upload/i.test(t.name))
+  const props = (upload?.inputSchema as Schema | undefined)?.properties ?? {}
+  const dataKey = keyOf(props, /base64|data|content|file/i, /name|type|mime/i)
+  if (!upload || !dataKey) throw new Error('고른 모델에는 참고 이미지를 함께 보낼 수 없어요. 참고 소재를 빼거나, 편집 탭 대화에서 Claude에게 부탁해 주세요.')
+  const out: string[] = []
+  for (const f of files) {
+    const args: Record<string, unknown> = { [dataKey]: readFileSync(f).toString('base64') }
+    const nameKey = keyOf(props, /name/i)
+    const mimeKey = keyOf(props, /mime|content_?type/i)
+    if (nameKey) args[nameKey] = basename(f)
+    if (mimeKey) args[mimeKey] = /\.png$/i.test(f) ? 'image/png' : /\.webp$/i.test(f) ? 'image/webp' : 'image/jpeg'
+    const r = await callTool(provider, upload.name, args, 120_000)
+    failIfError(r)
+    const url = JSON.stringify(payload(r) ?? '').match(/https:\/\/[^"\\\s]+/)?.[0]
+    if (!url) throw new Error('참고 이미지를 서비스에 올리지 못했어요.')
+    out.push(url)
+  }
+  return out
+}
+
+/** the tool arguments for one image, following the tool's own schema */
+async function argumentsFor(req: GenRequest, sent: string, references: string[]): Promise<{ tool: string; args: Record<string, unknown> }> {
+  const tools = (await listTools(req.provider)) as { name: string; inputSchema?: unknown }[]
+  const tool = tools.find((t) => GENERATE_TOOL[req.provider].test(t.name))
+  if (!tool) throw new Error('이 서비스에서 이미지 만들기 도구를 찾지 못했어요. AI 연결을 다시 확인해 주세요.')
+  const top = ((tool.inputSchema as Schema | undefined)?.properties ?? {}) as Record<string, Schema>
+  // Higgsfield nests everything under "params"
+  const nested = top.params && (top.params.type === 'object' || top.params.properties) ? 'params' : null
+  const props = (nested ? top.params.properties : top) ?? {}
+  const free = !Object.keys(props).length
+  const a: Record<string, unknown> = {}
+  a[keyOf(props, /^prompt$/i) ?? keyOf(props, /prompt/i, /negative/i) ?? 'prompt'] = sent
+  const modelKey = keyOf(props, /^(model|mode|slug|model_?id)$/i) ?? (free ? (req.provider === 'magnific' ? 'mode' : 'model') : undefined)
+  if (req.model && modelKey) a[modelKey] = req.model
+  const ratioKey = keyOf(props, /aspect/i) ?? (free ? (req.provider === 'magnific' ? 'aspectRatio' : 'aspect_ratio') : undefined)
+  if (ratioKey) a[ratioKey] = pickRatio(props[ratioKey], req.ratio)
+  const countKey = keyOf(props, /^(count|num_?images|n|batch_?size|number_?of_?images)$/i)
+  if (countKey) a[countKey] = 1
+  const negKey = keyOf(props, /negative/i)
+  if (negKey && req.style === 'flat-character') a[negKey] = FLAT_NEGATIVE
+  if (references.length) {
+    const refKey = keyOf(props, /reference|ref_?images?|input_?images?|image_?urls?|init_?image|source_?image|^images?$/i, /prompt|negative/i)
+    if (!refKey) throw new Error('고른 모델에는 참고 이미지를 함께 보낼 수 없어요. 참고 소재를 빼거나 다른 모델을 골라 주세요.')
+    const values = await referenceValues(req.provider, references, props[refKey], tools)
+    a[refKey] = props[refKey].type === 'array' ? values : values[0]
+  }
+  return { tool: tool.name, args: nested ? { params: a } : a }
+}
+
+/** makes one image; with the flat character style it is converted to SVG before it is shown */
+export async function generateCandidate(projectDir: string, req: GenRequest): Promise<GenCandidate> {
+  const id = newId()
+  const folder = join(genDir(projectDir), id)
+  mkdirSync(folder, { recursive: true })
+  try {
+    const sent = buildPrompt(req.style, req.framing, req.lang, req.prompt)
+    const refs = req.references.map((r) => join(projectDir, 'composition', r))
+    const { tool, args } = await argumentsFor(req, sent, refs)
+    let r = await callTool(req.provider, tool, args, 300_000)
+    failIfError(r)
+    let saved = await saveResultMedia(folder, 'gen', r, 1)
+    if (!saved.length) {
+      const ids = queued(payload(r))
+      const done = ids.length ? await waitFor(req.provider, ids.slice(0, 4)) : null
+      if (done) {
+        r = done
+        saved = await saveResultMedia(folder, 'gen', r, 1)
+      }
+    }
+    const img = saved.find((m) => m.kind === 'image')
+    if (!img) throw new Error('이미지를 받지 못했어요. 잠시 뒤 다시 시도해 주세요.')
+    // one format for the next steps (SVG conversion reads it, Claude looks at it)
+    const raw = join(folder, img.file)
+    await sharp(raw).rotate().png().toFile(join(folder, 'source.png'))
+    rmSync(join(folder, 'assets'), { recursive: true, force: true })
+    const candidate: GenCandidate = { id, at: nowIso(), file: `.studio/generations/${id}/source.png`, request: req, sent }
+    if (req.style === 'flat-character') candidate.character = await convertCharacter(projectDir, folder, req.framing)
+    saveList(projectDir, [candidate, ...listCandidates(projectDir)].slice(0, 60))
+    return candidate
+  } catch (e) {
+    rmSync(folder, { recursive: true, force: true })
+    throw e
+  }
+}
+
+/** converts a candidate or asset folder again (e.g. with fewer colours) */
+export async function reconvert(projectDir: string, dirRel: string, framing: GenRequest['framing'], colors: number) {
+  return convertCharacter(projectDir, join(projectDir, dirRel), framing, colors)
+}
+
+export function discardCandidate(projectDir: string, id: string) {
+  saveList(
+    projectDir,
+    listCandidates(projectDir).filter((c) => c.id !== id),
+  )
+  rmSync(join(genDir(projectDir), id.replace(/[^\w-]/g, '')), { recursive: true, force: true })
+}
+
+/** the composition folder a kept candidate moves to (assets/gen-<id>/) */
+export function candidateTarget(id: string) {
+  return `assets/gen-${id.replace(/[^\w-]/g, '').slice(0, 10)}`
+}
+
+export const candidateFolder = (projectDir: string, id: string) => join(genDir(projectDir), id.replace(/[^\w-]/g, ''))
+export const isImageFile = (f: string) => /\.(png|jpe?g|webp|gif|avif)$/i.test(extname(f))

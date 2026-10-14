@@ -135,4 +135,6 @@ export interface AudioCandidateList {
 export interface AiSettings {
   /** add Artlist to Claude sessions (sign-in happens in the Claude terminal) */
   artlist: boolean
+  /** prompt language the designer chose per image model ("provider:model") */
+  promptLangs?: Record<string, 'en' | 'zh' | 'ko'>
 }

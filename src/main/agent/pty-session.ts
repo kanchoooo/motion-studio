@@ -95,7 +95,23 @@ export class SessionManager {
         writeText(join(projects.pathOf(projectId), '.studio', 'audio-candidates.json'), JSON.stringify(list))
         this.emit({ type: 'audio-candidates', projectId, list })
       },
+      onGenerated: (projectId, files, label) => this.showGenerated(projectId, files, label),
     })
+  }
+
+  /** a card in the chat for media Claude generated (the designer keeps, discards or applies it) */
+  showGenerated(projectId: string, files: { file: string; kind: string }[], label?: string) {
+    const l = this.live.get(projectId)
+    if (l) this.addApp(l, { id: newId(), at: nowIso(), role: 'generated', files, label, status: 'pending' })
+  }
+
+  /** the designer kept, discarded or applied what Claude generated */
+  resolveGenerated(projectId: string, itemId: string, status: 'kept' | 'discarded' | 'applied', note?: string) {
+    const l = this.live.get(projectId)
+    const it = l?.appItems.find((x) => x.id === itemId)
+    if (!l || !it || it.role !== 'generated') throw new Error('이 소재 카드를 찾을 수 없어요.')
+    this.updateApp(l, { ...it, status, note })
+    return it
   }
 
   state(projectId: string): SessionState {

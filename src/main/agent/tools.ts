@@ -1,6 +1,6 @@
 // Studio tools for Claude, served over local HTTP MCP (one endpoint per project).
 import { execFile } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
@@ -22,6 +22,7 @@ import * as history from '../history'
 import { snapshot } from '../hyperframes'
 import { bin } from '../paths'
 import * as projects from '../projects'
+import { characterParts, embedCharacter, readCharacter, tagCharacter } from '../character/convert'
 
 const run = promisify(execFile)
 const text = (t: string) => ({ content: [{ type: 'text' as const, text: t }] })
@@ -29,6 +30,8 @@ const text = (t: string) => ({ content: [{ type: 'text' as const, text: t }] })
 export interface ToolHooks {
   onStoryboard(projectId: string, sb: Storyboard): void
   onAudioCandidates(projectId: string, list: AudioCandidateList): void
+  /** images / video clips Claude generated: shown to the designer to keep or discard */
+  onGenerated(projectId: string, files: { file: string; kind: string }[], label?: string): void
 }
 
 const PROVIDER = z.enum(['higgsfield', 'magnific'])
@@ -91,6 +94,16 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
               note: a.note,
               size: a.meta.width ? `${a.meta.width}x${a.meta.height}` : undefined,
               duration: a.meta.duration,
+              generated: a.generated ? { prompt: a.generated.prompt, style: a.generated.style } : undefined,
+              character: a.character
+                ? {
+                    folder: a.character.dir.replace(/^composition\//, ''),
+                    svg: a.character.status === 'done',
+                    shapes: a.character.shapes,
+                    tagged: !!a.character.tagged,
+                    note: 'An SVG character that can act part by part: load the skill svg-character-motion and use character_info / character_tag / character_embed.',
+                  }
+                : undefined,
             })),
             sections: SECTION_LABELS,
           },
@@ -390,6 +403,8 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
       if (save_media && !r.isError) {
         saved = await saveResultMedia(join(dir(), 'composition'), provider, r)
         recordGenerated(dir(), saved.map((m) => ({ file: m.file, kind: m.kind, provider, tool, label: label ?? (typeof args.prompt === 'string' ? args.prompt : typeof args.text === 'string' ? args.text : undefined) })))
+        const visual = saved.filter((m) => m.kind === 'image' || m.kind === 'video')
+        if (visual.length) hooks.onGenerated(projectId, visual.map((m) => ({ file: m.file, kind: m.kind })), label)
       }
       const out = [
         r.isError ? '[error] 서비스가 오류를 돌려줬어요.' : '',
@@ -410,6 +425,72 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
       const m = await importUrl(join(dir(), 'composition'), url, source.replace(/[^a-z0-9-]/gi, '').slice(0, 20) || 'import')
       recordGenerated(dir(), [{ file: m.file, kind: m.kind, provider: source, tool: 'import', label }])
       return text(`Saved: ${m.file} (${m.kind}, ${Math.round(m.bytes / 1024)}KB)`)
+    },
+  )
+
+  // ---- SVG characters (assets made with the flat character style) ----
+  /** a character asset folder inside composition/assets (never outside it) */
+  const characterFolder = (asset: string) => {
+    const rel = asset.replace(/^composition\//, '').replace(/\/(source\.png|vector\.svg|tagged\.svg)$/, '').replace(/\/+$/, '')
+    if (!/^assets\/[\w.-]+$/.test(rel)) throw new Error('asset must be a character folder such as assets/gen-ab12cd34')
+    return { rel, abs: join(dir(), 'composition', rel) }
+  }
+
+  server.registerTool(
+    'character_info',
+    {
+      description:
+        'Files and state of an SVG character asset (folder from get_brief, e.g. assets/gen-ab12cd34): Read source.png and vector_shapes.png as images to compare them, vector_shapes.json for each shape\'s colour and bbox. After tagging, also lists the parts of tagged.svg (ids, labels, pivots) for writing motion.',
+      inputSchema: { asset: z.string() },
+    },
+    async ({ asset }) => {
+      const f = characterFolder(asset)
+      const info = readCharacter(f.abs)
+      const files = ['source.png', 'vector.svg', 'vector_shapes.json', 'vector_shapes.png', 'tags.json', 'tagged.svg'].filter((n) => existsSync(join(f.abs, n)))
+      return text(
+        JSON.stringify(
+          {
+            folder: f.rel,
+            read: files.map((n) => `composition/${f.rel}/${n}`),
+            conversion: info ? { shapes: info.shapes, differencePct: info.badPct, pass: info.pass, problems: info.reasons } : 'not converted',
+            parts: characterParts(f.abs),
+          },
+          null,
+          1,
+        ),
+      )
+    },
+  )
+
+  server.registerTool(
+    'character_tag',
+    {
+      description:
+        'Apply part tags (tags.json format of the svg-character-motion skill: parts → children with shapes, clip, pivot, label; AI fill shapes as {svg}) to the character\'s vector.svg. Writes tags.json and tagged.svg in the asset folder and returns the report and how many pixels differ from the untagged SVG at rest (aim for ≤ 0.1%; above that, fix the tags and call again).',
+      inputSchema: { asset: z.string(), tags: z.object({ parts: z.array(z.unknown()) }).passthrough() },
+    },
+    async ({ asset, tags }) => {
+      const f = characterFolder(asset)
+      const r = await tagCharacter(f.abs, tags)
+      // the brief remembers that this character is tagged
+      const { brief } = st()
+      const mine = (x: (typeof brief.assets)[number]) => x.character?.dir === `composition/${f.rel}`
+      if (brief.assets.some(mine)) await projects.saveBrief(projectId, { ...brief, assets: brief.assets.map((x) => (mine(x) && x.character ? { ...x, character: { ...x.character, tagged: true } } : x)) })
+      return text(JSON.stringify({ report: r.report, differencePct: r.diffPct, ok: r.diffPct <= 0.1, parts: characterParts(f.abs) }, null, 1))
+    },
+  )
+
+  server.registerTool(
+    'character_embed',
+    {
+      description:
+        'Put the tagged character SVG inline into composition/index.html, inside the element with this data-ms-id (create that empty host element first, e.g. <div data-ms-id="char" data-ms-type="group" data-ms-label="캐릭터" style="position:absolute;…">). Calling it again replaces what it inserted before. extra_defs / extra_svg add expression shapes (eyelids, O mouth, tears …) inside <defs> / on top of the drawing; view_box widens the canvas (e.g. for 16:9). The host\'s size decides the size on screen.',
+      inputSchema: { asset: z.string(), element_id: z.string(), extra_defs: z.string().optional(), extra_svg: z.string().optional(), view_box: z.string().optional() },
+    },
+    async ({ asset, element_id, extra_defs, extra_svg, view_box }) => {
+      const f = characterFolder(asset)
+      const r = embedCharacter(dir(), f.abs, element_id, { extraDefs: extra_defs, extraSvg: extra_svg, viewBox: view_box })
+      return text(`Inserted the character (${Math.round(r.bytes / 1024)}KB) into the element ${element_id}. Its parts keep their ids (#head, #eye-l …). Add <script src="ms/svgrig.js"></script> after ms/runtime.js and drive the parts with SvgRig (see the skill).`)
     },
   )
 

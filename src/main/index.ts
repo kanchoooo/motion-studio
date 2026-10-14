@@ -73,7 +73,12 @@ app.whenReady().then(async () => {
   session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false))
   const sessions = registerIpc(() => win)
   // automated tests (isolated profile) can ask why the app would not quit
-  if (process.env.MS_USER_DATA) (globalThis as Record<string, unknown>).__msQuitState = () => ({ exporting: runningExports(), busy: sessions.busyProjects() })
+  if (process.env.MS_USER_DATA) {
+    const g = globalThis as Record<string, unknown>
+    g.__msQuitState = () => ({ exporting: runningExports(), busy: sessions.busyProjects() })
+    // the review card for generated media, without spending AI credits
+    g.__msShowGenerated = (projectId: string, files: { file: string; kind: string }[], label?: string) => sessions.showGenerated(projectId, files, label)
+  }
   createWindow(previewBase)
   let confirmedQuit = false
   app.on('before-quit', (e) => {

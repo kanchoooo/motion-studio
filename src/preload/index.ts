@@ -67,6 +67,7 @@ const api: StudioApi & { internal: { previewBase: string } } = {
     setPermission: (id, mode) => invoke('agent:setPermission', id, mode),
     permissions: (id) => invoke('agent:permissions', id),
     answerPermission: (id, askId, answer) => invoke('agent:answerPermission', id, askId, answer),
+    resolveGenerated: (id, itemId, action, note) => invoke('agent:resolveGenerated', id, itemId, action, note),
     onEvent: (cb) => subscribe<AgentEvent>('agent:event', cb),
   },
   terminal: {
@@ -130,6 +131,12 @@ const api: StudioApi & { internal: { previewBase: string } } = {
     useAudioCandidate: (id, item) => invoke('ai:useAudioCandidate', id, item),
     artlistLogin: () => invoke('ai:artlistLogin'),
     artlistLoginDone: () => invoke('ai:artlistLoginDone'),
+    generate: (id, req) => invoke('ai:generate', id, req),
+    candidates: (id) => invoke('ai:candidates', id),
+    discardCandidate: (id, cid) => invoke('ai:discardCandidate', id, cid),
+    keepCandidate: (id, cid) => invoke('ai:keepCandidate', id, cid),
+    reconvert: (id, dir, framing, colors) => invoke('ai:reconvert', id, dir, framing, colors),
+    askHelper: (sid, message, ctx) => invoke('ai:askHelper', sid, message, ctx),
   },
   internal: {
     previewBase: (process.argv.find((a) => a.startsWith('--ms-preview-base=')) ?? '').split('=')[1] ?? '',

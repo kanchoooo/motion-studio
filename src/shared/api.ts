@@ -1,4 +1,5 @@
 import type { Asset, BrandPreset, Brief, OutputFormat, OutputQuality, ReferenceItem } from './brief'
+import type { CharacterInfo, Framing, GenCandidate, GenRequest } from './assetGen'
 import type { AiAccountInfo, AiLoginEvent, AiModelInfo, AiModelList, AiSettings, AiVoiceInfo, AudioCandidate, AudioCandidateList, LoginBrowser, LoginWindow } from './ai'
 import type { Overrides } from './overrides'
 import type { FeedbackMark, HistoryEntry, ProjectState, ProjectSummary, RenderRecord } from './project'
@@ -31,6 +32,8 @@ export type ChatItem =
   | { id: string; at: string; role: 'storyboard'; storyboard: Storyboard; status: 'pending' | 'approved' | 'superseded' }
   | { id: string; at: string; role: 'error'; text: string; detail?: string }
   | { id: string; at: string; role: 'notice'; text: string }
+  /** images / video clips Claude generated, waiting for the designer: keep in assets, discard, or apply */
+  | { id: string; at: string; role: 'generated'; files: { file: string; kind: string }[]; label?: string; status: 'pending' | 'kept' | 'discarded' | 'applied'; note?: string }
 
 export interface UsageInfo {
   status: 'allowed' | 'allowed_warning' | 'rejected' | 'unknown'
@@ -296,6 +299,11 @@ export interface StudioApi {
     permissions(projectId: string): Promise<PermissionAsk[]>
     /** always: allow this kind of action for the rest of the conversation */
     answerPermission(projectId: string, askId: string, answer: 'allow' | 'always' | 'deny'): Promise<void>
+    /**
+     * what Claude generated: 'keep' adds it to the brief's assets, 'discard' moves the
+     * files to the trash, 'applied' just marks the card (the chat message tells Claude where)
+     */
+    resolveGenerated(projectId: string, itemId: string, action: 'keep' | 'discard' | 'applied', note?: string): Promise<void>
     onEvent(cb: (e: AgentEvent) => void): () => void
   }
   terminal: {
@@ -373,5 +381,29 @@ export interface StudioApi {
     artlistLogin(): Promise<SessionState>
     /** closes that terminal; idle project sessions reconnect so they pick up the sign-in */
     artlistLoginDone(): Promise<void>
+    /** 소재 > AI로 만들기: one image (characters are converted to SVG before it returns) */
+    generate(projectId: string, req: GenRequest): Promise<GenCandidate>
+    candidates(projectId: string): Promise<GenCandidate[]>
+    discardCandidate(projectId: string, candidateId: string): Promise<GenCandidate[]>
+    /** the candidate's files move into composition/assets/gen-…/; the returned asset is for the brief */
+    keepCandidate(projectId: string, candidateId: string): Promise<Asset>
+    /** converts a character image again (dir: project-relative folder), e.g. with fewer colours */
+    reconvert(projectId: string, dir: string, framing: Framing, colors: number): Promise<CharacterInfo>
+    /** one turn of the prompt helper chat (latest Haiku); sessionId: a UUID per chat */
+    askHelper(sessionId: string, message: string, ctx: HelperContext): Promise<HelperReply>
   }
+}
+
+export interface HelperContext {
+  model: string
+  lang: string
+  style: string
+  framing: string
+  prompt: string
+}
+
+export interface HelperReply {
+  text: string
+  prompt?: string
+  memo?: string
 }

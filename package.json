@@ -30,6 +30,7 @@
     "@anthropic-ai/claude-agent-sdk": "0.3.296",
     "@anthropic-ai/sdk": "0.133.0",
     "@modelcontextprotocol/sdk": "1.32.1",
+    "@visioncortex/vtracer": "1.0.0-alpha.4",
     "ag-psd": "31.0.3",
     "electron-updater": "6.8.9",
     "fontkit": "2.0.4",
@@ -37,6 +38,7 @@
     "hyperframes": "0.8.151",
     "isomorphic-git": "1.44.2",
     "node-pty": "1.1.0",
+    "sharp": "0.35.5",
     "zod": "4.6.7"
   },
   "devDependencies": {

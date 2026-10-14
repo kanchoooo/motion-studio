@@ -291,6 +291,91 @@ const EFFORTS: { value: AgentEffort; label: string }[] = [
   { value: 'max', label: '최대' },
 ]
 
+/** images / clips Claude generated: the designer reviews them before they go into the video */
+function GeneratedCard({ item }: { item: Extract<ChatItem, { role: 'generated' }> }) {
+  const { project, toast } = useStore()
+  const pid = project!.meta.id
+  const { selected, elements } = useEditor()
+  const [base, setBase] = useState('')
+  const [menu, setMenu] = useState(false)
+  const [busy, setBusy] = useState(false)
+  useEffect(() => {
+    void studio.projects.fileUrl(pid, 'composition/').then(setBase)
+  }, [pid])
+  const sel = elements.find((e) => e.id === selected)
+  const paths = item.files.map((f) => f.file).join(', ')
+  const act = async (action: 'keep' | 'discard' | 'applied', message?: string, note?: string) => {
+    setBusy(true)
+    setMenu(false)
+    try {
+      await studio.agent.resolveGenerated(pid, item.id, action, note)
+      if (message) await studio.agent.send({ projectId: pid, text: message })
+      if (action === 'keep') toast('브리프 소재에 넣었어요', 'success')
+    } catch (e) {
+      toast(errText(e), 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+  const STATUS = { kept: '소재함에 넣었어요', discarded: '버렸어요', applied: '적용을 요청했어요' } as const
+  return (
+    <div className="card fade-in" style={{ padding: 10, display: 'flex', flexDirection: 'column', gap: 8 }} data-testid="generated-card">
+      <div className="row small" style={{ gap: 6, fontWeight: 650 }}>
+        <ImagePlus size={14} color="var(--accent)" />
+        <span className="grow">Claude가 만든 소재{item.label ? ` · ${item.label}` : ''}</span>
+      </div>
+      <div className="row" style={{ gap: 6, flexWrap: 'wrap', opacity: item.status === 'discarded' ? 0.4 : 1 }}>
+        {base &&
+          item.files.map((f) =>
+            f.kind === 'video' ? (
+              <video key={f.file} src={base + f.file} muted loop autoPlay playsInline style={{ width: 150, borderRadius: 6, background: 'var(--canvas)' }} />
+            ) : (
+              <img key={f.file} src={base + f.file} style={{ width: 150, maxHeight: 150, objectFit: 'contain', borderRadius: 6, background: 'var(--canvas)' }} />
+            ),
+          )}
+      </div>
+      {item.status === 'pending' ? (
+        <div className="row" style={{ gap: 6, position: 'relative', flexWrap: 'wrap' }}>
+          <button className="btn sm primary" disabled={busy} onClick={() => setMenu(!menu)} data-testid="generated-apply">
+            적용 ▾
+          </button>
+          <button className="btn sm" disabled={busy} onClick={() => void act('keep')} title="브리프 소재에 넣어 두고 나중에 써요">
+            소재함에 추가
+          </button>
+          <div className="grow" />
+          <button className="btn sm ghost" disabled={busy} onClick={() => void act('discard')}>
+            버리기
+          </button>
+          {menu && (
+            <div className="card" style={{ position: 'absolute', left: 0, top: 32, zIndex: 5, padding: 4, boxShadow: 'var(--shadow)', display: 'flex', flexDirection: 'column', minWidth: 230 }}>
+              <button className="btn ghost sm" style={{ justifyContent: 'flex-start' }} onClick={() => void act('applied', `방금 만든 소재(${paths})를 영상에 알맞은 자리에 넣어 줘.`, 'Claude에게 맡김')}>
+                Claude에게 맡기기 (알맞은 자리에)
+              </button>
+              <button
+                className="btn ghost sm"
+                style={{ justifyContent: 'flex-start' }}
+                disabled={!sel}
+                title={sel ? undefined : '편집 화면에서 바꿀 요소를 먼저 골라 주세요'}
+                onClick={() => sel && void act('applied', `방금 만든 소재(${paths})로 '${sel.label}'(${sel.id}) 요소를 바꿔 줘.`, `${sel.label}에 적용`)}
+              >
+                고른 요소에 넣기{sel ? ` · ${sel.label}` : ' (요소를 먼저 골라 주세요)'}
+              </button>
+              <button className="btn ghost sm" style={{ justifyContent: 'flex-start' }} onClick={() => void act('applied', `방금 만든 소재(${paths})를 배경으로 써 줘.`, '배경으로')}>
+                배경으로 쓰기
+              </button>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="tiny muted">
+          {STATUS[item.status]}
+          {item.note ? ` · ${item.note}` : ''}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /** Claude waits for the designer: allow once, for the rest of the conversation, or refuse */
 function PermissionCard({ ask }: { ask: PermissionAsk }) {
   const { toast } = useStore()
@@ -503,6 +588,8 @@ function ChatRow({ item, count = 1 }: { item: ChatItem; count?: number }) {
       )
     case 'storyboard':
       return <StoryboardCard item={item} />
+    case 'generated':
+      return <GeneratedCard item={item} />
     case 'error':
       return (
         <div className="card fade-in" style={{ padding: 10, borderColor: 'var(--danger)', background: 'var(--danger-soft)' }}>

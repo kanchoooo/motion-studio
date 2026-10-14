@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { basename, extname, join } from 'node:path'
 import { app, shell } from 'electron'
 import { emptyBrief, normalizeBrief, OUTPUT_PRESETS, type Asset, type AssetKind, type Brief, type OutputPresetId } from '@shared/brief'
@@ -9,6 +9,8 @@ import { fontCss } from './fontcss'
 import { importPsd } from './psd'
 import * as history from './history'
 import { probeMedia } from './media'
+import { candidateFolder, candidateTarget, discardCandidate } from './ai/generate'
+import type { GenCandidate } from '@shared/assetGen'
 import { dataDir, projectsDir, runtimeFiles } from './paths'
 import { serveFolder } from './preview-server'
 import { compositionHasVideo, HYPERFRAMES_JSON, starterComposition } from './template'
@@ -107,6 +109,7 @@ function syncManagedFiles(dir: string, overrides: Overrides): void {
     if (!existsSync(dst) || !readFileSync(dst).equals(next)) writeText(dst, next.toString('utf8'))
   }
   copyIfChanged(runtimeFiles.msRuntime(), join(comp, 'ms', 'runtime.js'))
+  copyIfChanged(runtimeFiles.svgrig(), join(comp, 'ms', 'svgrig.js'))
   copyIfChanged(runtimeFiles.gsap(), join(comp, 'vendor', 'gsap.min.js'))
   writeText(join(comp, 'ms', 'overrides.js'), overridesToScript(overrides))
   refreshFontCss(dir, overrides)
@@ -315,6 +318,40 @@ export async function importAssets(projectId: string, sources: string[], opts: {
     })
   }
   return out
+}
+
+/**
+ * A generated image the designer keeps: its folder (image, and for characters the
+ * SVG files) moves into composition/assets/gen-<id>/. Returns the asset; the brief
+ * screen adds it with its own (debounced) save, so nothing it holds is overwritten.
+ */
+export async function keepCandidate(projectId: string, candidate: GenCandidate): Promise<Asset> {
+  const dir = pathOf(projectId)
+  const rel = candidateTarget(candidate.id)
+  const to = join(f.comp(dir), rel)
+  const from = candidateFolder(dir, candidate.id)
+  if (!existsSync(join(from, 'source.png'))) throw new Error('만든 이미지를 찾을 수 없어요. 다시 만들어 주세요.')
+  cpSync(from, to, { recursive: true })
+  const character = candidate.character ? { ...candidate.character, dir: `composition/${rel}` } : undefined
+  if (character) writeJson(join(to, 'character.json'), character)
+  const meta = await probeMedia(join(to, 'source.png'))
+  const r = candidate.request
+  const asset: Asset = {
+    id: newId(),
+    file: `${rel}/source.png`,
+    originalName: `AI · ${r.prompt.replace(/\s+/g, ' ').slice(0, 40) || '만든 이미지'}`,
+    kind: r.style === 'flat-character' ? 'person' : 'other',
+    required: false,
+    timing: { mode: 'any' },
+    position: 'any',
+    transform: 'free',
+    note: '',
+    meta: { ...meta, bytes: statSync(join(to, 'source.png')).size },
+    generated: { provider: r.provider, model: r.modelLabel ?? r.model, prompt: r.prompt, style: r.style, framing: r.framing },
+    character,
+  }
+  discardCandidate(dir, candidate.id)
+  return asset
 }
 
 /** disk use of a project by category (bytes) */

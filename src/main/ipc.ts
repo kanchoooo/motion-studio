@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron'
-import type { AgentEvent, ExportOptions, ExportProgress, SendMessageInput, AgentPermission } from '@shared/api'
+import type { AgentEvent, ExportOptions, ExportProgress, SendMessageInput, AgentPermission, HelperContext } from '@shared/api'
 import type { Brief } from '@shared/brief'
 import type { Overrides } from '@shared/overrides'
 import { hasAccess, unlock } from './access'
@@ -32,6 +32,9 @@ import { ttsSample } from './ai/tts'
 import { readJson } from './util'
 import { answerPermission, askingFor, setPermissionHooks, type PermissionAnswer } from './agent/permissions'
 import { projectForToken } from './agent/mcp-http'
+import { discardCandidate, generateCandidate, listCandidates, reconvert, writeCandidates } from './ai/generate'
+import { askHelper } from './ai/promptHelper'
+import type { Framing, GenRequest } from '@shared/assetGen'
 
 export function registerIpc(getWindow: () => BrowserWindow | null): SessionManager {
   const send = (channel: string, payload: unknown) => getWindow()?.webContents.send(channel, payload)
@@ -157,6 +160,20 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
     if (mode === 'all') for (const a of askingFor(id)) answerPermission(id, a.id, 'allow')
   })
   handle('agent:permissions', (id: string) => askingFor(id))
+  handle('agent:resolveGenerated', async (id: string, itemId: string, action: 'keep' | 'discard' | 'applied', note?: string) => {
+    const dir = projects.pathOf(id)
+    const item = agent.transcript(id).find((x) => x.id === itemId)
+    if (!item || item.role !== 'generated') throw new Error('이 소재 카드를 찾을 수 없어요.')
+    if (action === 'keep') {
+      const added = await projects.importAssets(id, item.files.map((f) => join(dir, 'composition', f.file)))
+      const st = projects.state(id)
+      await projects.saveBrief(id, { ...st.brief, assets: [...st.brief.assets, ...added.map((a) => ({ ...a, required: false, note: item.label ?? '' }))] })
+      agent.resolveGenerated(id, itemId, 'kept', note)
+    } else if (action === 'discard') {
+      for (const f of item.files) await shell.trashItem(join(dir, 'composition', f.file)).catch(() => {})
+      agent.resolveGenerated(id, itemId, 'discarded', note)
+    } else agent.resolveGenerated(id, itemId, 'applied', note)
+  })
   handle('agent:answerPermission', (id: string, askId: string, answer: PermissionAnswer) => answerPermission(id, askId, answer))
   setPermissionHooks({
     projectFor: projectForToken,
@@ -307,6 +324,28 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
     return next
   })
   handle('ai:generated', (id: string) => listGenerated(projects.pathOf(id)))
+  handle('ai:generate', (id: string, req: GenRequest) => generateCandidate(projects.pathOf(id), req))
+  handle('ai:candidates', (id: string) => listCandidates(projects.pathOf(id)))
+  handle('ai:discardCandidate', (id: string, cid: string) => {
+    discardCandidate(projects.pathOf(id), cid)
+    return listCandidates(projects.pathOf(id))
+  })
+  handle('ai:keepCandidate', (id: string, cid: string) => {
+    const c = listCandidates(projects.pathOf(id)).find((x) => x.id === cid)
+    if (!c) throw new Error('후보를 찾을 수 없어요. 다시 만들어 주세요.')
+    return projects.keepCandidate(id, c)
+  })
+  handle('ai:reconvert', async (id: string, dirRel: string, framing: Framing, colors: number) => {
+    const dir = projects.pathOf(id)
+    const info = await reconvert(dir, dirRel, framing, colors)
+    // a kept asset or a candidate: its record follows the new conversion
+    const list = listCandidates(dir)
+    const mine = (c: (typeof list)[number]) => c.character?.dir === dirRel || c.file === `${dirRel}/source.png`
+    if (list.some(mine)) writeCandidates(dir, list.map((c) => (mine(c) ? { ...c, character: info } : c)))
+    // (a kept asset's brief entry is updated by the brief screen)
+    return info
+  })
+  handle('ai:askHelper', (sid: string, message: string, ctx: HelperContext) => askHelper(sid, message, ctx))
   handle('ai:audioCandidates', (id: string) => readJson<AudioCandidateList | null>(join(projects.pathOf(id), '.studio', 'audio-candidates.json'), null))
   handle('ai:searchAudio', (id: string, input: { query: string; kind: 'bgm' | 'sfx' }) => {
     const what = input.kind === 'bgm' ? '배경음악' : '효과음'
