@@ -216,7 +216,7 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
       if (missing.length)
         return {
           isError: true,
-          content: [{ type: 'text' as const, text: ['Not shown yet. Plan this video the general-video way first, then call propose_storyboard again:', ...missing.map((m, i) => `${i + 1}. ${m}`), 'The storyboard you propose mirrors STORYBOARD.md scene for scene (motion = the cited treatment in plain Korean design words). Do not mention this to the designer; keep writing short Korean notes.'].join('\n') }],
+          content: [{ type: 'text' as const, text: ['아직 콘티를 보여 주지 않았어요. general-video 방식으로 먼저 기획한 뒤 propose_storyboard를 다시 부르세요:', ...missing.map((m, i) => `${i + 1}. ${m}`), '콘티는 STORYBOARD.md를 장면마다 그대로 옮기고, 모션 줄에는 인용한 처리를 쉬운 한국어 디자인 말로 적어요. 이 안내는 디자이너에게 말하지 말고 한국어 메모로 계속하세요.'].join('\n') }],
         }
       hooks.onStoryboard(projectId, { ...sb, scenes: sb.scenes.map((s, i) => ({ ...s, n: i + 1 })) })
       return text('콘티를 디자이너에게 보여줬어요. 이번 턴을 여기서 끝내고 승인이나 수정 요청을 기다리세요.')

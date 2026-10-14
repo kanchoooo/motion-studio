@@ -85,6 +85,15 @@ describe('stop gate', () => {
     writeFileSync(p.transcript, [...base, tool(27, 'Agent', { subagent_type: 'motion-studio-hyperframes:motion-reviewer', prompt: '…' }), tool(29, 'mcp__studio__check_video', {}, ok), result(30, ok, '통과: 문제가 없어요.')].join('\n'))
     expect(stopMissing(p.comp, p.transcript)).toBeNull()
   })
+  it('a reply that ends the turn in English is sent back to be written in Korean', () => {
+    const p = project(false)
+    touch(join(p.comp, 'index.html'), 0)
+    const say = (sec: number, text: string) => JSON.stringify({ type: 'assistant', timestamp: t(sec), message: { content: [{ type: 'text', text }], stop_reason: 'end_turn' } })
+    writeFileSync(p.transcript, [user(10, '어떤 장면이 제일 좋아?'), say(12, 'The opening hook is the strongest scene.')].join('\n'))
+    expect(stopMissing(p.comp, p.transcript)!.join(' ')).toMatch(/한국어/)
+    writeFileSync(p.transcript, [user(10, '어떤 장면이 제일 좋아?'), say(12, '첫 장면의 훅이 가장 강해요.')].join('\n'))
+    expect(stopMissing(p.comp, p.transcript)).toBeNull()
+  })
   it('a variation re-layout needs checks but no review', () => {
     const p = project(false)
     touch(join(p.comp, 'index.html'), 20)

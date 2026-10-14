@@ -151,10 +151,11 @@ async function handleStop(req: IncomingMessage, res: ServerResponse, path: strin
     if (!missing || n >= MAX_STOP_BLOCKS) return (pass(), true)
     stopBlocks.set(key, n + 1)
     hooks.stopBlocked?.(projectId)
+    // in Korean: Claude answers in the language of what it just read
     const reason = [
-      'Motion Studio quality gate — the video changed in this turn, so it is not finished yet:',
+      '모션스튜디오 품질 확인 — 아직 끝내지 마세요. 남은 일:',
       ...missing.map((x, i) => `${i + 1}. ${x}`),
-      'Keep working (short Korean notes between steps). Do not mention this gate to the designer; reply only when the work is really done.',
+      '이 안내는 디자이너에게 말하지 말고, 단계 사이 메모와 마지막 답변 모두 한국어로 쓰면서 계속하세요. 정말 끝났을 때만 답하세요.',
     ].join('\n')
     res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ decision: 'block', reason }))
   } catch {

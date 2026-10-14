@@ -125,12 +125,12 @@ export function storyboardMissing(compDir: string, transcript: string | null): s
   if (!isEmptyComposition(compDir)) return []
   const missing: string[] = []
   const reads = transcript ? readsIn(transcript) : []
-  if (!readOf(reads, 'hyperframes-creative', /^house-style\.md$/)) missing.push('Read hyperframes-creative/references/house-style.md')
-  if (!readOf(reads, 'hyperframes-creative', /^video-composition\.md$/)) missing.push('Read hyperframes-creative/references/video-composition.md')
-  if (!readOf(reads, 'hyperframes-creative', /^typography\.md$/)) missing.push('Read hyperframes-creative/references/typography.md (choose the font pairing from it)')
-  if (!readOf(reads, 'hyperframes-animation', /^(blueprints|rules)-index\.md$/)) missing.push('Read hyperframes-animation/blueprints-index.md and rules-index.md (every scene cites a blueprint id or rule ids from them)')
-  if (!existsSync(join(compDir, 'DESIGN.md'))) missing.push('Write composition/DESIGN.md: concept angle (one sentence), palette with hex, font pairing, focal element, edge anchors, background treatment, motion language')
-  if (!existsSync(join(compDir, 'STORYBOARD.md'))) missing.push('Write composition/STORYBOARD.md: one "## Frame N" block per scene with time range, beat, on-screen copy, the cited blueprint id / rule ids, transition in and out, sound marks')
+  if (!readOf(reads, 'hyperframes-creative', /^house-style\.md$/)) missing.push('hyperframes-creative/references/house-style.md 를 Read로 읽기')
+  if (!readOf(reads, 'hyperframes-creative', /^video-composition\.md$/)) missing.push('hyperframes-creative/references/video-composition.md 를 Read로 읽기')
+  if (!readOf(reads, 'hyperframes-creative', /^typography\.md$/)) missing.push('hyperframes-creative/references/typography.md 를 Read로 읽고 서체 짝을 거기서 고르기')
+  if (!readOf(reads, 'hyperframes-animation', /^(blueprints|rules)-index\.md$/)) missing.push('hyperframes-animation/blueprints-index.md 와 rules-index.md 를 Read로 읽기 (장면마다 거기 있는 blueprint id나 rule id를 인용)')
+  if (!existsSync(join(compDir, 'DESIGN.md'))) missing.push('composition/DESIGN.md 쓰기: 콘셉트 한 문장, 팔레트(hex), 서체 짝, 주인공 요소, 가장자리 앵커, 배경 처리, 모션 언어')
+  if (!existsSync(join(compDir, 'STORYBOARD.md'))) missing.push('composition/STORYBOARD.md 쓰기: 장면마다 "## Frame N" 블록(시간, 비트, 화면 문구, 인용한 blueprint id·rule id, 들어오고 나가는 전환, 소리 표시)')
   return missing
 }
 
@@ -139,7 +139,7 @@ export function buildWriteMissing(compDir: string, transcript: string | null): s
   if (!isEmptyComposition(compDir) || !existsSync(join(compDir, 'STORYBOARD.md'))) return null
   const reads = transcript ? readsIn(transcript) : []
   const recipe = reads.some((p) => /[\\/]hyperframes-animation[\\/](blueprints|rules)[\\/][^\\/]+\.md$/.test(p))
-  return recipe ? null : 'Before writing the composition, Read the full body of every blueprint and rule your STORYBOARD.md cites (hyperframes-animation/blueprints/<id>.md, rules/<id>.md) and build each scene from it — general-video §5.4: "read the full recipe body before writing motion". Then write again.'
+  return recipe ? null : '영상 파일을 쓰기 전에 STORYBOARD.md가 인용한 모든 blueprint·rule의 본문(hyperframes-animation/blueprints/<id>.md, rules/<id>.md)을 Read로 읽고 장면마다 그대로 따라 만드세요 (general-video §5.4: 모션을 쓰기 전에 레시피 본문 전체를 읽는다). 그다음 다시 쓰세요.'
 }
 
 /** composition files (html / css / js) changed after `since` (app-managed folders excluded) */
@@ -191,8 +191,13 @@ export function stopMissing(compDir: string, transcript: string): string[] | nul
       /* keep the line */
     }
   }
+  // the designer reads Korean: the reply that ends the turn must be Korean
+  const finalText = [...main].reverse().find((r) => r.type === 'assistant' && Array.isArray(r.message?.content) && r.message!.content.some((b) => b?.type === 'text' && b.text?.trim()))
+  const lastWords = finalText && Array.isArray(finalText.message?.content) ? finalText.message!.content.filter((b) => b?.type === 'text').map((b) => b.text ?? '').join('\n') : ''
+  const english = !!lastWords.trim() && (finalText?.timestamp ? Date.parse(finalText.timestamp) : 0) >= start.at && !/[\uac00-\ud7a3]/.test(lastWords)
+  const KOREAN = '방금 마지막 답변이 한국어가 아니었어요. 같은 내용을 자연스러운 한국어로 다시 써서 답하세요(디자이너는 한국어로 읽어요). 앞으로 작업 중 메모도 한국어로만 쓰세요.'
   const changes = changedSince(compDir, start.at)
-  if (!changes.length) return null
+  if (!changes.length) return english ? [KOREAN] : null
   const last = Math.max(...changes)
   const first = Math.min(...changes)
   const uses = sessionFiles(transcript)
@@ -201,11 +206,11 @@ export function stopMissing(compDir: string, transcript: string): string[] | nul
   const after = uses.filter((u) => u.at > last - 500)
   const missing: string[] = []
   const checked = after.some((u) => (u.name === 'Bash' && /hyperframes\s+(check|lint)\b/.test(String(u.input.command ?? ''))) || /check_video$/.test(u.name))
-  if (!checked) missing.push('Run `cd composition && hyperframes check` (and check_video) after your last change and fix what it reports.')
+  if (!checked) missing.push('마지막으로 고친 뒤에 `cd composition && hyperframes check`(와 check_video)를 돌리고 나온 문제를 고치세요.')
   const looked = after.some((u) => (u.name === 'Read' && /\.(png|jpe?g|webp)$/i.test(String(u.input.file_path ?? ''))) || /look_at_frames$/.test(u.name))
-  if (!looked) missing.push('Look at the result after your last change: `hyperframes snapshot --at <each scene\'s key moments>` and Read the contact sheet, or look_at_frames on the changed moments. Judge it as a senior motion designer and fix what looks wrong.')
+  if (!looked) missing.push('마지막으로 고친 뒤의 화면을 직접 보세요: `hyperframes snapshot --at <장면마다 핵심 순간>` 후 콘택트 시트를 Read로 열거나, 바뀐 순간을 look_at_frames로. 시니어 모션 디자이너의 눈으로 보고 어색한 곳을 고치세요.')
   const lastCheck = [...uses].reverse().find((u) => /check_video$/.test(u.name))
-  if (lastCheck?.result && /ms_not_edit_ready/.test(lastCheck.result)) missing.push('check_video still reports ms_not_edit_ready: finish 편집 준비 (layout_snapshot before → measure_layout → absolute placement → layout_snapshot after) and run check_video again.')
+  if (lastCheck?.result && /ms_not_edit_ready/.test(lastCheck.result)) missing.push('check_video에 아직 ms_not_edit_ready가 있어요: 편집 준비(layout_snapshot before → measure_layout → 절대 위치 → layout_snapshot after)를 끝내고 check_video를 다시 돌리세요.')
   const build = !LIGHT_ASK.test(start.text) && (BUILD_ASK.test(start.text) || uses.some((u) => u.name === 'Write' && /composition[\\/]index\.html$/.test(String(u.input.file_path ?? ''))))
   // waiting for a helper that runs in the background: its result comes back as a new turn, checked then
   const notified = new Set(main.flatMap((r) => (r.type === 'queue-operation' && typeof r.content === 'string' ? [...r.content.matchAll(/<task-id>([^<]+)<\/task-id>/g)].map((m) => m[1]) : [])))
@@ -213,9 +218,10 @@ export function stopMissing(compDir: string, transcript: string): string[] | nul
   if (waiting) return null
   if (build) {
     const lastCheckVideo = after.find((u) => /check_video$/.test(u.name))
-    if (!lastCheckVideo) missing.push('Run check_video after your last change (it also checks 편집 준비 and the brief) and fix what it reports.')
+    if (!lastCheckVideo) missing.push('마지막으로 고친 뒤에 check_video를 돌리고(편집 준비와 브리프도 확인해요) 나온 문제를 고치세요.')
     const reviewed = uses.some((u) => (u.name === 'Agent' || u.name === 'Task') && /motion-reviewer/.test(String(u.input.subagent_type ?? '')) && u.at > first - 500)
-    if (!reviewed) missing.push('This was a build: dispatch the independent reviewer — Agent tool, subagent_type "motion-studio-hyperframes:motion-reviewer" — with the brief summary, the scene list and the latest contact sheet paths. Apply every [꼭] item (and the [권장] items that clearly raise quality), then check and look again.')
+    if (!reviewed) missing.push('이번에는 영상을 새로 만들었어요: 독립 검수자(Agent 도구, subagent_type "motion-studio-hyperframes:motion-reviewer")에게 브리프 요약·장면 목록·최신 콘택트 시트 경로를 주고 검수를 맡기세요. [꼭] 항목은 모두, [권장] 항목은 품질이 확실히 오르는 것을 반영한 뒤 다시 검사하고 보세요.')
   }
+  if (english) missing.push(KOREAN)
   return missing.length ? missing : null
 }
