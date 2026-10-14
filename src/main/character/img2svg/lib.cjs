@@ -121,7 +121,7 @@ function kmeansLab(px, fg, n, K) {
   }
   const L = new Int16Array(n).fill(-1)
   for (const i of idx) { let b = 0, bd = Infinity; for (let k = 0; k < C.length; k++) { const d = d2(i, C[k]); if (d < bd) { bd = d; b = k } } L[i] = b }
-  return { L, K: C.length }
+  return { L, K: C.length, C }
 }
 
 function majority(L, w, h, K) {
@@ -139,7 +139,9 @@ function majority(L, w, h, K) {
   return out
 }
 
-function absorbSmall(L, w, h, minPx, thinRatio) {
+// lum: L* (lightness) of each colour. A thin strip much darker than everything around it is a drawn
+// feature (a closed mouth, a lash line), not an anti-aliasing band: it stays unless it is a speck.
+function absorbSmall(L, w, h, minPx, thinRatio, lum) {
   const n = w * h
   for (let pass = 0; pass < 4; pass++) {
     const comp = new Int32Array(n).fill(-1), q = new Int32Array(n)
@@ -167,7 +169,8 @@ function absorbSmall(L, w, h, minPx, thinRatio) {
           if (edge) per++
         }
         const thin = area / Math.max(1, per) < thinRatio   // 평균 폭이 약 3px 이하인 띠(경계 안티앨리어싱)
-        if ((area < minPx || thin) && nb.size) {
+        const feature = thin && area >= minPx && lum && [...nb.keys()].every(k => k < 0 || lum[k] - lum[lab] >= 25)
+        if ((area < minPx || (thin && !feature)) && nb.size) {
           let best = null, bc = -1
           for (const [k, c] of nb) if (k >= 0 && c > bc) { bc = c; best = k }
           if (best === null) best = -1
@@ -230,9 +233,9 @@ async function vectorize(input, opts = {}) {
   const bgMask = hasBg ? dilate(B.mask, w, h, chroma ? 2 : (B.alpha ? 0 : 1)) : B.mask
   const fg = new Uint8Array(n); for (let i = 0; i < n; i++) fg[i] = bgMask[i] ? 0 : 1
   // 2) 색 정리
-  let { L, K } = kmeansLab(px, fg, n, o.colors)
+  let { L, K, C } = kmeansLab(px, fg, n, o.colors)
   for (let s = 0; s < o.smooth; s++) L = majority(L, w, h, K)
-  L = absorbSmall(L, w, h, minPx, o.thin)
+  L = absorbSmall(L, w, h, minPx, o.thin, C.map(c => c[0]))
   for (let i = 0; i < n; i++) if (bgMask[i]) L[i] = -1
   // 라벨별 실제 색 = 원본 픽셀 채널별 중앙값
   const hist = new Uint32Array(K * 3 * 256), cnt = new Uint32Array(K)
@@ -353,4 +356,4 @@ async function previews(r) {
   return { compare, sheet, badPct: bad / n * 100 }
 }
 
-module.exports = { vectorize, previews }
+module.exports = { vectorize, previews, shapeMask }

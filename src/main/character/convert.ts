@@ -67,18 +67,27 @@ export async function convertCharacter(projectDir: string, folder: string, frami
 
 interface TagLib {
   applyTags(svg: string, tags: unknown): { svg: string; report: string[] }
+  prepareTags(svg: string, tags: unknown): Promise<{ tags: unknown; report: string[] }>
   diffRender(a: string, b: string, w: number, h: number): Promise<number>
+}
+interface CheckLib {
+  checkCharacter(svg: string): Promise<{ sheet: Buffer; groups: { id: string; angle: number; cracks: number[]; ghosts: number[]; ok: boolean }[]; eyes: { id: string; rig: boolean }[]; ok: boolean }>
 }
 let tagLib: TagLib | null = null
 const loadTagLib = () => (tagLib ??= createRequire(join(characterTools(), 'tag.cjs'))('./tag.cjs') as TagLib)
+let checkLib: CheckLib | null = null
+const loadCheckLib = () => (checkLib ??= createRequire(join(characterTools(), 'check.cjs'))('./check.cjs') as CheckLib)
 
 /** applies Claude's tags.json: tagged.svg + how much it differs from vector.svg at rest (≤ 0.1% expected) */
 export async function tagCharacter(folder: string, tags: unknown): Promise<{ report: string[]; diffPct: number }> {
   const vector = join(folder, 'vector.svg')
   if (!existsSync(vector)) throw new Error('이 소재에는 vector.svg가 없어요. 캐릭터 스타일로 만든 소재인지 확인하세요.')
   const svg = readFileSync(vector, 'utf8')
-  const { applyTags, diffRender } = loadTagLib()
-  const r = applyTags(svg, tags)
+  const { applyTags, prepareTags, diffRender } = loadTagLib()
+  // helpers that need the drawing (eye rigs) become plain tags first
+  const prep = await prepareTags(svg, tags)
+  const r = applyTags(svg, prep.tags)
+  r.report.push(...prep.report)
   const vb = svg.match(/viewBox="0 0 ([\d.]+) ([\d.]+)"/)
   const diffPct = vb ? await diffRender(svg, r.svg, Math.round(+vb[1]), Math.round(+vb[2])) : 0
   writeFileSync(join(folder, 'tags.json'), JSON.stringify(tags, null, 1))
@@ -88,16 +97,33 @@ export async function tagCharacter(folder: string, tags: unknown): Promise<{ rep
   return { report: r.report, diffPct: Number(diffPct.toFixed(3)) }
 }
 
+/**
+ * Turns every moving part to its largest angle (both ways) and looks for gaps and parts left
+ * behind at the joints, and whether the eyes use the eye rig. Writes check_sheet.png (Claude
+ * Reads it) and returns the numbers.
+ */
+export async function checkCharacterFolder(folder: string): Promise<{ sheet: string; ok: boolean; groups: { id: string; angle: number; cracks: number[]; ghosts: number[]; ok: boolean }[]; eyes: { id: string; rig: boolean }[] }> {
+  const f = join(folder, 'tagged.svg')
+  if (!existsSync(f)) throw new Error('tagged.svg가 없어요. 먼저 character_tag로 태그를 적용하세요.')
+  const r = await loadCheckLib().checkCharacter(readFileSync(f, 'utf8'))
+  writeFileSync(join(folder, 'check_sheet.png'), r.sheet)
+  const out = { sheet: 'check_sheet.png', ok: r.ok, groups: r.groups, eyes: r.eyes }
+  writeJson(join(folder, 'check.json'), out)
+  return out
+}
+
 /** the part tree of tagged.svg without path data: ids, labels, pivots (for writing motion) */
-export function characterParts(folder: string): { id: string; part: string; label?: string; pivot?: string; depth: number }[] {
+export function characterParts(folder: string): { id: string; part: string; label?: string; pivot?: string; depth: number; maxRot?: number; eye?: string }[] {
   const f = join(folder, 'tagged.svg')
   if (!existsSync(f)) return []
   const svg = readFileSync(f, 'utf8')
-  const out: { id: string; part: string; label?: string; pivot?: string; depth: number }[] = []
+  const out: { id: string; part: string; label?: string; pivot?: string; depth: number; maxRot?: number; eye?: string }[] = []
   for (const m of svg.matchAll(/<g\b([^>]*\bdata-part="([^"]+)"[^>]*)>/g)) {
     const attrs = m[1]
     const id = attrs.match(/\bid="([^"]+)"/)?.[1] ?? ''
-    out.push({ id, part: m[2], label: attrs.match(/data-label="([^"]*)"/)?.[1], pivot: attrs.match(/data-pivot="([^"]*)"/)?.[1], depth: m[2].split('/').length - 1 })
+    const maxRot = attrs.match(/data-max-rot="([^"]*)"/)?.[1]
+    const eye = attrs.match(/data-eye="([^"]*)"/)?.[1]
+    out.push({ id, part: m[2], label: attrs.match(/data-label="([^"]*)"/)?.[1], pivot: attrs.match(/data-pivot="([^"]*)"/)?.[1], depth: m[2].split('/').length - 1, ...(maxRot ? { maxRot: +maxRot } : {}), ...(eye ? { eye } : {}) })
   }
   return out
 }

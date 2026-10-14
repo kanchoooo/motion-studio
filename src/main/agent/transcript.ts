@@ -29,7 +29,7 @@ type Rec = {
     id?: string
     role?: string
     stop_reason?: string | null
-    content?: string | { type: string; text?: string; name?: string; id?: string; tool_use_id?: string; input?: Record<string, unknown> }[]
+    content?: string | { type: string; text?: string; name?: string; id?: string; tool_use_id?: string; input?: Record<string, unknown>; content?: unknown }[]
   }
 }
 
@@ -64,6 +64,8 @@ export function findTranscript(sessionId: string): string | null {
   return null
 }
 
+const HANGUL = /[\uac00-\ud7a3]/
+
 export class TranscriptTail {
   private file: string | null = null
   private offset = 0
@@ -88,10 +90,52 @@ export class TranscriptTail {
   stop() {
     if (this.timer) clearInterval(this.timer)
     this.timer = null
+    this.cancelEnd()
   }
 
   get busy() {
     return this.busyNow
+  }
+
+  /** a turn end waits a moment: a Stop hook may send Claude back to work (the turn goes on) */
+  private endTimer: NodeJS.Timeout | null = null
+  private heldAt = 0
+
+  private endHow: 'done' | 'failed' = 'done'
+
+  private endSoon(how: 'done' | 'failed') {
+    this.cancelEnd()
+    this.endHow = how
+    this.endTimer = setTimeout(() => this.finishTurn(), how === 'failed' ? 0 : 2500)
+  }
+
+  /** background work Claude started (run_in_background agents / commands) that has not reported back yet */
+  private background = new Set<string>()
+  private doneTasks = new Set<string>()
+
+  private finishTurn() {
+    this.endTimer = null
+    // the stop gate said "go on" before this end showed up in the transcript: this end is not the end
+    if (this.heldAt && Date.now() - this.heldAt < 20_000) {
+      this.heldAt = 0
+      return
+    }
+    // Claude ended its turn to wait for a helper running in the background: it goes on when that reports back
+    if (this.background.size) return
+    this.setBusy(false)
+    this.ev.turnEnd(this.lastText, this.endHow)
+  }
+
+  private cancelEnd() {
+    if (this.endTimer) clearTimeout(this.endTimer)
+    this.endTimer = null
+  }
+
+  /** the stop gate sent Claude back: this turn's end (already seen, or about to be) is not the end */
+  hold() {
+    if (this.endTimer) this.cancelEnd()
+    else this.heldAt = Date.now()
+    this.setBusy(true)
   }
 
   private setBusy(b: boolean) {
@@ -191,6 +235,11 @@ export class TranscriptTail {
       return
     }
     const at = r.timestamp ?? new Date().toISOString()
+    // anything after a turn end means the turn went on (a Stop hook sent Claude back)
+    if (!initial && this.endTimer && (r.type === 'assistant' || (r.type === 'user' && r.isMeta))) {
+      this.cancelEnd()
+      this.heldAt = 0
+    }
     if (r.type === 'user' && (r.isCompactSummary || r.isVisibleInTranscriptOnly)) {
       this.emitItem({ id: r.uuid ?? at, at, role: 'notice', text: '대화가 길어져서 앞부분을 요약했어요. 작업은 그대로 이어져요.' }, initial)
       return
@@ -199,6 +248,15 @@ export class TranscriptTail {
       const c = r.message?.content
       if (Array.isArray(c) && c.some((b) => b.type === 'tool_result')) {
         for (const b of c) {
+          // a helper started in the background (subagents are by default) answers with its id: the work goes
+          // on after this turn ends, until its notification comes back
+          if (b.type === 'tool_result') {
+            const txt = typeof b.content === 'string' ? b.content : JSON.stringify(b.content ?? '')
+            if (/Async agent launched|working in the background|running in background/i.test(txt)) {
+              const id = txt.match(/agentId:\s*([\w-]+)/)?.[1] ?? txt.match(/with ID:\s*([\w-]+)/)?.[1]
+              if (id && !this.doneTasks.has(id)) this.background.add(id)
+            }
+          }
           const s = b.tool_use_id ? this.status.get(b.tool_use_id) : undefined
           if (s && !s.done) {
             s.done = true
@@ -210,6 +268,8 @@ export class TranscriptTail {
       const t = this.userText(r)
       if (t == null) return
       if (/^\[Request interrupted by user/.test(t)) {
+        this.cancelEnd()
+        this.heldAt = 0
         this.closeStatuses(initial)
         this.emitItem({ id: r.uuid ?? at, at, role: 'notice', text: '작업을 멈췄어요.' }, initial)
         if (!initial) {
@@ -219,9 +279,24 @@ export class TranscriptTail {
         }
         return
       }
+      // a new message right after a turn end (one queued while Claude worked): that turn is over
+      if (this.endTimer) {
+        clearTimeout(this.endTimer)
+        this.finishTurn()
+      }
+      this.heldAt = 0
       // already shown when it was queued
       if (!this.takeQueued(t, initial, Date.parse(at))) this.emitItem(this.userItem(r.uuid ?? at, at, t), initial)
       if (!initial) this.setBusy(true)
+      return
+    }
+    // a helper that ran in the background reported back
+    if (r.type === 'queue-operation' && r.operation === 'enqueue' && typeof r.content === 'string' && r.content.trimStart().startsWith('<task-notification>')) {
+      const id = r.content.match(/<task-id>([^<]+)<\/task-id>/)?.[1]
+      if (id && /<status>(completed|failed|killed|stopped|error)/.test(r.content)) {
+        this.doneTasks.add(id)
+        this.background.delete(id)
+      }
       return
     }
     // a message typed while Claude was working: shown at once, marked as waiting
@@ -251,6 +326,11 @@ export class TranscriptTail {
       const synthetic = (r.message as { model?: string }).model === '<synthetic>'
       for (const b of content) {
         if (b.type === 'text' && b.text?.trim() && !failed && !synthetic) {
+          // a short note that slipped out in English is shown as a plain progress line (the designer reads Korean)
+          if (!HANGUL.test(b.text) && b.text.length < 400) {
+            this.emitItem({ id: `${r.uuid}-t`, at, role: 'status', text: '작업을 다듬고 있어요', done: true }, initial)
+            continue
+          }
           this.lastText = b.text
           this.emitItem({ id: `${r.uuid}-t`, at, role: 'assistant', text: b.text }, initial)
         } else if (b.type === 'tool_use' && b.id) {
@@ -269,10 +349,7 @@ export class TranscriptTail {
       if (!initial && !ended) this.setBusy(true)
       if (ended) {
         this.closeStatuses(initial)
-        if (!initial) {
-          this.setBusy(false)
-          this.ev.turnEnd(this.lastText, failed ? 'failed' : 'done')
-        }
+        if (!initial) this.endSoon(failed ? 'failed' : 'done')
       }
     }
   }

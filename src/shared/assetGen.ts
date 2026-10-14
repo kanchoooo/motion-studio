@@ -24,18 +24,19 @@ STYLE
 - Flat 2D vector illustration made only of solid-color shapes.
 - No outlines or line art around shapes. Separate parts by color, not by lines.
 - No gradients, no airbrush shading, no texture, no grain, no glow, no drop shadows.
-- At most one flat, hard-edged shadow tone per material (for example one darker skin tone under the chin).
+- At most one flat, hard-edged shadow tone per material, and shading never crosses from one body part onto another: no shadow cast by the head on the neck, no shadow of the hair on the face.
 - Limited palette of about 8 to 12 colors. Skin, hair, eyes, clothing and background must each be clearly different colors.
 - Plain single-color background that contrasts with the skin, the hair and the clothes. No scenery, no pattern, no ground line.
 
 CHARACTER
 - One character, centered, facing the viewer (straight on or a slight three-quarter view). How much of the body is shown follows the framing or the request.
 - Large head and simple rounded shapes.
-- Eyes: large white sclera, a dark round pupil with one small white highlight, and a simple dark upper-lid shape.
+- Eyes: the white of each eye is a complete oval; a dark round pupil with one small white highlight sits inside it with a visible margin of white all around (it may touch only the upper lid); a simple dark upper-lid shape.
 - Eyebrows: separate solid shapes that do not touch the hair.
-- Nose: one small simple shape. Mouth: a simple closed line or a small closed smile.
+- Nose: one small simple shape. Mouth: a small filled closed smile shape (not a hairline).
+- Neck: a simple straight column of skin, slightly darker than the face, so the jawline is a clear colour edge.
 - Both ears visible. Hair: one solid mass with at most one to three simple highlight shapes; hair and headwear must not cover the eyes or eyebrows.
-- Clothing: large flat color blocks; small details as separate simple shapes. Where possible, sleeves and trousers are a different color from the torso clothing.
+- Clothing: large flat color blocks; small details as separate simple shapes. Where possible, sleeves and trousers are a different color from the torso clothing. Sleeve cuffs cover the wrists and trouser hems cover the ankles.
 
 POSE AND EXPRESSION
 - Neutral or mild expression: eyes open, mouth closed.
@@ -52,18 +53,19 @@ OUTPUT
 - 扁平 2D 矢量插画，只由纯色色块组成。
 - 色块周围不要描边或线稿，用颜色而不是线条来区分部位。
 - 不要渐变、喷枪式阴影、纹理、颗粒、发光或投影。
-- 每种材质最多一个扁平、硬边的阴影色（例如下巴下方一块稍深的肤色）。
+- 每种材质最多一个扁平、硬边的阴影色，阴影不能从一个身体部位延伸到另一个部位：头部不在脖子上投下阴影，头发不在脸上投下阴影。
 - 色板控制在约 8 到 12 种颜色。皮肤、头发、眼睛、衣服和背景必须是明显不同的颜色。
 - 纯色背景，与皮肤、头发和衣服都形成对比。不要场景、图案或地面线。
 
 角色
 - 只有一个角色，居中，面向观众（正面或略微四分之三侧面）。身体显示多少按照构图设置或要求。
 - 头部偏大，造型简单圆润。
-- 眼睛：大的白色眼白，深色圆形瞳孔带一个小的白色高光，以及简单的深色上眼睑形状。
+- 眼睛：每只眼的眼白是完整的椭圆；深色圆形瞳孔（带一个小的白色高光）在眼白里面，四周都留有可见的白边（只可以碰到上眼睑）；简单的深色上眼睑形状。
 - 眉毛：独立的纯色形状，不与头发相接。
-- 鼻子：一个简单的小形状。嘴：简单的闭合线条或闭着嘴的小微笑。
+- 鼻子：一个简单的小形状。嘴：一个闭着的小微笑填充形状（不是细线）。
+- 脖子：一个简单的直柱形皮肤，比脸稍深，让下颌线是清楚的颜色边界。
 - 两只耳朵都可见。头发：一整块纯色，最多一到三个简单的高光形状；头发和帽子不能遮住眼睛或眉毛。
-- 衣服：大面积扁平色块；小细节用独立的简单形状。尽量让袖子和裤子的颜色与上身衣服不同。
+- 衣服：大面积扁平色块；小细节用独立的简单形状。尽量让袖子和裤子的颜色与上身衣服不同。袖口盖住手腕，裤脚盖住脚踝。
 
 姿势与表情
 - 中性或温和的表情：睁眼，闭嘴。
@@ -80,18 +82,19 @@ OUTPUT
 - 단색 면으로만 이루어진 플랫 2D 벡터 일러스트.
 - 도형 둘레에 외곽선·선화 없음. 부위는 선이 아니라 색으로 구분한다.
 - 그라데이션, 에어브러시 음영, 질감, 노이즈, 광택, 그림자 효과 없음.
-- 재질마다 경계가 또렷한 그늘 색은 최대 한 가지(예: 턱 아래 조금 어두운 피부색).
+- 재질마다 경계가 또렷한 그늘 색은 최대 한 가지. 그늘이 한 부위에서 다른 부위로 넘어가지 않는다: 머리가 목에 드리우는 그림자, 머리카락이 얼굴에 드리우는 그림자 없음.
 - 8~12색 정도의 제한된 팔레트. 피부, 머리, 눈, 옷, 배경은 서로 확실히 다른 색.
 - 피부·머리·옷과 대비되는 단색 배경. 풍경·무늬·바닥선 없음.
 
 캐릭터
 - 캐릭터 한 명, 화면 가운데, 정면 또는 살짝 비스듬히. 몸이 어디까지 보이는지는 구도 설정이나 요청을 따른다.
 - 큰 머리, 단순하고 둥근 형태.
-- 눈: 큰 흰자, 진한 둥근 눈동자와 작은 흰 하이라이트 하나, 단순한 진한 윗눈꺼풀.
+- 눈: 흰자는 온전한 타원. 진한 둥근 눈동자(작은 흰 하이라이트 하나)는 흰자 안에 있고 둘레에 흰자가 보인다(윗눈꺼풀에만 닿을 수 있음). 단순한 진한 윗눈꺼풀.
 - 눈썹: 머리카락에 닿지 않는 별도의 단색 도형.
-- 코: 작고 단순한 도형 하나. 입: 다문 선 또는 다문 작은 미소.
+- 코: 작고 단순한 도형 하나. 입: 면으로 칠한 다문 작은 미소(가는 선 아님).
+- 목: 단순한 일자 기둥. 얼굴보다 조금 어두운 피부색이라 턱선이 색 경계로 또렷하다.
 - 양쪽 귀가 보인다. 머리카락: 하나의 단색 덩어리와 단순한 하이라이트 1~3개. 머리카락과 모자가 눈·눈썹을 가리지 않는다.
-- 옷: 큰 단색 덩어리. 작은 디테일은 별도의 단순한 도형. 가능하면 소매와 바지는 몸통 옷과 다른 색.
+- 옷: 큰 단색 덩어리. 작은 디테일은 별도의 단순한 도형. 가능하면 소매와 바지는 몸통 옷과 다른 색. 소매 끝은 손목을, 바지 끝단은 발목을 덮는다.
 
 자세와 표정
 - 무표정 또는 옅은 표정: 눈을 뜨고 입은 다문다.
@@ -123,7 +126,7 @@ const FRAMING_TEXT: Record<Exclude<Framing, 'auto'>, Record<PromptLang, string>>
 }
 
 export const FLAT_NEGATIVE =
-  'outline, line art, sketch, gradient, 3d render, realistic, photo, texture, noise, painterly, soft shading, glow, lens flare, text, watermark, multiple characters, hands near face, hair covering eyes, glasses, cropped head, arms crossed, limbs overlapping body'
+  'outline, line art, sketch, gradient, 3d render, realistic, photo, texture, noise, painterly, soft shading, glow, lens flare, text, watermark, multiple characters, hands near face, hair covering eyes, glasses, cropped head, arms crossed, limbs overlapping body, cast shadow on neck, pupil touching the eye outline'
 
 /** conversion settings of the flat character style (img2svg) */
 export const FLAT_CONVERT = { colors: 14, bg: 'auto', thin: 1.6, maxSide: 1600 } as const

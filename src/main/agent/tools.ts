@@ -24,9 +24,11 @@ import * as history from '../history'
 import { snapshot } from '../hyperframes'
 import { bin } from '../paths'
 import * as projects from '../projects'
-import { characterParts, embedCharacter, readCharacter, tagCharacter } from '../character/convert'
+import { characterParts, checkCharacterFolder, embedCharacter, readCharacter, tagCharacter } from '../character/convert'
 import { addWebFont, listWebFonts } from '../webfonts'
 import { layoutSnapshot, measureLayout } from '../editReady'
+import { storyboardMissing } from './gates'
+import { findTranscript } from './transcript'
 
 const run = promisify(execFile)
 const text = (t: string) => ({ content: [{ type: 'text' as const, text: t }] })
@@ -133,7 +135,7 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
                     svg: a.character.status === 'done',
                     shapes: a.character.shapes,
                     tagged: !!a.character.tagged,
-                    note: 'An SVG character that can act part by part: load the skill svg-character-motion and use character_info / character_tag / character_embed.',
+                    note: 'An SVG character that can act part by part: load the skill svg-character-motion and use character_info / character_tag / character_check / character_embed.',
                   }
                 : undefined,
             })),
@@ -208,6 +210,14 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
       },
     },
     async (sb) => {
+      // a new video's plan comes from the workflow's references and its own design / storyboard files
+      const sid = projects.state(projectId).meta.agentSessionId
+      const missing = storyboardMissing(join(dir(), 'composition'), sid ? findTranscript(sid) : null)
+      if (missing.length)
+        return {
+          isError: true,
+          content: [{ type: 'text' as const, text: ['Not shown yet. Plan this video the general-video way first, then call propose_storyboard again:', ...missing.map((m, i) => `${i + 1}. ${m}`), 'The storyboard you propose mirrors STORYBOARD.md scene for scene (motion = the cited treatment in plain Korean design words). Do not mention this to the designer; keep writing short Korean notes.'].join('\n') }],
+        }
       hooks.onStoryboard(projectId, { ...sb, scenes: sb.scenes.map((s, i) => ({ ...s, n: i + 1 })) })
       return text('콘티를 디자이너에게 보여줬어요. 이번 턴을 여기서 끝내고 승인이나 수정 요청을 기다리세요.')
     },
@@ -586,7 +596,21 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
       const { brief } = st()
       const mine = (x: (typeof brief.assets)[number]) => x.character?.dir === `composition/${f.rel}`
       if (brief.assets.some(mine)) await projects.saveBrief(projectId, { ...brief, assets: brief.assets.map((x) => (mine(x) && x.character ? { ...x, character: { ...x.character, tagged: true } } : x)) })
-      return text(JSON.stringify({ report: r.report, differencePct: r.diffPct, ok: r.diffPct <= 0.1, parts: characterParts(f.abs) }, null, 1))
+      return text(JSON.stringify({ report: r.report, differencePct: r.diffPct, ok: r.diffPct <= 0.1, parts: characterParts(f.abs), next: 'Run character_check before character_embed.' }, null, 1))
+    },
+  )
+
+  server.registerTool(
+    'character_check',
+    {
+      description:
+        'Check the tagged character in motion before using it: every part with a pivot (head, arms, hands, legs, feet, body, hair …) is turned to its largest angle (data-max-rot, else head 8°, limbs 12°, body 3°, hair/ears 6°) both ways, and gaps (red) or pieces left behind (magenta) at the joint are counted; eyes are checked for the eye rig and shown 1.3× with the pupil moved. Writes check_sheet.png in the asset folder: Read it. Fix the tags (eye rig, face cut along the jaw, neck under-hang, follow, layer order, pivots inside the moving part) until ok is true.',
+      inputSchema: { asset: z.string() },
+    },
+    async ({ asset }) => {
+      const f = characterFolder(asset)
+      const r = await checkCharacterFolder(f.abs)
+      return text(JSON.stringify({ ok: r.ok, sheet: `composition/${f.rel}/${r.sheet}`, joints: r.groups, eyes: r.eyes, limits: 'gaps ≤ 12 px and leftover pieces ≤ 40 px per pose; every eye uses the eye rig' }, null, 1))
     },
   )
 
@@ -681,4 +705,14 @@ export const STUDIO_TOOL_LABELS: Record<string, string> = {
   Glob: '자료를 살펴보고 있어요',
   Grep: '자료를 살펴보고 있어요',
   Skill: '제작 가이드를 참고하고 있어요',
+  Agent: '검수·제작을 따로 맡기고 있어요',
+  Task: '검수·제작을 따로 맡기고 있어요',
+  WebSearch: '비슷한 광고를 찾아보고 있어요',
+  WebFetch: '웹 자료를 읽고 있어요',
+  mcp__studio__layout_snapshot: '편집 준비를 하고 있어요',
+  mcp__studio__measure_layout: '편집 준비를 하고 있어요',
+  mcp__studio__character_info: '캐릭터를 살펴보고 있어요',
+  mcp__studio__character_tag: '캐릭터를 부위별로 나누고 있어요',
+  mcp__studio__character_check: '캐릭터 움직임을 점검하고 있어요',
+  mcp__studio__character_embed: '캐릭터를 영상에 넣고 있어요',
 }

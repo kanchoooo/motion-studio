@@ -121,7 +121,14 @@ poc/               Phase 0 기술 검증 기록 (RESULTS.md)
   - `--tools Read,Write,Edit,Glob,Grep,Skill,Agent,Bash,WebFetch,WebSearch` (Bash·웹은 위 질문을 거친다. Agent = 공식 흐름의 하위 에이전트)
   - PATH 맨 앞에 `userData/cli/`: `hyperframes`·`npx hyperframes`가 앱 안 HyperFrames CLI(앱의 노드)로 간다(`agent/cliShims.ts`). 이 명령들은 미리 허용.
   - 하위 에이전트는 덧붙인 시스템 프롬프트를 못 받으므로 `.studio/motion-studio-rules.md`(컴포지션 규칙)를 읽게 한다.
-  - `PreToolUse` **HTTP 훅**(`/hook/<토큰>/pretool`): 대화에서 처음 영상 파일(composition/의 .html·.css·.js)을 쓰기 전에 대화 기록에 HyperFrames 라우터나 작업 흐름 스킬(`hyperframes`, `motion-graphics`, `product-launch-video` …)을 읽은 흔적이 있는지 확인하고, 없으면 돌려보내요(이유는 한국어로).
+  - `PreToolUse` **HTTP 훅**(`/hook/<토큰>/pretool`): 대화에서 처음 영상 파일(composition/의 .html·.css·.js)을 쓰기 전에 대화 기록에 HyperFrames 라우터나 작업 흐름 스킬(`hyperframes`, `general-video` …)을 읽은 흔적이 있는지 확인하고, 없으면 돌려보내요(이유는 한국어로). 새 영상(`data-ms-empty`)에 STORYBOARD.md가 있으면 인용한 모션 레시피 본문(`hyperframes-animation/blueprints|rules/*.md`)을 읽기 전의 첫 쓰기도 돌려보내요.
+  - **품질 관문**(`agent/gates.ts`, 대화 기록 + 하위 에이전트 기록을 읽음):
+    - `propose_storyboard`: 새 영상이면 house-style·video-composition·typography·blueprints/rules-index를 읽고 composition/DESIGN.md·STORYBOARD.md를 쓴 뒤에만 콘티를 보여 줌(아니면 도구 오류로 무엇이 빠졌는지 알려 줌).
+    - `Stop` **HTTP 훅**(`/hook/<토큰>/stop`): 이번 차례에 영상 파일이 바뀌었으면 마지막 변경 뒤에 `hyperframes check`(또는 check_video)와 스냅샷 시트 Read(또는 look_at_frames)가 있어야 하고, check_video에 `ms_not_edit_ready`가 없어야 하고, 제작 차례(콘티 승인·고도화·전체 Write)면 `motion-studio-hyperframes:motion-reviewer` 검수 에이전트를 돌려야 끝낼 수 있음. 한 차례에 최대 2번 돌려보냄(`decision: block`). 베리에이션·템플릿 메시지는 검수 에이전트 없이 확인만.
+    - Stop 훅이 돌려보내면 대화 기록에 end_turn이 먼저 찍히므로 `TranscriptTail`은 차례 끝을 2.5초 미뤘다가, 그사이 훅 메시지(isMeta)나 앱 알림(`holdTurn`)이 오면 계속 작업 중으로 둔다.
+  - `composition/BRIEF.md`(`agent/briefDoc.ts`): 브리프를 HyperFrames 브리프 형식(workflow: general-video, flow: companion, storyboard: yes)으로 세션 시작·브리프 저장 때마다 앱이 다시 씀. Claude는 고칠 수 없음(거부 규칙).
+  - 플러그인 에이전트 `resources/claude-plugin/agents/motion-reviewer.md`(opus, effort xhigh, 읽기 전용 + snapshot/look_at_frames): 장면별 [꼭]/[권장] 수정 목록. 플러그인 스킬 `motion-studio-media`: AI 생성·아트리스트·SVG 캐릭터 안내(시스템 프롬프트에서 분리).
+  - 기본 추론 강도는 `xhigh`(DEFAULT_EFFORT). WebSearch는 미리 허용(비슷한 광고 조사), WebFetch는 질문.
   - `PermissionRequest` 훅은 사람에게 묻기 전에 두 가지를 돌려보내요: 영상 파일을 고치는 셸 스크립트(python·node·sed -i·perl -i·리다이렉션·tee → Edit/Write로만), 설명(description)이 한국어가 아닌 명령.
   - 설정 `language: "Korean"`(Claude Code 응답 언어). 중간 메모까지 한국어로 쓰도록 프롬프트에 예시 문장도 있어요.
   - `--setting-sources ""` (개인 설정, 훅, 플러그인 제외)
@@ -131,6 +138,20 @@ poc/               Phase 0 기술 검증 기록 (RESULTS.md)
 - **메시지 입력**: 텍스트를 쓰고 0.8초 뒤 Enter를 따로 보낸다. 한 번에 보내면 붙여넣기로 인식된다.
 - **폴더 신뢰 확인은 자동으로 답하지 않는다.** 터미널을 열고 안내만 한다.
 - 개발 중 Claude Code 터미널 안에서 `npm run dev`를 실행하면 부모 세션의 `CLAUDE*` 환경변수가 이어진다. 그러면 대화 기록 저장이 꺼지므로, PTY를 띄울 때 이 변수들을 제거한다(`cleanEnv`).
+
+## 5-2. 폴더·베리에이션·템플릿 (0.3.0)
+
+- **폴더**: 프로젝트 폴더(`문서/모션스튜디오`) 안의 일반 폴더(`folders.ts`, 최대 4단계, 숨김 폴더 제외). 목록은 폴더를 훑어 만들고(`scan`), 최근 목록에만 있는 같은 id 사본은 숨김. 옮기기·폴더 이름 바꾸기는 그 안의 Claude가 작업 중이면 막고, 쉬고 있는 세션은 닫은 뒤 옮긴다(`--resume <id>`는 다른 폴더에서도 같은 대화를 찾음).
+- **베리에이션**: 원본과 같은 폴더에 만든다. 줄마다 `note`(추가 요청)가 있으면 항상 Claude 재구성. 재구성은 `MAX_ADAPTING = 4`개까지 동시에(각자 Claude 세션), 나머지는 대기.
+- **템플릿**: `<프로젝트 폴더>/.templates/<id>/`(composition·brief·overrides·cover.jpg·template.json·generated.json). 칸 찾기는 `htmlSlots.ts`(브라우저 없이 data-ms-id 요소의 글자·파일). 새 프로젝트에 채울 때 글자는 직접 수정값(overrides.text), 파일은 assets/tpl-*로 복사해 src 교체(내레이션은 data-duration도 새 길이로), 브리프의 필수 문구·소재도 따라 바꿈. 새 대본은 Claude에게 같은 목소리로 다시 녹음하라고 보냄(`ai_call` 기록에 남긴 설정값 `generated.json args`). 템플릿으로 만든 프로젝트는 `.studio/template.json`에 칸 목록, 위쪽 "템플릿 칸"으로 다시 바꿈.
+- **고쳐서 다시 만들기**: `GenRequest.revision[]`·`revisedFrom`. 모델이 참고 이미지를 받으면 이전 그림을 함께 보내고 마지막 수정만, 아니면 모든 수정을 글로(`withRevision`). 소재에 넣을 때 요청 전체를 `asset.generated.request/video`에 남겨 소재에서도 다시 고칠 수 있음.
+
+## 5-3. SVG 캐릭터 장치 (0.3.0)
+
+- `tag.cjs`: `eye`(흰자+눈동자+반짝임의 볼록 껍질을 매끈한 흰자 전체로 새로 만들고 눈동자를 그 모양으로 clip, `data-eye`), `underhang`(관절 밑에 숨는 둥근 기둥, clip 밖), `follow`(clip은 제자리, 그림은 다른 부위를 따라감), `maxRot`(`data-max-rot`), `absorbs`. 눈 장치는 sharp로 도형 마스크를 그려 계산(`prepareTags`, 비동기).
+- `check.cjs` / MCP `character_check`: pivot 있는 부위를 최대 각도 양쪽으로 돌려 pivot 둘레의 틈(닫힘 연산으로 찾는 가는 빈틈, 빨강)과 비킨 자리에 드러난 같은 색(자홍), 눈 장치 여부를 `check_sheet.png`로. `data-added` 도형(일부러 숨긴 채움)은 세지 않는다.
+- `svgrig.js`: `SvgRig.pose(svg, id, {rot, s, sx, sy, x, y})`(pivot·최대 각도·follow), `SvgRig.eyeRig(svg, 'eye-l', {scale, lookX, lookY, pupil})`, `SvgRig.layer(svg, id, ref, 'above'|'below')`.
+- `lib.cjs`: 주변보다 훨씬 어두운 가는 띠(다문 입·속눈썹 선)는 안티앨리어싱으로 보고 지우지 않음. 플랫 캐릭터 생성 문장: 그늘이 부위를 넘지 않게, 온전한 흰자 타원, 면으로 된 입, 조금 어두운 목 기둥, 소매·바지 끝단이 손목·발목을 덮게.
 
 ## 5-1. AI 서비스 연결
 

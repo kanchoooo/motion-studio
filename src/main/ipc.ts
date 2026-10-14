@@ -256,6 +256,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
     projectFor: projectForToken,
     mode: (id) => (projects.state(id).meta.agentPermission === 'all' ? 'all' : 'ask'),
     dirOf: (id) => projects.pathOf(id),
+    stopBlocked: (id) => agent.holdTurn(id),
     changed: (id, asks, added) => {
       send('agent:event', { type: 'permissions', projectId: id, asks, added } satisfies AgentEvent)
       // the designer may be in another app while Claude waits

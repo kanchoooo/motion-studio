@@ -10,7 +10,8 @@ export function grantAccess(userDataDir) {
 
 /** past the environment check to Home (a fresh profile stops there while the workspace is not trusted) */
 export async function toHome(win) {
-  const home = win.getByText('브리프를 정리하고 Claude와 대화하면서 영상을 만들어요.')
+  // the home screen (its folder tree), whichever folder it remembers
+  const home = win.getByTestId('folder-tree')
   const start = win.getByRole('button', { name: '시작하기' })
   await Promise.race([home.waitFor({ timeout: 90000 }), start.and(win.locator(':enabled')).waitFor({ timeout: 90000 })])
   if (!(await home.isVisible())) await start.click()

@@ -1,6 +1,7 @@
-// SVG character acting with a real Claude session (logged-in account, default Opus + high).
+// SVG character acting with a real Claude session (logged-in account, default Opus + xhigh).
 // A new project gets the ms-svg-character example man as a character asset, and Claude is
-// asked for a short "surprised" acting clip. Checks: tags applied (≤ 0.1% at rest), the
+// asked for a short "surprised" acting clip. Checks: tags applied (≤ 0.1% at rest) with the eye rig and
+// the neck under-hang, character_check passed, the
 // character inline in index.html with svgrig, and the picture changing over time.
 // Permission cards are answered "허용" and logged, so the run shows what Claude asked for.
 // MS_SANDBOX=<sandbox whose projects folder is trusted> node tests/e2e/character-live.mjs
@@ -88,6 +89,13 @@ try {
   const html = existsSync(join(proj, 'composition', 'index.html')) ? readFileSync(join(proj, 'composition', 'index.html'), 'utf8') : ''
   const info = existsSync(join(folder, 'character.json')) ? JSON.parse(readFileSync(join(folder, 'character.json'), 'utf8')) : {}
   check('Claude tagged the character (tagged.svg, tags.json)', existsSync(join(folder, 'tagged.svg')) && existsSync(join(folder, 'tags.json')) && info.tagged === true)
+  const tags = existsSync(join(folder, 'tags.json')) ? readFileSync(join(folder, 'tags.json'), 'utf8') : ''
+  const tagged = existsSync(join(folder, 'tagged.svg')) ? readFileSync(join(folder, 'tagged.svg'), 'utf8') : ''
+  check('eyes use the eye rig (full white, pupil clipped inside)', /"eye"\s*:/.test(tags) && /data-eye="/.test(tagged) && /data-added="흰자 전체/.test(tagged))
+  check('the neck has its under-hang', /data-added="under-hang"/.test(tagged))
+  const chk = existsSync(join(folder, 'check.json')) ? JSON.parse(readFileSync(join(folder, 'check.json'), 'utf8')) : null
+  check(`character_check ran and passes (${chk ? JSON.stringify(chk.groups.map((g) => [g.id, g.cracks, g.ghosts])) : 'not run'})`, !!chk?.ok)
+  if (existsSync(join(folder, 'check_sheet.png'))) await sharp(join(folder, 'check_sheet.png')).toFile(join(shots, 'p11-character-check.png'))
   check('the character is inline in the composition', html.includes('<!--ms-character:'))
   check('svgrig drives it', html.includes('ms/svgrig.js') && /SvgRig\.(add|attach)/.test(html))
   // it moves: two moments of the preview differ

@@ -10,6 +10,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { basename, dirname, isAbsolute, join, relative, resolve as resolvePath } from 'node:path'
 import type { AgentPermission, PermissionAsk } from '@shared/api'
 import { findTranscript } from './transcript'
+import { buildWriteMissing, stopMissing } from './gates'
 
 export type PermissionAnswer = 'allow' | 'always' | 'deny'
 
@@ -19,6 +20,8 @@ export interface PermissionHooks {
   dirOf(projectId: string): string
   /** a new question for the designer (shown as a card) or one that went away */
   changed(projectId: string, asks: PermissionAsk[], added?: PermissionAsk): void
+  /** the stop gate sent Claude back: the turn goes on */
+  stopBlocked?(projectId: string): void
 }
 
 interface Waiting {
@@ -116,7 +119,58 @@ export function scriptEditsComposition(cmd: string): boolean {
 /** /hook/<token>/… — true when the request was ours */
 export async function handleHook(req: IncomingMessage, res: ServerResponse, path: string): Promise<boolean> {
   if (/\/pretool$/.test(path)) return handlePreTool(req, res, path)
+  if (/\/stop$/.test(path)) return handleStop(req, res, path)
   return handlePermission(req, res, path)
+}
+
+/** turns sent back by the stop gate (session + turn start → count): at most twice per turn */
+const stopBlocks = new Map<string, number>()
+const MAX_STOP_BLOCKS = 2
+
+/**
+ * Stop hook: a turn that changed the video ends only after it was checked, looked at and
+ * (for a build) reviewed. Otherwise Claude is sent back once or twice with what is missing.
+ */
+async function handleStop(req: IncomingMessage, res: ServerResponse, path: string): Promise<boolean> {
+  const m = path.match(/^\/hook\/([a-f0-9]+)\/stop$/)
+  const projectId = m ? hooks?.projectFor(m[1]) : undefined
+  const body = await readJson(req)
+  const pass = () => res.writeHead(200, { 'Content-Type': 'application/json' }).end('{}')
+  if (!hooks || !projectId) {
+    pass()
+    return true
+  }
+  try {
+    const session = typeof body.session_id === 'string' ? body.session_id : ''
+    const transcript = (session && findTranscript(session)) || (typeof body.transcript_path === 'string' ? body.transcript_path : '')
+    if (!transcript) return (pass(), true)
+    const missing = stopMissing(join(hooks.dirOf(projectId), 'composition'), transcript)
+    const key = `${session}:${lastUserLine(transcript)}`
+    const n = stopBlocks.get(key) ?? 0
+    if (!missing || n >= MAX_STOP_BLOCKS) return (pass(), true)
+    stopBlocks.set(key, n + 1)
+    hooks.stopBlocked?.(projectId)
+    const reason = [
+      'Motion Studio quality gate — the video changed in this turn, so it is not finished yet:',
+      ...missing.map((x, i) => `${i + 1}. ${x}`),
+      'Keep working (short Korean notes between steps). Do not mention this gate to the designer; reply only when the work is really done.',
+    ].join('\n')
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ decision: 'block', reason }))
+  } catch {
+    pass()
+  }
+  return true
+}
+
+/** the timestamp of the last real user line (a turn's identity) */
+function lastUserLine(transcript: string): string {
+  const lines = readFileSync(transcript, 'utf8').split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!lines[i].includes('"type":"user"') || lines[i].includes('"isMeta":true') || lines[i].includes('"tool_result"')) continue
+    const t = lines[i].match(/"timestamp":"([^"]+)"/)
+    if (t) return t[1]
+  }
+  return ''
 }
 
 // The HyperFrames workflows only help when Claude reads them. Before the first write
@@ -172,17 +226,20 @@ async function handlePreTool(req: IncomingMessage, res: ServerResponse, path: st
     inside = false
   }
   const session = typeof body.session_id === 'string' ? body.session_id : ''
-  if (!inside || skillsRead.has(session)) {
+  if (!inside) {
     pass()
     return true
   }
   const transcript = (session && findTranscript(session)) || (typeof body.transcript_path === 'string' ? body.transcript_path : '')
-  if (transcript && readSkills(transcript)) {
+  const deny = (reason: string) => res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } }))
+  if (!skillsRead.has(session)) {
+    if (!transcript || !readSkills(transcript)) return (deny(SKILL_FIRST), true)
     skillsRead.add(session)
-    pass()
-    return true
   }
-  res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: SKILL_FIRST } }))
+  // the first write of a new video: the recipes the storyboard cites were read
+  const recipes = buildWriteMissing(join(hooks.dirOf(projectId), 'composition'), transcript || null)
+  if (recipes) return (deny(`${recipes} 이 안내는 디자이너에게 말하지 말고 한국어 메모로 계속 작업하세요.`), true)
+  pass()
   return true
 }
 

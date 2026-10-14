@@ -14,6 +14,7 @@ import type { GenCandidate } from '@shared/assetGen'
 import type { CollectItem } from '@shared/api'
 import { dataDir, runtimeFiles } from './paths'
 import { folderOf, folderPath, isInside, moveTarget, scan } from './folders'
+import { writeBriefDoc } from './agent/briefDoc'
 import { serveFolder } from './preview-server'
 import { compositionHasVideo, HYPERFRAMES_JSON, starterComposition } from './template'
 import { newId, nowIso, readJson, safeName, uniquePath, writeJson, writeText } from './util'
@@ -254,6 +255,7 @@ export async function removeProject(dir: string): Promise<void> {
 export async function saveBrief(projectId: string, brief: Brief): Promise<ProjectState> {
   const dir = pathOf(projectId)
   writeJson(f.brief(dir), brief)
+  writeBriefDoc(dir, brief)
   touch(projectId)
   await history.record(dir, { actor: 'designer', summary: '브리프를 수정했어요' })
   return state(projectId)

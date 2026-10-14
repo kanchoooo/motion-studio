@@ -1,4 +1,7 @@
 /* SvgRig — procedural face/limb helpers for hand-drawn SVG characters (no outlines), HyperFrames-safe.
+ * Tagged characters (character_tag): SvgRig.pose(svg, 'head', {rot, s, sx, sy, x, y}) turns a part about its
+ * data-pivot within data-max-rot and moves its followers along; SvgRig.eyeRig(svg, 'eye-l', {scale, lookX,
+ * lookY, pupil}) drives an eye made with the eye rig; SvgRig.layer(svg, 'hand-l', 'body', 'above'|'below').
  * A character is an inline <svg> inside a host element. Its acting parameters are CSS custom properties on the
  * host (--brow-raise, --eye-open, --look-x, --mouth-open, --head-sq …) so authors (and Motion Studio designers)
  * animate them with ordinary GSAP tweens. Every frame, SvgRig.attach(tl) calls each character's render(P, t)
@@ -97,9 +100,47 @@
     return clamp(v, 0, 1)
   }
 
+  // ---------- tagged parts (character_tag): pose about data-pivot, followers, eye rig, layer order ----------
+  function nums(s) { return (s || '').trim().split(/\s+/).map(Number) }
+  function byId(root, id) { return root.querySelector('#' + id) || root.querySelector('[id="' + id + '"]') }
+  /** rotate / scale / move a tagged part about its own pivot; the angle stays within data-max-rot;
+   *  elements with data-follow="<id>" (e.g. the chin shadow) get the same transform */
+  function pose(root, id, p) {
+    var el = byId(root, id); if (!el) return
+    var pv = nums(el.getAttribute('data-pivot')), px = pv[0] || 0, py = pv[1] || 0
+    var max = parseFloat(el.getAttribute('data-max-rot'))
+    var rot = p.rot || 0; if (!isNaN(max)) rot = clamp(rot, -max, max)
+    var sx = p.sx == null ? (p.s == null ? 1 : p.s) : p.sx, sy = p.sy == null ? (p.s == null ? 1 : p.s) : p.sy
+    var t = 'translate(' + f((p.x || 0) + px) + ' ' + f((p.y || 0) + py) + ') rotate(' + f(rot) + ') scale(' + Math.round(sx * 1000) / 1000 + ' ' + Math.round(sy * 1000) / 1000 + ') translate(' + f(-px) + ' ' + f(-py) + ')'
+    el.setAttribute('transform', t)
+    root.querySelectorAll('[data-follow="' + id + '"]').forEach(function (x) { x.setAttribute('transform', t) })
+  }
+  /** an eye made with the eye rig: scale (surprise 1.2–1.35), look (-1…1 each way), pupil size (0.6–1.2).
+   *  The white is the whole eye, the pupil is clipped inside it, so nothing tears open */
+  function eyeRig(root, id, p) {
+    var el = byId(root, id); if (!el) return
+    var g = nums(el.getAttribute('data-eye')), cx = g[0], cy = g[1], rx = g[2], ry = g[3]
+    var sc = clamp(p.scale == null ? 1 : p.scale, 0.5, 1.4)
+    el.setAttribute('transform', 'translate(' + f(cx) + ' ' + f(cy) + ') scale(' + Math.round(sc * 1000) / 1000 + ') translate(' + f(-cx) + ' ' + f(-cy) + ')')
+    var pupil = byId(root, id.replace(/^eye-/, 'pupil-')) || el.querySelector('[id^="pupil"]')
+    var c = pupil && pupil.querySelector('[data-role="content"]'); if (!c) return
+    var pv = nums(pupil.getAttribute('data-pivot')), px = pv[0] || cx, py = pv[1] || cy
+    var ps = clamp(p.pupil == null ? 1 : p.pupil, 0.5, 1.3)
+    // the pupil stays mostly inside the white: travel = 45% of the eye radius
+    var dx = clamp(p.lookX || 0, -1, 1) * rx * 0.45, dy = clamp(p.lookY || 0, -1, 1) * ry * 0.45
+    c.setAttribute('transform', 'translate(' + f(px + dx) + ' ' + f(py + dy) + ') scale(' + Math.round(ps * 1000) / 1000 + ') translate(' + f(-px) + ' ' + f(-py) + ')')
+  }
+  /** put a part just above or below another one (moves the element only when the order changes) */
+  function layer(root, id, refId, where) {
+    var el = byId(root, id), ref = byId(root, refId); if (!el || !ref || el === ref) return
+    if (where === 'below') { if (el.nextElementSibling !== ref) ref.parentNode.insertBefore(el, ref) }
+    else if (ref.nextElementSibling !== el) ref.parentNode.insertBefore(el, ref.nextSibling)
+  }
+
   var CHARS = []
   var SvgRig = {
     V: V, clamp: clamp, lerp: lerp, noise: noise, rng: mulberry32, brow: brow, eye: eye, mouth: mouth, limb: limb, autoBlink: autoBlink, f: f,
+    pose: pose, eyeRig: eyeRig, layer: layer,
     // register a character: host element, default params, render(P, t, host)
     add: function (host, defs, render) {
       for (var k in defs) if (host.style.getPropertyValue('--' + k) === '') host.style.setProperty('--' + k, String(defs[k]))

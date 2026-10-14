@@ -1,6 +1,6 @@
 // Instant variations (no Claude): speed-matched 6s and scaled 1280x720, exported and probed.
 // Run: MS_SANDBOX=<dir> node tests/e2e/variations-quick.mjs
-import { grantAccess } from './access.mjs'
+import { grantAccess, toHome } from './access.mjs'
 import { _electron as electron } from 'playwright-core'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
@@ -24,7 +24,7 @@ const shot = async (n) => {
 }
 const probe = (f) => execFileSync(ffprobe, ['-v', 'error', '-show_entries', 'stream=codec_type,width,height:format=duration', '-of', 'compact', f], { encoding: 'utf8' }).trim().replace(/\n/g, ' | ')
 try {
-  await win.getByText('브리프를 정리하고').waitFor({ timeout: 90000 })
+  await toHome(win)
   const list = await win.evaluate(() => window.studio.projects.list())
   const original = list.find((p) => !p.family)
   await win.evaluate((p) => window.studio.projects.open(p), original.path)

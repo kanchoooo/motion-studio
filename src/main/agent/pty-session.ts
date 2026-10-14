@@ -30,15 +30,16 @@ import { mcpTokenFor, setToolHooks } from './mcp-http'
 import { endPermissions } from './permissions'
 import { sessionPath } from './cliShims'
 import { COMPOSITION_CONTRACT, STUDIO_PROMPT } from './prompt'
+import { writeBriefDoc } from './briefDoc'
 import { findTranscript, TranscriptTail } from './transcript'
 
 type Emit = (e: AgentEvent) => void
 
 export const pluginDir = () => (isDev ? join(appRoot(), 'resources', 'claude-plugin') : join(process.resourcesPath, 'claude-plugin'))
 
-/** project default unless the designer picks another in the chat panel: latest Opus, high effort */
+/** project default unless the designer picks another in the chat panel: latest Opus, extra-high effort (a build plans, researches and reviews) */
 export const DEFAULT_MODEL = 'opus'
-export const DEFAULT_EFFORT = 'high'
+export const DEFAULT_EFFORT = 'xhigh'
 /** variation re-layouts running at the same time (each is a Claude session of its own) */
 export const MAX_ADAPTING = 4
 
@@ -273,6 +274,8 @@ export class SessionManager {
 
     const studioDir = join(dir, '.studio')
     mkdirSync(studioDir, { recursive: true })
+    // the brief in the HyperFrames format: the workflows take their "BRIEF.md exists" path
+    writeBriefDoc(dir, projects.state(projectId).brief)
     const promptFile = join(studioDir, 'system-prompt.md')
     writeText(promptFile, STUDIO_PROMPT)
     // subagents do not get the appended prompt: they read the composition rules from here
@@ -290,9 +293,10 @@ export class SessionManager {
       permissions: {
         // Read(path) covers every file-reading tool (Glob, Grep), Edit(path) every writing tool
         // the HyperFrames CLI (check, snapshot, add <block> …) runs without asking: it only works inside the project
-        allow: ['mcp__studio', ...(artlist ? ['mcp__artlist'] : []), 'Skill', 'Agent', 'Read(./**)', 'Edit(./composition/**)', 'Bash(hyperframes:*)', 'Bash(npx hyperframes:*)', 'Bash(npx -y hyperframes:*)', 'Bash(npx --yes hyperframes:*)', 'Bash(cd composition && hyperframes:*)', 'Bash(cd composition && npx hyperframes:*)'],
+        // WebSearch: researching strong ads for the category before planning (reading a page still asks)
+        allow: ['mcp__studio', ...(artlist ? ['mcp__artlist'] : []), 'Skill', 'Agent', 'WebSearch', 'Read(./**)', 'Edit(./composition/**)', 'Bash(hyperframes:*)', 'Bash(npx hyperframes:*)', 'Bash(npx -y hyperframes:*)', 'Bash(npx --yes hyperframes:*)', 'Bash(cd composition && hyperframes:*)', 'Bash(cd composition && npx hyperframes:*)'],
         // files the app manages: denied in every mode, never even asked
-        deny: ['Edit(./composition/ms/**)', 'Edit(./composition/vendor/**)', 'Edit(./composition/assets/**)', 'Edit(./composition/fonts/**)', 'Edit(./brief.json)', 'Edit(./overrides.json)', 'Edit(./references/**)', 'Edit(./project.json)', 'Edit(./.history/**)', 'Edit(./.studio/**)'],
+        deny: ['Edit(./composition/BRIEF.md)', 'Edit(./composition/ms/**)', 'Edit(./composition/vendor/**)', 'Edit(./composition/assets/**)', 'Edit(./composition/fonts/**)', 'Edit(./brief.json)', 'Edit(./overrides.json)', 'Edit(./references/**)', 'Edit(./project.json)', 'Edit(./.history/**)', 'Edit(./.studio/**)'],
       },
       // anything else (a command, a web page, a file outside the project) is asked through the app:
       // a card in the chat ("물어보기") or allowed at once ("모두 허용")
@@ -300,6 +304,8 @@ export class SessionManager {
         PermissionRequest: [{ matcher: '*', hooks: [{ type: 'http', url: `${previewBase()}/hook/${mcpTokenFor(projectId)}/permission`, timeout: 900 }] }],
         // the first composition write of a conversation waits until the HyperFrames workflow skill was read
         PreToolUse: [{ matcher: 'Write|Edit|MultiEdit', hooks: [{ type: 'http', url: `${previewBase()}/hook/${mcpTokenFor(projectId)}/pretool`, timeout: 30 }] }],
+        // a turn that changed the video ends only after it was checked, looked at and (a build) reviewed
+        Stop: [{ hooks: [{ type: 'http', url: `${previewBase()}/hook/${mcpTokenFor(projectId)}/stop`, timeout: 30 }] }],
       },
       // replies and the notes between tool calls in the designer's language
       language: 'Korean',
@@ -641,6 +647,11 @@ export class SessionManager {
     const l = this.live.get(projectId)
     const item = l?.appItems.find((x) => x.id === itemId)
     if (l && item?.role === 'storyboard') this.updateApp(l, { ...item, status: 'approved' })
+  }
+
+  /** the stop gate sent Claude back to work: the turn is not over */
+  holdTurn(projectId: string) {
+    this.live.get(projectId)?.tail.hold()
   }
 
   /** a variation still waiting or being re-laid out in this run */
