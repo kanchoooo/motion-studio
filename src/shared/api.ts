@@ -413,6 +413,8 @@ export interface HelperContext {
   style: string
   framing: string
   prompt: string
+  /** reference images picked for the generation (absolute paths, filled in by the main process) */
+  references?: string[]
 }
 
 export interface HelperReply {

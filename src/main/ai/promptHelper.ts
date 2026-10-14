@@ -4,8 +4,8 @@
 // login, no tools, and its own conversation per helper chat (--session-id, then
 // --resume). Nothing here touches the designer's Claude Code settings.
 import { execFile } from 'node:child_process'
-import { mkdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
+import { extname, join } from 'node:path'
 import { claudeEnv } from '../claude-env'
 import { claudeBinary } from '../doctor'
 import { dataDir } from '../paths'
@@ -22,6 +22,8 @@ export const HELPER_SYSTEM = `너는 모션스튜디오 소재 탭의 "프롬프
 - 얼굴 앞 가림 없음(손, 소품, 안경, 마스크, 얼굴을 가로지르는 머리카락)
 - 무표정 또는 옅은 미소, 눈 뜨고 입 다묾
 - 단색 배경
+
+참고 이미지가 주어지면 반드시 Read 도구로 열어서 본다. 인물의 생김새·머리 모양과 색·옷의 형태와 색·소품·색감·그림체 중 사용자가 원하는 점을 구체적인 묘사로 옮긴다(이미지 파일 이름이나 "참고 이미지처럼" 같은 말은 쓰지 않는다 — 이미지 모델은 그 말을 모른다). 무엇을 참고했는지 메모에 한 줄 쓴다. 이미지 말고 다른 파일은 열지 않는다.
 
 스타일이 "스타일 없음"이면 위 규칙은 붙지 않는다. 그때는 사용자가 원하는 이미지를 그대로 잘 묘사하는 프롬프트를 쓴다(캐릭터가 아니어도 된다).
 
@@ -56,7 +58,25 @@ const started = new Set<string>()
 export function askHelper(sessionId: string, message: string, ctx: HelperContext): Promise<HelperReply> {
   const cwd = join(dataDir(), 'prompt-helper')
   mkdirSync(cwd, { recursive: true })
-  const input = `[지금 설정] 이미지 모델: ${ctx.model || '자동'} (권장 언어: ${ctx.lang}) · 스타일: ${ctx.style} · 구도: ${ctx.framing}\n[현재 프롬프트 칸] ${ctx.prompt.trim() || '(비어 있음)'}\n\n${message}`
+  // reference images go next to the helper (its working folder) so its Read tool may open them
+  const refs: string[] = []
+  for (const [i, src] of (ctx.references ?? []).entries()) {
+    if (!existsSync(src)) continue
+    const dir = join(cwd, sessionId.replace(/[^\w-]/g, ''))
+    mkdirSync(dir, { recursive: true })
+    const dst = join(dir, `참고-${i + 1}${extname(src).toLowerCase() || '.png'}`)
+    copyFileSync(src, dst)
+    refs.push(dst)
+  }
+  const input = [
+    `[지금 설정] 이미지 모델: ${ctx.model || '자동'} (권장 언어: ${ctx.lang}) · 스타일: ${ctx.style} · 구도: ${ctx.framing}`,
+    `[현재 프롬프트 칸] ${ctx.prompt.trim() || '(비어 있음)'}`,
+    refs.length ? `[참고 이미지 — Read로 열어 보세요]\n${refs.join('\n')}` : '',
+    '',
+    message,
+  ]
+    .filter((l, i) => l || i === 3)
+    .join('\n')
   const first = !started.has(sessionId)
   const args = [
     '-p',
@@ -65,8 +85,10 @@ export function askHelper(sessionId: string, message: string, ctx: HelperContext
     'haiku',
     '--effort',
     'high',
+    // Read only, for the reference images (nothing else can run)
     '--tools',
-    '',
+    refs.length ? 'Read' : '',
+    ...(refs.length ? ['--allowedTools', 'Read'] : []),
     '--system-prompt',
     HELPER_SYSTEM,
     '--output-format',

@@ -351,7 +351,11 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
     // (a kept asset's brief entry is updated by the brief screen)
     return info
   })
-  handle('ai:askHelper', (sid: string, message: string, ctx: HelperContext) => askHelper(sid, message, ctx))
+  handle('ai:askHelper', (sid: string, message: string, ctx: HelperContext & { projectId?: string; referenceFiles?: string[] }) => {
+    // the generator's picked reference assets (composition-relative) → files the helper can look at
+    const refs = ctx.projectId ? (ctx.referenceFiles ?? []).map((r) => join(projects.pathOf(ctx.projectId!), 'composition', r)) : []
+    return askHelper(sid, message, { ...ctx, references: refs })
+  })
   handle('ai:codexStatus', (force?: boolean) => codexStatus(!!force))
   handle('ai:audioCandidates', (id: string) => readJson<AudioCandidateList | null>(join(projects.pathOf(id), '.studio', 'audio-candidates.json'), null))
   handle('ai:searchAudio', (id: string, input: { query: string; kind: 'bgm' | 'sfx' }) => {

@@ -152,7 +152,13 @@ export function AssetGenerator({ brief, onAdd }: { brief: Brief; onAdd(a: Asset)
             </div>
             <textarea className="textarea" rows={4} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="예) 초록 야구모자를 살짝 비스듬히 쓴 여덟 살 개구쟁이 소년, 주황 후드티, 따뜻한 노란 배경" data-testid="gen-prompt" />
           </div>
-          {helper && <PromptHelper ctx={{ model: model?.label ?? model?.model ?? '자동', lang: PROMPT_LANG_LABELS[lang], style: STYLE_LABELS[style], framing: style === 'flat-character' ? FRAMING_LABELS[framing] : '-', prompt }} onUse={setPrompt} />}
+          {helper && (
+            <PromptHelper
+              ctx={{ model: model?.label ?? model?.model ?? '자동', lang: PROMPT_LANG_LABELS[lang], style: STYLE_LABELS[style], framing: style === 'flat-character' ? FRAMING_LABELS[framing] : '-', prompt, projectId: pid, referenceFiles: refs }}
+              refsCount={refs.length}
+              onUse={setPrompt}
+            />
+          )}
 
           {imageAssets.length > 0 && (
             <div className="col" style={{ gap: 6 }}>
@@ -318,7 +324,7 @@ interface HelperMsg {
 }
 
 /** mini chat with the prompt helper (latest Haiku); its prompt goes into the box with one click */
-function PromptHelper({ ctx, onUse }: { ctx: { model: string; lang: string; style: string; framing: string; prompt: string }; onUse(p: string): void }) {
+function PromptHelper({ ctx, refsCount, onUse }: { ctx: { model: string; lang: string; style: string; framing: string; prompt: string; projectId: string; referenceFiles: string[] }; refsCount: number; onUse(p: string): void }) {
   const [sid, setSid] = useState(() => crypto.randomUUID())
   const [msgs, setMsgs] = useState<HelperMsg[]>([])
   const [text, setText] = useState('')
@@ -346,7 +352,10 @@ function PromptHelper({ ctx, onUse }: { ctx: { model: string; lang: string; styl
     <div className="card" style={{ padding: 10, background: 'var(--surface-2)', display: 'flex', flexDirection: 'column', gap: 8 }} data-testid="prompt-helper">
       <div className="row tiny muted">
         <MessageCircle size={12} />
-        <span className="grow">원하는 이미지와 언어(영어·중국어 …)를 말하면 프롬프트를 만들어 줘요. 최신 Haiku · 추론 높음</span>
+        <span className="grow">
+          원하는 이미지와 언어(영어·중국어 …)를 말하면 프롬프트를 만들어 줘요. 최신 Haiku · 추론 높음
+          {refsCount > 0 ? ` · 고른 참고 소재 ${refsCount}개를 보고 써요` : ' · 아래 참고 소재를 고르면 그 이미지도 보고 써요'}
+        </span>
         <button
           className="btn ghost sm"
           style={{ height: 22 }}
