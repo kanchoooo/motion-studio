@@ -454,6 +454,19 @@
 - [x] AI 연결 창 Codex 카드(사용량 막대, 새로 조회), Claude 도구 `codex_image` + ai_status
 - [x] 실제 확인: `tests/e2e/codex-image.mjs` 7개, Codex로 만든 캐릭터(흉상)가 약 70초 만에 도착, SVG 도형 32개·차이 0.47% 통과
 
+## Phase 9 — 모션 품질 (그냥 Claude Code와의 차이 줄이기, 2026-10-14)
+
+원인 분석: 공식 HyperFrames 흐름(길잡이·작업 흐름·하위 에이전트·블록·검사/스냅샷)이 빠져 있었고, 편집용 절대 좌표 강제·설치 폰트 제한·수정 3번 제한·정지 이미지 레퍼런스가 품질을 묶고 있었음.
+
+- [x] 공식 흐름: HyperFrames 0.8.157 + 공식 스킬 14개, `hyperframes`·`npx hyperframes`를 앱 내장 CLI로 연결(노드 불필요, 미리 허용), 하위 에이전트 허용, 하위 에이전트용 규칙 파일
+- [x] 편집 규칙: 만들 땐 자유 배치 → 마지막 '편집 준비'에서 measure_layout 값으로 절대 위치, layout_snapshot 전후 비교, check_video 경고(ms_not_edit_ready)
+- [x] 폰트: 지정 없으면 Google Fonts·Pretendard를 프로젝트에 받아 씀(get_web_font, 오프라인 렌더, 편집 폰트 목록에 표시)
+- [x] 검수: 수정 횟수 제한 없음, check + 스냅샷 시트로 검수
+- [x] 레퍼런스: 0.1초 간격 움직임 시트(2초/장)·움직임 곡선·컷 리듬, 필요한 구간만 잘라 넣으라는 안내
+- [x] 프롬프트 도우미가 고른 참고 소재 이미지를 보고 씀(Read만 허용)
+- 테스트: helper-refs(실제 Haiku), ref-sheets, webfonts(단위), cli-shims, 회귀(runtime·editor-p7·home-export-p7·ae-package·assets-p7) 통과
+- [ ] 실제 Claude로 공식 흐름 확인(official-flow-live)
+
 ## 작업 기록
 
 | 날짜 | 단계 | 내용 |

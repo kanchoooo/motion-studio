@@ -118,7 +118,9 @@ poc/               Phase 0 기술 검증 기록 (RESULTS.md)
   - 그 밖의 권한 질문은 `PermissionRequest` **HTTP 훅**이 앱에 묻는다(`/hook/<토큰>/permission`, `agent/permissions.ts`).
     - "물어보기": 대화창 카드로 묻는다. 14분 안에 답이 없으면 거부한다.
     - "모두 허용": 앱이 바로 허용한다.
-  - `--tools Read,Write,Edit,Glob,Grep,Skill,Bash,WebFetch,WebSearch` (Bash·웹은 위 질문을 거친다)
+  - `--tools Read,Write,Edit,Glob,Grep,Skill,Agent,Bash,WebFetch,WebSearch` (Bash·웹은 위 질문을 거친다. Agent = 공식 흐름의 하위 에이전트)
+  - PATH 맨 앞에 `userData/cli/`: `hyperframes`·`npx hyperframes`가 앱 안 HyperFrames CLI(앱의 노드)로 간다(`agent/cliShims.ts`). 이 명령들은 미리 허용.
+  - 하위 에이전트는 덧붙인 시스템 프롬프트를 못 받으므로 `.studio/motion-studio-rules.md`(컴포지션 규칙)를 읽게 한다.
   - `--setting-sources ""` (개인 설정, 훅, 플러그인 제외)
   - `--strict-mcp-config` + 앱 MCP 서버만 연결
 - **메시지 입력**: 텍스트를 쓰고 0.8초 뒤 Enter를 따로 보낸다. 한 번에 보내면 붙여넣기로 인식된다.
