@@ -22,6 +22,7 @@ import { fullCheck, lastElements } from '../checks'
 import { listFonts } from '../fonts'
 import * as history from '../history'
 import { snapshot } from '../hyperframes'
+import { addRegistryItem, describeItem, registryItems, searchRegistry } from '../registry'
 import { bin } from '../paths'
 import * as projects from '../projects'
 import { characterParts, checkCharacterFolder, embedCharacter, readCharacter, tagCharacter } from '../character/convert'
@@ -364,6 +365,64 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
     },
   )
 
+  // ---- the HyperFrames registry shipped with the app (blocks + components, with pictures) ----
+
+  server.registerTool(
+    'find_blocks',
+    {
+      description:
+        'Search the HyperFrames registry that ships inside the app (~450 ready-made blocks and components: transitions, text effects, overlays, light leaks, charts, device mockups, shader backgrounds …) for a look, in plain English ("light leak warm glow", "kinetic typography slam", "logo outro"). Returns one line per match (name, kind, size, length, what it does) and a picture of each match that has a preview — three moments of its motion side by side, left to right. Use it before hand-building any named look, then add_block the one that fits.',
+      inputSchema: {
+        query: z.string().min(2).describe('the look in plain English words'),
+        kind: z.enum(['block', 'component']).optional().describe('block = its own scene/sub-composition with size and length; component = an effect snippet merged into your HTML'),
+        limit: z.number().int().min(1).max(10).optional().describe('default 6'),
+      },
+    },
+    async ({ query, kind, limit }) => {
+      if (!registryItems().length) return text('The registry copy is missing in this app. Use `hyperframes catalog --query "…" --json` instead.')
+      const found = searchRegistry(query, { kind, limit: limit ?? 6 })
+      if (!found.length) return text(`Nothing in the registry matches "${query}". Try other words (what it looks like, not the product), or build it from the hyperframes-animation rules.`)
+      const { brief } = st()
+      const content: ({ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string })[] = [
+        { type: 'text', text: `${found.length} match(es) for "${query}" (this video: ${brief.output.width}x${brief.output.height}; a block of another size must be scaled or adapted):\n${found.map(describeItem).join('\n')}` },
+      ]
+      for (const item of found) {
+        if (!item.preview) continue
+        content.push({ type: 'text', text: `${item.name} — preview` })
+        content.push({ type: 'image', data: readFileSync(item.preview).toString('base64'), mimeType: 'image/jpeg' })
+      }
+      return { content }
+    },
+  )
+
+  server.registerTool(
+    'add_block',
+    {
+      description:
+        'Install a registry block or component (a name from find_blocks) into composition/: from the copy inside the app, at once, without the network or the clipboard. Returns the files written. Then wire it: a block is a sub-composition — include it with data-composition-src (Read the file for its data-composition-id, size and length); a component is a snippet — Read it and merge its HTML, CSS and JS into your composition (see the hyperframes-registry skill).',
+      inputSchema: { name: z.string().min(2) },
+    },
+    async ({ name }) => {
+      const item = registryItems().find((i) => i.name === name)
+      if (registryItems().length && !item) return text(`No registry item is called "${name}". Use find_blocks to get the exact name.`)
+      if (item?.kind === 'example') return text(`"${name}" is an example project, not something to add. Pick a block or component.`)
+      const r = await addRegistryItem(join(dir(), 'composition'), name)
+      if (!r.ok) return text(`Install failed: ${r.error ?? 'unknown error'}`)
+      const size = item?.width && item.height ? ` (${item.width}x${item.height}${item.duration ? `, ${item.duration}s` : ''})` : ''
+      return text(
+        [
+          `Installed ${name}${item ? ` — a ${item.kind}${size}` : ''}. Files:`,
+          ...r.written.map((f) => `  ${f}`),
+          r.snippet ? `Snippet: ${r.snippet}` : '',
+          ...r.warnings.map((w) => `Warning: ${w}`),
+          item?.kind === 'block' ? 'Wire it with data-composition-src; Read the file first for its data-composition-id.' : 'Read the file and merge its HTML / CSS / JS into your composition.',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      )
+    },
+  )
+
   // ---- AI generation (Higgsfield / Magnific through the app) and sound search (Artlist) ----
 
   server.registerTool(
@@ -694,6 +753,8 @@ export const STUDIO_TOOL_LABELS: Record<string, string> = {
   mcp__studio__use_sound_effect: '효과음을 넣고 있어요',
   mcp__studio__get_version: '이전 버전을 살펴보고 있어요',
   mcp__studio__look_at_frames: '장면을 직접 확인하고 있어요',
+  mcp__studio__find_blocks: '바로 쓸 수 있는 효과를 찾고 있어요',
+  mcp__studio__add_block: '효과 부품을 넣고 있어요',
   mcp__studio__ai_status: 'AI 생성 도구를 확인하고 있어요',
   mcp__studio__ai_tools: 'AI 생성 도구를 확인하고 있어요',
   mcp__studio__ai_call: 'AI로 소재를 만들고 있어요',

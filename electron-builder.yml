@@ -49,6 +49,10 @@ extraResources:
   # built-in sound effects (scripts/make-sfx.mjs)
   - from: resources/sfx
     to: sfx
+  # the HyperFrames registry: blocks/components + previews (scripts/fetch-registry.mjs)
+  - from: resources/hf-registry
+    to: hf-registry
+    filter: ['offline-fetch.mjs', 'mirror.json', 'mirror/**', 'previews/**']
 
 # ELECTRON_RUN_AS_NODE must stay enabled: HyperFrames runs on the app's own Node
 # auto-update: the app reads releases of this (public) repository

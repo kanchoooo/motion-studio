@@ -496,6 +496,13 @@
 - [x] 9. 품질: 보관된 세션 분석(앱 세션 0.2.7~0.2.8 vs 스튜디오 총괄 세션) → BRIEF.md(general-video·companion·storyboard), 필수 참고 읽기·조사·DESIGN.md/STORYBOARD.md 뒤에 콘티, 인용 레시피 읽기 뒤에 제작, 독립 검수 에이전트(motion-reviewer) + 끝내기 전 확인(Stop 훅), 기본 추론 강도 high(검수 에이전트도 채팅에서 고른 강도를 따름), 시스템 프롬프트 정리(미디어 안내는 스킬로)
 - 테스트: 단위(gates·BRIEF.md·character-rig 포함), home-tree(폴더·베리에이션·템플릿·결과물·콘티 카드·방향 입력), revise-live(Codex 실제 2장), quality-flow-live(실제 Claude, 새 흐름 끝까지)
 
+## Phase 12 — 0.3.1 (2026-10-15)
+
+- [x] 기본 추론 강도 매우 높음 → 높음. 검수 에이전트도 채팅에서 고른 강도를 따름(PreToolUse 훅이 검수 호출에 세션 강도를 넣음)
+- [x] HyperFrames 레지스트리(블록 210·컴포넌트 237, CLI와 같은 v0.8.157)를 앱에 내장: `hyperframes add`·`catalog`가 인터넷 없이 바로, 설치 때 디자이너 클립보드를 덮어쓰지 않게
+- [x] Claude 도구 find_blocks(쉬운 영어로 찾기, 움직임 세 장면 미리보기 152개)·add_block(바로 설치)
+- 테스트: 단위(주소→사본, 검색, 네트워크 막고 CLI 설치·검색, 세션 명령의 클립보드, MCP 도구), 패키지 앱에서 한글 경로·네트워크 차단 설치, reviewer-effort-live·quality-flow-live(실제 Claude)
+
 ## 작업 기록
 
 | 날짜 | 단계 | 내용 |

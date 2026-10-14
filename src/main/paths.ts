@@ -3,6 +3,7 @@
 import { app } from 'electron'
 import { existsSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 const exe = (name: string) => (process.platform === 'win32' ? `${name}.exe` : name)
 
@@ -40,6 +41,16 @@ export const hyperframes = {
   dist: () => join(nodeModules(), 'hyperframes', 'dist'),
   playerScript: () => join(nodeModules(), 'hyperframes', 'dist', 'hyperframes-player.global.js'),
   runtimeScript: () => join(nodeModules(), 'hyperframes', 'dist', 'hyperframe.runtime.iife.js'),
+}
+
+/** the HyperFrames registry copy shipped with the app (scripts/fetch-registry.mjs) */
+export const registry = {
+  dir: () => (isDev ? join(appRoot(), 'resources', 'hf-registry') : join(process.resourcesPath, 'hf-registry')),
+  /** Node flags that make the HyperFrames CLI answer registry requests from the copy */
+  nodeArgs: (): string[] => {
+    const hook = join(registry.dir(), 'offline-fetch.mjs')
+    return existsSync(hook) ? ['--import', pathToFileURL(hook).href] : []
+  },
 }
 
 /** files copied into every project's composition/ (ms runtime, local GSAP) */

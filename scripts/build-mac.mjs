@@ -234,6 +234,8 @@ if (!notarize) delete env.APPLE_KEYCHAIN_PROFILE
 
 try {
   await run('npx', ['electron-vite', 'build'])
+  // the HyperFrames registry the app ships (same for every CPU; skipped when already this version)
+  await run('node', ['scripts/fetch-registry.mjs'])
   for (const arch of arches) {
     const target = `darwin-${arch}`
     // native packages for the target CPU (lets an Intel Mac build the M-chip app too)

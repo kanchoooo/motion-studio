@@ -37,6 +37,10 @@ step(`FFmpeg · ffprobe · yt-dlp (${target})`)
 const b = run(process.execPath, [join(root, 'scripts', 'fetch-binaries.mjs')])
 if (b.status !== 0) process.exit(b.status ?? 1)
 
+step('HyperFrames 레지스트리 (앱에 넣는 블록·컴포넌트와 미리보기)')
+const g = run(process.execPath, [join(root, 'scripts', 'fetch-registry.mjs')])
+if (g.status !== 0) warn('레지스트리를 받지 못했어요. 나중에 npm run registry 로 다시 받으세요 (없으면 설치할 때 인터넷에서 받아요)')
+
 step('Claude Code (Agent SDK에 포함된 실행 파일)')
 const claude = join(root, 'node_modules', '@anthropic-ai', `claude-agent-sdk-${target}`, win ? 'claude.exe' : 'claude')
 if (!existsSync(claude)) warn(`실행 파일이 없어요: ${claude}\n    npm ci를 다시 실행해 주세요.`)

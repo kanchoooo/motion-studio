@@ -53,6 +53,7 @@ npm run dev        # 개발 모드 실행
 | `node tests/e2e/variations-quick.mjs` 등 | 기존 프로젝트로 베리에이션·사운드·기능 검수 (`MS_SANDBOX=<live-flow 폴더>`) |
 | `npm run dist:mac` (`dist:mac-arm64`, `dist:mac-x64`) | Mac 설치 파일: 서명·공증 (`release/`, 6장 참고) |
 | `npm run dist:win` | Windows 설치 파일 (미서명) |
+| `npm run registry` | 앱에 넣는 HyperFrames 레지스트리 사본 받기 (`resources/hf-registry`, 5-4장) |
 
 E2E 스크린샷은 `tests/e2e/shots*/`에 저장된다. 기존 프로젝트로 검수하려면 다음을 실행한다.
 
@@ -119,7 +120,8 @@ poc/               Phase 0 기술 검증 기록 (RESULTS.md)
     - "물어보기": 대화창 카드로 묻는다. 14분 안에 답이 없으면 거부한다.
     - "모두 허용": 앱이 바로 허용한다.
   - `--tools Read,Write,Edit,Glob,Grep,Skill,Agent,Bash,WebFetch,WebSearch` (Bash·웹은 위 질문을 거친다. Agent = 공식 흐름의 하위 에이전트)
-  - PATH 맨 앞에 `userData/cli/`: `hyperframes`·`npx hyperframes`가 앱 안 HyperFrames CLI(앱의 노드)로 간다(`agent/cliShims.ts`). 이 명령들은 미리 허용.
+  - PATH 맨 앞에 `userData/cli/`: `hyperframes`·`npx hyperframes`가 앱 안 HyperFrames CLI(앱의 노드)로 간다(`agent/cliShims.ts`). 이 명령들은 미리 허용. `add`에는 항상 `--no-clipboard`를 붙인다(CLI는 기본으로 클립보드에 복사함).
+  - **레지스트리 사본**(`resources/hf-registry/`, 5-4장): CLI는 늘 `--import offline-fetch.mjs`로 실행(`registry.nodeArgs()`, 세션 명령과 `runHf` 모두) → 레지스트리 요청을 앱 안 사본에서 답한다. Claude 도구 `find_blocks`(검색 + 움직임 미리보기)·`add_block`(설치).
   - 하위 에이전트는 덧붙인 시스템 프롬프트를 못 받으므로 `.studio/motion-studio-rules.md`(컴포지션 규칙)를 읽게 한다.
   - `PreToolUse` **HTTP 훅**(`/hook/<토큰>/pretool`): 대화에서 처음 영상 파일(composition/의 .html·.css·.js)을 쓰기 전에 대화 기록에 HyperFrames 라우터나 작업 흐름 스킬(`hyperframes`, `general-video` …)을 읽은 흔적이 있는지 확인하고, 없으면 돌려보내요(이유는 한국어로). 새 영상(`data-ms-empty`)에 STORYBOARD.md가 있으면 인용한 모션 레시피 본문(`hyperframes-animation/blueprints|rules/*.md`)을 읽기 전의 첫 쓰기도 돌려보내요.
   - **품질 관문**(`agent/gates.ts`, 대화 기록 + 하위 에이전트 기록을 읽음):
@@ -152,6 +154,13 @@ poc/               Phase 0 기술 검증 기록 (RESULTS.md)
 - `check.cjs` / MCP `character_check`: pivot 있는 부위를 최대 각도 양쪽으로 돌려 pivot 둘레의 틈(닫힘 연산으로 찾는 가는 빈틈, 빨강)과 비킨 자리에 드러난 같은 색(자홍), 눈 장치 여부를 `check_sheet.png`로. `data-added` 도형(일부러 숨긴 채움)은 세지 않는다.
 - `svgrig.js`: `SvgRig.pose(svg, id, {rot, s, sx, sy, x, y})`(pivot·최대 각도·follow), `SvgRig.eyeRig(svg, 'eye-l', {scale, lookX, lookY, pupil})`, `SvgRig.layer(svg, id, ref, 'above'|'below')`.
 - `lib.cjs`: 주변보다 훨씬 어두운 가는 띠(다문 입·속눈썹 선)는 안티앨리어싱으로 보고 지우지 않음. 플랫 캐릭터 생성 문장: 그늘이 부위를 넘지 않게, 온전한 흰자 타원, 면으로 된 입, 조금 어두운 목 기둥, 소매·바지 끝단이 손목·발목을 덮게.
+
+## 5-4. HyperFrames 레지스트리 사본 (0.3.1)
+
+- `scripts/fetch-registry.mjs`(`npm run registry`, `setup`·`build-mac`·`dist:win`·CI가 실행): 앱에 든 `hyperframes` 버전의 태그(`v<버전>`) 레지스트리를 통째로 받는다 → `resources/hf-registry/mirror/registry/…`(registry.json, 항목별 registry-item.json과 파일), `mirror/static.heygen.ai/…`(HeyGen CDN에 있는 그림), `previews/<이름>.jpg`(미리보기 영상의 15·50·85% 세 장면을 가로로, 없으면 포스터 480px), `mirror.json`(버전 표시: 같은 버전이면 건너뜀, `--force`로 다시). 저장소에는 `offline-fetch.mjs`만 들어 있고 나머지는 빌드 때 받는다(일부 텍스처는 출처 확인 중이라 공개 저장소에 넣지 않음).
+- `offline-fetch.mjs`: CLI 프로세스의 `fetch`를 감싸, `raw.githubusercontent.com/heygen-com/hyperframes/<아무 ref>/registry/…`와 `static.heygen.ai/…`를 사본 파일로 답하고 없는 것만 네트워크로 보낸다. CLI의 manifest 캐시(`~/.hyperframes/cache`, 24시간)가 신선하면 CLI가 그걸 먼저 쓴다.
+- `src/main/registry.ts`: 사본 목록(`registryItems`), 검색(`searchRegistry`: 단어 끝 맞추기, 이름·제목 4 > 태그 3 > 설명 1, 맞춘 단어 비율을 곱함, 1점 미만 버림), 설치(`addRegistryItem` = `hyperframes add --no-clipboard --json`).
+- 앱 크기: 패키지 안 약 150MB(압축 설치 파일 기준 약 +45~60MB).
 
 ## 5-1. AI 서비스 연결
 

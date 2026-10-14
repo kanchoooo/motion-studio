@@ -13,3 +13,6 @@ poc/**/renders/
 .env.*
 tests/e2e/shots*/
 *.tsbuildinfo
+# HyperFrames registry copy shipped with the app (scripts/fetch-registry.mjs)
+resources/hf-registry/*
+!resources/hf-registry/offline-fetch.mjs

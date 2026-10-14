@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { fpsArg, type OutputFormat, type OutputQuality } from '@shared/brief'
-import { electronNodeEnv, hyperframes } from './paths'
+import { electronNodeEnv, hyperframes, registry } from './paths'
 
 export interface HfResult {
   code: number
@@ -25,7 +25,7 @@ export function runHf(
   opts: { cwd?: string; signal?: AbortSignal; onProgress?: (p: HfProgress) => void; timeoutMs?: number } = {},
 ): Promise<HfResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [hyperframes.cli(), ...args], {
+    const child = spawn(process.execPath, [...registry.nodeArgs(), hyperframes.cli(), ...args], {
       cwd: opts.cwd,
       env: electronNodeEnv(),
       stdio: ['ignore', 'pipe', 'pipe'],
