@@ -127,7 +127,7 @@ poc/               Phase 0 기술 검증 기록 (RESULTS.md)
     - `Stop` **HTTP 훅**(`/hook/<토큰>/stop`): 이번 차례에 영상 파일이 바뀌었으면 마지막 변경 뒤에 `hyperframes check`(또는 check_video)와 스냅샷 시트 Read(또는 look_at_frames)가 있어야 하고, check_video에 `ms_not_edit_ready`가 없어야 하고, 제작 차례(콘티 승인·고도화·전체 Write)면 `motion-studio-hyperframes:motion-reviewer` 검수 에이전트를 돌려야 끝낼 수 있음. 한 차례에 최대 2번 돌려보냄(`decision: block`). 베리에이션·템플릿 메시지는 검수 에이전트 없이 확인만.
     - Stop 훅이 돌려보내면 대화 기록에 end_turn이 먼저 찍히므로 `TranscriptTail`은 차례 끝을 2.5초 미뤘다가, 그사이 훅 메시지(isMeta)나 앱 알림(`holdTurn`)이 오면 계속 작업 중으로 둔다.
   - `composition/BRIEF.md`(`agent/briefDoc.ts`): 브리프를 HyperFrames 브리프 형식(workflow: general-video, flow: companion, storyboard: yes)으로 세션 시작·브리프 저장 때마다 앱이 다시 씀. Claude는 고칠 수 없음(거부 규칙).
-  - 플러그인 에이전트 `resources/claude-plugin/agents/motion-reviewer.md`(opus, effort xhigh, 읽기 전용 + snapshot/look_at_frames): 장면별 [꼭]/[권장] 수정 목록. 플러그인 스킬 `motion-studio-media`: AI 생성·아트리스트·SVG 캐릭터 안내(시스템 프롬프트에서 분리).
+  - 플러그인 에이전트 `resources/claude-plugin/agents/motion-reviewer.md`(opus, 추론 강도는 세션과 같음 — PreToolUse 훅이 Agent 호출에 세션의 `effort`를 넣음, 읽기 전용 + snapshot/look_at_frames): 장면별 [꼭]/[권장] 수정 목록. 플러그인 스킬 `motion-studio-media`: AI 생성·아트리스트·SVG 캐릭터 안내(시스템 프롬프트에서 분리).
   - 기본 추론 강도는 `high`(DEFAULT_EFFORT, 채팅 패널에서 프로젝트별로 바꿀 수 있음). WebSearch는 미리 허용(비슷한 광고 조사), WebFetch는 질문.
   - `PermissionRequest` 훅은 사람에게 묻기 전에 두 가지를 돌려보내요: 영상 파일을 고치는 셸 스크립트(python·node·sed -i·perl -i·리다이렉션·tee → Edit/Write로만), 설명(description)이 한국어가 아닌 명령.
   - 설정 `language: "Korean"`(Claude Code 응답 언어). 중간 메모까지 한국어로 쓰도록 프롬프트에 예시 문장도 있어요.

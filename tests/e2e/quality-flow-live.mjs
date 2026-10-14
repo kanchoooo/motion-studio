@@ -163,6 +163,13 @@ try {
   check('checked with hyperframes check', u.bash.some((c) => /hyperframes (check|lint)/.test(c)))
   check('looked at snapshot contact sheets', u.reads.some((p) => /snapshots?\/.*\.(jpe?g|png)$/.test(p)) || !!u.tools['mcp__studio__look_at_frames'])
   check('the independent reviewer ran', u.agents.some((a) => /motion-reviewer/.test(a)))
+  // the reviewer thinks as hard as the session (the chat panel's setting)
+  const reviewerEfforts = new Set()
+  for (const n of subDir && existsSync(subDir) ? readdirSync(subDir).filter((f) => f.endsWith('.meta.json')) : []) {
+    const m = JSON.parse(readFileSync(join(subDir, n), 'utf8'))
+    if (/motion-reviewer/.test(m.agentType)) reviewerEfforts.add(m.effort)
+  }
+  check(`the reviewer ran at the session effort (${[...reviewerEfforts].join(', ')})`, reviewerEfforts.size === 1 && reviewerEfforts.has('high'))
   check('did 편집 준비 (layout_snapshot before / after)', (u.tools['mcp__studio__layout_snapshot'] ?? 0) >= 2)
   const english = u.texts.filter((t) => !/[가-힣]/.test(t))
   check(`every note to the designer is Korean (${u.texts.length})`, english.length === 0, english.join(' / ').slice(0, 300))

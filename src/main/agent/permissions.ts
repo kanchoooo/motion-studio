@@ -22,6 +22,8 @@ export interface PermissionHooks {
   changed(projectId: string, asks: PermissionAsk[], added?: PermissionAsk): void
   /** the stop gate sent Claude back: the turn goes on */
   stopBlocked?(projectId: string): void
+  /** reasoning effort the running session was started with (the chat panel's setting) */
+  effortOf?(projectId: string): string | undefined
 }
 
 interface Waiting {
@@ -189,6 +191,9 @@ export function readSkills(transcript: string): boolean {
 const SKILL_FIRST =
   '영상을 쓰기 전에 HyperFrames 워크플로를 먼저 읽어야 해요: Skill 도구로 "motion-studio-hyperframes:hyperframes"(라우터)를 부르고, 라우터가 가리키는 워크플로 스킬(광고 영상이면 보통 motion-graphics나 product-launch-video)도 불러서 그대로 따르세요. 대화마다 한 번은 꼭 해야 하고, 작은 수정도 마찬가지예요. 그다음 이 수정을 다시 하세요. 이 안내는 디자이너에게 말하지 말고 한국어로 계속 작업하세요.'
 
+const REVIEWER = /(^|:)motion-reviewer$/
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
+
 async function handlePreTool(req: IncomingMessage, res: ServerResponse, path: string): Promise<boolean> {
   const m = path.match(/^\/hook\/([a-f0-9]+)\/pretool$/)
   const projectId = m ? hooks?.projectFor(m[1]) : undefined
@@ -199,6 +204,14 @@ async function handlePreTool(req: IncomingMessage, res: ServerResponse, path: st
     return true
   }
   const input = (body.tool_input && typeof body.tool_input === 'object' ? body.tool_input : {}) as Record<string, unknown>
+  // the reviewer thinks as hard as the session: its own definition has no effort, and an
+  // effort Claude picked for it is replaced with the one set in the chat panel
+  if (body.tool_name === 'Agent') {
+    const effort = hooks.effortOf?.(projectId)
+    if (!REVIEWER.test(String(input.subagent_type ?? '')) || !effort || !EFFORTS.includes(effort) || input.effort === effort) return (pass(), true)
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', updatedInput: { ...input, effort } } }))
+    return true
+  }
   const file = typeof input.file_path === 'string' ? input.file_path : ''
   let inside = false
   try {

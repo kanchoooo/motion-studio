@@ -302,8 +302,9 @@ export class SessionManager {
       // a card in the chat ("물어보기") or allowed at once ("모두 허용")
       hooks: {
         PermissionRequest: [{ matcher: '*', hooks: [{ type: 'http', url: `${previewBase()}/hook/${mcpTokenFor(projectId)}/permission`, timeout: 900 }] }],
-        // the first composition write of a conversation waits until the HyperFrames workflow skill was read
-        PreToolUse: [{ matcher: 'Write|Edit|MultiEdit', hooks: [{ type: 'http', url: `${previewBase()}/hook/${mcpTokenFor(projectId)}/pretool`, timeout: 30 }] }],
+        // the first composition write of a conversation waits until the HyperFrames workflow skill was read;
+        // the reviewer agent gets the session's reasoning effort
+        PreToolUse: [{ matcher: 'Write|Edit|MultiEdit|Agent', hooks: [{ type: 'http', url: `${previewBase()}/hook/${mcpTokenFor(projectId)}/pretool`, timeout: 30 }] }],
         // a turn that changed the video ends only after it was checked, looked at and (a build) reviewed
         Stop: [{ hooks: [{ type: 'http', url: `${previewBase()}/hook/${mcpTokenFor(projectId)}/stop`, timeout: 30 }] }],
       },
