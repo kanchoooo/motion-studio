@@ -9,8 +9,8 @@ export interface AiProviderMeta {
   id: AiProviderId
   name: string
   url: string
-  /** app = the app holds the OAuth session; claude = Claude Code signs in (/mcp) */
-  client: 'app' | 'claude'
+  /** app = the app holds the OAuth session; claude = Claude Code signs in (/mcp); cli = the designer's own CLI login */
+  client: 'app' | 'claude' | 'cli'
   can: ('image' | 'video' | 'tts' | 'music' | 'sfx')[]
   site: string
 }
@@ -18,6 +18,7 @@ export interface AiProviderMeta {
 export const AI_PROVIDERS: Record<AiProviderId, AiProviderMeta> = {
   higgsfield: { id: 'higgsfield', name: '힉스필드', url: 'https://mcp.higgsfield.ai/mcp', client: 'app', can: ['image', 'video', 'tts'], site: 'https://higgsfield.ai' },
   magnific: { id: 'magnific', name: '매그니픽', url: 'https://mcp.magnific.com', client: 'app', can: ['image', 'video', 'tts'], site: 'https://www.magnific.com' },
+  codex: { id: 'codex', name: 'Codex CLI', url: '', client: 'cli', can: ['image'], site: 'https://developers.openai.com/codex' },
   artlist: { id: 'artlist', name: '아트리스트', url: 'https://mcp.artlist.io/mcp', client: 'claude', can: ['music', 'sfx', 'tts'], site: 'https://artlist.io' },
 }
 
@@ -138,3 +139,23 @@ export interface AiSettings {
   /** prompt language the designer chose per image model ("provider:model") */
   promptLangs?: Record<string, 'en' | 'zh' | 'ko'>
 }
+
+/** Codex CLI as an image model (GPT Image through its built-in image_gen) */
+export interface CodexStatus {
+  installed: boolean
+  path?: string
+  loggedIn: boolean
+  email?: string
+  /** ChatGPT plan (plus, pro …) */
+  plan?: string
+  /** usage windows: 5시간, 주간 … */
+  limits: { label: string; usedPercent: number; resetsAt?: string }[]
+  /** installed, signed in and quota left */
+  usable: boolean
+  /** why it cannot be used now (Korean) */
+  reason?: string
+  checkedAt: string
+}
+
+/** the model id the app uses for Codex's image generation */
+export const CODEX_IMAGE_MODEL = 'gpt-image'

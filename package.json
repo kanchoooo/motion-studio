@@ -20,6 +20,7 @@
     "test": "vitest run",
     "dist:mac-x64": "node scripts/build-mac.mjs --arch x64",
     "dist:mac-arm64": "node scripts/build-mac.mjs --arch arm64",
+    "dist:mac-local": "node scripts/build-mac.mjs --local",
     "dist:win": "npm run build && node scripts/prepare-target.mjs --target win32-x64 && node scripts/fetch-binaries.mjs --target win32-x64 && electron-builder --config electron-builder.config.cjs --win --x64",
     "test:e2e": "npm run build && node tests/e2e/smoke.mjs",
     "test:live": "npm run build && node tests/e2e/live-flow.mjs",

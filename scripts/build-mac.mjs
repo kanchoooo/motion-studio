@@ -1,6 +1,8 @@
 // 모션스튜디오 맥 설치 파일: Developer ID 서명 + 공증 (M칩용·Intel용 각각)
 // 사용법: node scripts/build-mac.mjs [--arch arm64|x64|both] [--release [--notes "변경 내용"]]   (npm run dist:mac)
 //   --release: 빌드가 끝나면 GitHub Releases(kanchoooo/motion-studio)에 v<버전>으로 올린다 → 설치된 앱이 다음 실행 때 자동 업데이트
+//   --local: 개발 중 빠른 확인용. 이 맥의 CPU용 앱만 서명해서 만들고(공증·dmg·zip 없음, 이 맥에서 만든 앱이라 격리 표시가 없음)
+//            /Applications/MotionStudio.app 에 덮어써 설치한다. 열려 있던 앱은 정상 종료 후 다시 연다.
 //
 // 미니미광장(scripts/build-mac.mjs)과 같은 서명 방식·키체인 안전 규칙을 쓴다.
 // 서명: ~/.minimi-signing/DeveloperID_Application.p12 (+ p12-password)
@@ -26,8 +28,10 @@ const dir = process.env.MINIMI_SIGNING_DIR ?? join(homedir(), '.minimi-signing')
 const p12 = join(dir, 'DeveloperID_Application.p12')
 const pwFile = join(dir, 'p12-password')
 const profile = process.env.APPLE_KEYCHAIN_PROFILE ?? 'minimi-notary'
+const local = process.argv.includes('--local')
 const ai = process.argv.indexOf('--arch')
-const archArg = ai > 0 ? process.argv[ai + 1] : 'both'
+const archArg = ai > 0 ? process.argv[ai + 1] : local ? (process.arch === 'arm64' ? 'arm64' : 'x64') : 'both'
+if (local && process.argv.includes('--release')) throw new Error('--local 과 --release 는 같이 쓸 수 없어요')
 const arches = archArg === 'both' ? ['arm64', 'x64'] : [archArg]
 if (!arches.every((a) => a === 'arm64' || a === 'x64')) throw new Error(`--arch 는 arm64, x64, both 중 하나예요: ${archArg}`)
 const LOCK = join(homedir(), '.minimi-signing', '.build.lock')
@@ -35,13 +39,15 @@ const LOCK = join(homedir(), '.minimi-signing', '.build.lock')
 if (!existsSync(p12) || !existsSync(pwFile)) {
   throw new Error(`서명 인증서가 없어요: ${p12} (DEVELOPMENT.md "코드 서명과 공증" 참고)`)
 }
-let notarize = true
-try {
-  execSync(`xcrun notarytool history --keychain-profile ${profile}`, { stdio: 'ignore' })
-} catch {
-  notarize = false
+let notarize = !local
+if (notarize) {
+  try {
+    execSync(`xcrun notarytool history --keychain-profile ${profile}`, { stdio: 'ignore' })
+  } catch {
+    notarize = false
+  }
+  if (!notarize) console.warn(`⚠ 공증 프로필 "${profile}" 이 없어 서명만 하고 공증은 건너뜁니다.`)
 }
-if (!notarize) console.warn(`⚠ 공증 프로필 "${profile}" 이 없어 서명만 하고 공증은 건너뜁니다.`)
 
 const keychain = join(dir, 'build.keychain-db')
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -232,11 +238,11 @@ try {
     // native packages for the target CPU (lets an Intel Mac build the M-chip app too)
     await run('node', ['scripts/prepare-target.mjs', '--target', target])
     await run('node', ['scripts/fetch-binaries.mjs', '--target', target])
-    await run('npx', ['electron-builder', '--config', 'electron-builder.config.cjs', '--mac', 'dmg', 'zip', `--${arch}`, '--publish', 'never'], { ...env, MS_TARGET_ARCH: arch })
+    await run('npx', ['electron-builder', '--config', 'electron-builder.config.cjs', '--mac', ...(local ? ['dir'] : ['dmg', 'zip']), `--${arch}`, '--publish', 'never'], { ...env, MS_TARGET_ARCH: arch })
     // each run writes latest-mac.yml for its own CPU: keep it, they are merged below
     if (existsSync('release/latest-mac.yml')) copyFileSync('release/latest-mac.yml', `release/latest-mac-${arch}.yml`)
   }
-  mergeUpdateInfo()
+  if (!local) mergeUpdateInfo()
   // a quick self-check of what we are about to hand out
   for (const app of ['release/mac/MotionStudio.app', 'release/mac-arm64/MotionStudio.app']) {
     if (!existsSync(app)) continue
@@ -259,6 +265,45 @@ try {
 }
 
 if (process.argv.includes('--release')) publishRelease()
+if (local) installLocal()
+
+/** --local: replaces /Applications/MotionStudio.app with the build (quits the open app first, reopens it after) */
+function installLocal() {
+  const built = arches[0] === 'arm64' ? 'release/mac-arm64/MotionStudio.app' : 'release/mac/MotionStudio.app'
+  const target = '/Applications/MotionStudio.app'
+  if (!existsSync(built)) throw new Error(`빌드한 앱이 없어요: ${built}`)
+  const running = () => {
+    try {
+      return execFileSync('pgrep', ['-f', `${target}/Contents/MacOS/MotionStudio`], { encoding: 'utf8' }).trim().length > 0
+    } catch {
+      return false
+    }
+  }
+  const wasOpen = running()
+  if (wasOpen) {
+    console.log('\n▶ 열려 있는 모션스튜디오를 정상 종료합니다')
+    try {
+      execFileSync('osascript', ['-e', 'tell application id "com.motionstudio.app" to quit'], { stdio: 'ignore', timeout: 20000 })
+    } catch {
+      /* the app may show its own "작업 중" question */
+    }
+    for (let i = 0; i < 60 && running(); i++) execSync('sleep 0.5')
+    if (running()) throw new Error('모션스튜디오가 아직 열려 있어요(작업 중이거나 내보내는 중이면 앱이 종료를 묻습니다). 앱을 닫은 뒤 다시 실행해 주세요.')
+  }
+  const old = '/Applications/.MotionStudio-old.app'
+  if (existsSync(old)) execFileSync('rm', ['-rf', old])
+  if (existsSync(target)) execFileSync('mv', [target, old])
+  try {
+    execFileSync('ditto', [built, target])
+  } catch (e) {
+    if (existsSync(old)) execFileSync('mv', [old, target])
+    throw e
+  }
+  if (existsSync(old)) execFileSync('rm', ['-rf', old])
+  const version = execFileSync('/usr/libexec/PlistBuddy', ['-c', 'Print CFBundleShortVersionString', `${target}/Contents/Info.plist`], { encoding: 'utf8' }).trim()
+  console.log(`\n▶ 설치 완료: ${target} (버전 ${version})`)
+  if (wasOpen) execFileSync('open', [target])
+}
 
 /** one latest-mac.yml listing both CPUs: the updater picks the arm64 or the x64 zip itself */
 function mergeUpdateInfo() {

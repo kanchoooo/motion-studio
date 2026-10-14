@@ -1,6 +1,7 @@
 // Studio tools for Claude, served over local HTTP MCP (one endpoint per project).
 import { execFile } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
+import sharp from 'sharp'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
@@ -9,6 +10,7 @@ import type { Storyboard } from '@shared/api'
 import { AI_PROVIDERS, type AiConnectProvider, type AudioCandidateList } from '@shared/ai'
 import { describeTiming, SECTION_LABELS } from '@shared/brief'
 import { activeAccount } from '../ai/accounts'
+import { codexImage, codexStatus } from '../ai/codex'
 import { callTool, connectedProviders, listTools } from '../ai/connect'
 import { importUrl, saveResultMedia } from '../ai/media'
 import { aiSettings } from '../ai/settings'
@@ -322,10 +324,11 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
 
   server.registerTool(
     'ai_status',
-    { description: 'What AI generation is available right now: connected services (Higgsfield, Magnific: images, video clips, text-to-speech) with the active account, the brief defaults (models, narration), and whether Artlist (music / sound effects) is on. Call this before generating anything.' },
+    { description: "What AI generation is available right now: connected services (Higgsfield, Magnific: images, video clips, text-to-speech) with the active account, the designer's Codex CLI (GPT Image, images only), the brief defaults (models, narration), and whether Artlist (music / sound effects) is on. Call this before generating anything." },
     async () => {
       const { brief } = st()
       const connected = connectedProviders()
+      const cx = await codexStatus().catch(() => null)
       return text(
         JSON.stringify(
           {
@@ -335,6 +338,11 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
               connected: connected.includes(p),
               account: activeAccount(p)?.label,
             })),
+            codex: cx?.installed
+              ? cx.usable
+                ? { usable: true, use: 'codex_image (images only; GPT Image on the designer\'s own ChatGPT quota)', limits: cx.limits }
+                : { usable: false, why: cx.reason }
+              : 'not installed',
             artlist: aiSettings().artlist
               ? 'enabled: use the mcp__artlist__* tools directly (search music, sound effects, voice-over). If they are missing, Artlist is not signed in yet — tell the designer to sign in from the Claude terminal (/mcp).'
               : 'off (the designer can turn it on in AI 연결)',
@@ -365,6 +373,32 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
           1,
         ),
       )
+    },
+  )
+
+  server.registerTool(
+    'codex_image',
+    {
+      description:
+        "Make ONE image with the designer's Codex CLI (GPT Image through Codex's built-in image tool, on the designer's own ChatGPT quota). Use it when the brief's image model is Codex (provider \"codex\") or the designer asks for Codex / GPT 이미지. The prompt is sent as written. references: composition paths of images to follow (style, character, layout). The PNG is saved into composition/assets/generated/ and shown to the designer as a review card. Takes about a minute.",
+      inputSchema: {
+        prompt: z.string(),
+        ratio: z.enum(['1:1', '3:4', '4:3', '9:16', '16:9']).default('1:1'),
+        references: z.array(z.string()).default([]),
+        label: z.string().optional().describe('short Korean description (shown on the card)'),
+      },
+    },
+    async ({ prompt, ratio, references, label }) => {
+      const work = join(dir(), '.studio', 'codex', `${Date.now()}`)
+      const made = await codexImage({ prompt, ratio, references: references.map((r) => join(dir(), 'composition', r)), workDir: work })
+      const name = `codex-${Date.now().toString(36)}.png`
+      mkdirSync(join(dir(), 'composition', 'assets', 'generated'), { recursive: true })
+      const meta = await sharp(made).rotate().png().toFile(join(dir(), 'composition', 'assets', 'generated', name))
+      rmSync(work, { recursive: true, force: true })
+      const file = `assets/generated/${name}`
+      recordGenerated(dir(), [{ file, kind: 'image', provider: 'codex', tool: 'image_gen', label: label ?? prompt.slice(0, 80) }])
+      hooks.onGenerated(projectId, [{ file, kind: 'image' }], label)
+      return text(`Saved: ${file} (${meta.width}x${meta.height}). Read it to check it. It is shown to the designer as a card; unless they asked you to place it straight away, say in one Korean line what you made and end your turn.`)
     },
   )
 

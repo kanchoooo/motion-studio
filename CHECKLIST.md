@@ -445,6 +445,15 @@
   - 윈도우 CI가 경로 구분자 테스트에서 멈춤(코드는 정상, 테스트가 / 가정) → 테스트 고쳐 수동 실행으로 exe·latest.yml 올림
   - 미확인: 실제 매그니픽·힉스필드 계정으로 이미지 생성(계정 없음), 실제 윈도우 PC 실행
 
+## Phase 8 — Codex CLI 이미지 (2026-10-14)
+
+- [x] 개발 중 빌드 방식: 인텔만 빌드해 이 맥의 /Applications 앱에 덮어쓰기(`npm run dist:mac-local`, 공증·릴리스 없음)
+- [x] Codex 상태: 설치·ChatGPT 로그인·5시간/주간 한도(`codex app-server`, 토큰 0, 관제센터와 같은 방식)
+- [x] 이미지 모델 목록에 "GPT 이미지 (Codex)" (브리프 기본값·스토리보드·소재 만들기), 못 쓰면 이유 표시
+- [x] 소재 만들기: Codex로 생성(`codex exec` 읽기 전용, 참고 이미지 -i, 프롬프트 그대로) → 후보 → 캐릭터면 SVG 변환
+- [x] AI 연결 창 Codex 카드(사용량 막대, 새로 조회), Claude 도구 `codex_image` + ai_status
+- [x] 실제 확인: `tests/e2e/codex-image.mjs` 7개, Codex로 만든 캐릭터(흉상)가 약 70초 만에 도착, SVG 도형 32개·차이 0.47% 통과
+
 ## 작업 기록
 
 | 날짜 | 단계 | 내용 |

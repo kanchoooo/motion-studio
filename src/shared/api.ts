@@ -1,6 +1,6 @@
 import type { Asset, BrandPreset, Brief, OutputFormat, OutputQuality, ReferenceItem } from './brief'
 import type { CharacterInfo, Framing, GenCandidate, GenRequest } from './assetGen'
-import type { AiAccountInfo, AiLoginEvent, AiModelInfo, AiModelList, AiSettings, AiVoiceInfo, AudioCandidate, AudioCandidateList, LoginBrowser, LoginWindow } from './ai'
+import type { AiAccountInfo, AiLoginEvent, AiModelInfo, AiModelList, AiSettings, AiVoiceInfo, AudioCandidate, AudioCandidateList, LoginBrowser, LoginWindow, CodexStatus } from './ai'
 import type { Overrides } from './overrides'
 import type { FeedbackMark, HistoryEntry, ProjectState, ProjectSummary, RenderRecord } from './project'
 
@@ -400,6 +400,8 @@ export interface StudioApi {
     keepCandidate(projectId: string, candidateId: string): Promise<Asset>
     /** converts a character image again (dir: project-relative folder), e.g. with fewer colours */
     reconvert(projectId: string, dir: string, framing: Framing, colors: number): Promise<CharacterInfo>
+    /** Codex CLI as an image model: installed, signed in, quota left (force = ask Codex again) */
+    codexStatus(force?: boolean): Promise<CodexStatus>
     /** one turn of the prompt helper chat (latest Haiku); sessionId: a UUID per chat */
     askHelper(sessionId: string, message: string, ctx: HelperContext): Promise<HelperReply>
   }

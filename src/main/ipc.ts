@@ -36,6 +36,7 @@ import { discardCandidate, generateCandidate, listCandidates, reconvert, writeCa
 import { askHelper } from './ai/promptHelper'
 import type { Framing, GenRequest } from '@shared/assetGen'
 import { exportAePackage } from './ae/export'
+import { codexStatus } from './ai/codex'
 
 export function registerIpc(getWindow: () => BrowserWindow | null): SessionManager {
   const send = (channel: string, payload: unknown) => getWindow()?.webContents.send(channel, payload)
@@ -351,6 +352,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
     return info
   })
   handle('ai:askHelper', (sid: string, message: string, ctx: HelperContext) => askHelper(sid, message, ctx))
+  handle('ai:codexStatus', (force?: boolean) => codexStatus(!!force))
   handle('ai:audioCandidates', (id: string) => readJson<AudioCandidateList | null>(join(projects.pathOf(id), '.studio', 'audio-candidates.json'), null))
   handle('ai:searchAudio', (id: string, input: { query: string; kind: 'bgm' | 'sfx' }) => {
     const what = input.kind === 'bgm' ? '배경음악' : '효과음'

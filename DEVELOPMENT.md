@@ -147,6 +147,11 @@ poc/               Phase 0 기술 검증 기록 (RESULTS.md)
 - **캐릭터 SVG**(`character/`, ms-svg-character)
   - `img2svg/*.cjs`는 원본 그대로의 CommonJS예요. 설치본에 파일로 들어가서(`electron-builder.yml`) `sharp`·`@visioncortex/vtracer`(WASM, 버전 고정)를 node_modules에서 불러요. 변환은 `worker.cjs` 워커 스레드에서 해요.
   - Claude 도구: `character_info`, `character_tag`(tag.js + 차이 검사), `character_embed`(index.html의 호스트 요소 안에 인라인). 스킬은 `resources/claude-plugin/skills/svg-character-motion/`, 런타임은 `ms/svgrig.js`예요.
+- **Codex CLI 이미지**(`ai/codex.ts`)
+  - 상태: `codex app-server`에 JSON-RPC(initialize → initialized → account/read + account/rateLimits/read)로 물어요. 모델을 부르지 않아서 토큰이 들지 않아요(관제센터 대시보드와 같은 방식). 1분 캐시.
+  - 생성: `codex exec -s read-only --enable image_generation --json [-i 참고] -`(프롬프트는 stdin)으로 내장 image_gen을 부르고, `$CODEX_HOME/generated_images/<thread>/`의 PNG를 가져와요.
+  - `codex`는 보통 npm 스크립트(`#!/usr/bin/env node`)예요. Finder로 연 앱은 PATH가 짧으므로 로그인 셸 PATH와 흔한 설치 폴더를 붙여서 실행해요.
+  - 모델 id는 `codex` / `gpt-image`이고, Claude 도구는 `codex_image`예요.
 - **프롬프트 도우미**(`ai/promptHelper.ts`): `claude -p --model haiku --effort high --tools ""`를 쓰고, 대화는 `--session-id`/`--resume`로 이어가요. 사용자 설정은 건드리지 않아요.
 - 모델·추론 강도는 세션을 `--model`/`--effort`로 다시 시작해서 바꿔요(`--resume`). 기본값은 `opus` + `high`예요(pty-session `DEFAULT_MODEL`/`DEFAULT_EFFORT`).
   - Claude Code의 `/model`·`/effort` 화면에서 Enter를 누르면 사용자 전체 기본값이 바뀌기 때문이에요.
@@ -178,6 +183,13 @@ poc/               Phase 0 기술 검증 기록 (RESULTS.md)
 - `electron-builder.config.cjs`는 위 스크립트 없이도 동작한다. 키체인에 Developer ID가 있으면 쓰고, `MS_SIGN_DEV=1`이면 Apple Development로 테스트 서명하고, 둘 다 없으면 서명하지 않는다.
 - 설치본은 Node `--inspect`를 막는 퓨즈가 켜져 있어 Playwright Electron 실행기로 붙을 수 없다. `MS_APP_EXEC=<앱>/Contents/MacOS/MotionStudio node tests/e2e/smoke.mjs`는 Chromium 디버깅 포트로 연결한다.
 - 설치본에는 `out/`, `package.json`, 실행에 필요한 `node_modules`만 들어간다. 다른 OS의 네이티브 파일과 개발용 캐시(`.v8-cache`)는 뺀다. 캐시를 넣으면 codesign이 수천 개 파일을 서명하느라 빌드가 끝나지 않는다.
+
+### 개발 중 빠른 설치 (이 맥에만)
+`npm run dist:mac-local` (= `node scripts/build-mac.mjs --local`)
+- 이 맥의 CPU용 앱만 서명해서 만들어요. 공증·dmg·zip은 만들지 않아요. 이 맥에서 만든 앱이라 격리 표시가 없어요.
+- `/Applications/MotionStudio.app`에 덮어써요. 앱이 열려 있으면 정상 종료한 뒤 설치하고 다시 열어요.
+- 작업 중이면 앱이 종료를 묻고, 그때는 스크립트가 멈춰요.
+- GitHub 릴리스는 하지 않아요. 와이프분께 배포할 때만 `--release`를 써요.
 
 ## 7. Claude 로그인과 키체인
 

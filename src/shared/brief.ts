@@ -144,7 +144,7 @@ export interface StoryScene {
 
 // ---- AI generation (Higgsfield, Magnific) and sound libraries (Artlist) ----
 
-export type AiProviderId = 'higgsfield' | 'magnific' | 'artlist'
+export type AiProviderId = 'higgsfield' | 'magnific' | 'artlist' | 'codex'
 
 export interface AiModelRef {
   provider: AiProviderId

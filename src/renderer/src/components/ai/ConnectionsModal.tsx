@@ -2,7 +2,7 @@
 // and turn Artlist on for Claude (Artlist signs in inside the Claude terminal).
 import { useEffect, useState } from 'react'
 import { Check, Copy, ExternalLink, Loader2, LogIn, Pencil, Plus, SquareTerminal, Trash2 } from 'lucide-react'
-import { AI_PROVIDERS, type AiAccountInfo, type AiConnectProvider, type AiSettings, type LoginBrowser, type LoginWindow } from '@shared/ai'
+import { AI_PROVIDERS, type AiAccountInfo, type AiConnectProvider, type AiSettings, type CodexStatus, type LoginBrowser, type LoginWindow } from '@shared/ai'
 import { studio, useStore } from '../../store'
 import { XTerm } from '../XTerm'
 import { Modal, Segmented, Toggle } from '../ui'
@@ -231,6 +231,8 @@ export function ConnectionsModal({ onClose }: { onClose(): void }) {
         )
       })}
 
+      <CodexCard />
+
       <div className="card" style={{ padding: 14 }} data-provider="artlist">
         <div className="row" style={{ marginBottom: 8 }}>
           <div className="col grow" style={{ gap: 2 }}>
@@ -353,6 +355,63 @@ function AccountRow({ a, busy, onChange, onRelogin }: { a: AiAccountInfo; busy: 
       >
         <Trash2 size={13} />
       </button>
+    </div>
+  )
+}
+
+/** Codex CLI: the designer's own ChatGPT login on this computer makes images (GPT Image) */
+function CodexCard() {
+  const [st, setSt] = useState<CodexStatus | null>(null)
+  const [busy, setBusy] = useState(false)
+  const load = async (force: boolean) => {
+    setBusy(true)
+    try {
+      setSt(await studio.ai.codexStatus(force))
+    } finally {
+      setBusy(false)
+    }
+  }
+  useEffect(() => {
+    void load(false)
+  }, [])
+  return (
+    <div className="card" style={{ padding: 14 }} data-provider="codex">
+      <div className="row" style={{ marginBottom: 6 }}>
+        <div className="col grow" style={{ gap: 2 }}>
+          <div className="row" style={{ gap: 6 }}>
+            <span style={{ fontWeight: 650 }}>Codex CLI</span>
+            <span className="badge">이미지 (GPT 이미지)</span>
+          </div>
+          <span className="tiny faint">이 컴퓨터의 Codex에 ChatGPT로 로그인돼 있으면, 모델 목록에서 "GPT 이미지 (Codex)"를 고를 수 있어요. 내 ChatGPT 한도에서 써요.</span>
+        </div>
+        <button className="btn ghost sm" disabled={busy} onClick={() => void load(true)} title="Codex에 다시 물어봐요 (토큰을 쓰지 않아요)">
+          {busy ? <Loader2 size={12} className="spin" /> : null}
+          새로 조회
+        </button>
+      </div>
+      {!st ? (
+        <div className="tiny muted">확인하고 있어요…</div>
+      ) : !st.installed ? (
+        <div className="tiny muted">이 컴퓨터에 Codex CLI가 없어요. 쓰려면 터미널에서 <span className="mono">npm i -g @openai/codex</span>로 설치하고 <span className="mono">codex login</span>을 해 주세요.</div>
+      ) : (
+        <div className="col tiny" style={{ gap: 4 }}>
+          <div className="row" style={{ gap: 6, color: st.usable ? 'var(--success)' : 'var(--warning)' }}>
+            {st.usable ? <Check size={12} /> : null}
+            <span>{st.usable ? `사용할 수 있어요 · ${st.email ?? ''} (${st.plan ?? 'ChatGPT'})` : st.reason}</span>
+          </div>
+          {st.limits.map((l) => (
+            <div key={l.label} className="row" style={{ gap: 8 }}>
+              <span style={{ width: 48 }} className="muted">{l.label}</span>
+              <div className="progress grow" style={{ height: 6 }}>
+                <div style={{ width: `${Math.min(100, l.usedPercent)}%`, background: l.usedPercent >= 90 ? 'var(--warning)' : undefined }} />
+              </div>
+              <span className="mono" style={{ width: 190, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                {Math.round(l.usedPercent)}% 사용{l.resetsAt ? ` · ${new Date(l.resetsAt).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : ''}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

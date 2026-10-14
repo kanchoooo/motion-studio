@@ -43,17 +43,19 @@ export function AssetGenerator({ brief, onAdd }: { brief: Brief; onAdd(a: Asset)
   const [candidates, setCandidates] = useState<GenCandidate[]>([])
   const [helper, setHelper] = useState(false)
   const [providers, setProviders] = useState<string[]>([])
+  const [codexUsable, setCodexUsable] = useState(false)
   const [base, setBase] = useState('')
 
   useEffect(() => {
     void studio.ai.candidates(pid).then(setCandidates)
     void studio.ai.settings().then((s) => setLangs(s.promptLangs ?? {}))
     void studio.ai.accounts().then((a) => setProviders([...new Set(a.filter((x) => x.active && !x.needsLogin).map((x) => x.provider))]))
+    void studio.ai.codexStatus().then((c) => setCodexUsable(c.usable)).catch(() => null)
     void studio.projects.fileUrl(pid, '').then(setBase)
   }, [pid])
 
-  // 자동: the active account's service default
-  const provider = (model?.provider ?? (providers[0] as GenRequest['provider'] | undefined)) as GenRequest['provider'] | undefined
+  // 자동: the active account's service default, else Codex (GPT Image) when it can be used
+  const provider = (model?.provider ?? (providers[0] as GenRequest['provider'] | undefined) ?? (codexUsable ? 'codex' : undefined)) as GenRequest['provider'] | undefined
   const modelKey = `${provider ?? ''}:${model?.model ?? ''}`
   const lang: PromptLang = langs[modelKey] ?? defaultPromptLang(`${model?.model ?? ''} ${model?.label ?? ''}`)
   const setLang = async (l: PromptLang) => {
@@ -63,7 +65,7 @@ export function AssetGenerator({ brief, onAdd }: { brief: Brief; onAdd(a: Asset)
   }
 
   const request = (): GenRequest | null =>
-    provider ? { provider, model: model?.model ?? '', modelLabel: model?.label, style, framing, ratio, lang, prompt: prompt.trim(), references: refs } : null
+    provider ? { provider, model: model?.model ?? (provider === 'codex' ? 'gpt-image' : ''), modelLabel: model?.label ?? (provider === 'codex' ? 'GPT 이미지 (Codex)' : undefined), style, framing, ratio, lang, prompt: prompt.trim(), references: refs } : null
 
   const generate = async (req = request()) => {
     if (!req || busy) return
@@ -94,16 +96,16 @@ export function AssetGenerator({ brief, onAdd }: { brief: Brief; onAdd(a: Asset)
       </button>
       {open && (
         <div className="col" style={{ gap: 12, padding: 14 }}>
-          {!providers.length && (
+          {!providers.length && !codexUsable && (
             <div className="small" style={{ color: 'var(--warning)' }}>
-              먼저 홈의 <b>AI 연결</b>에서 힉스필드나 매그니픽 계정을 연결해 주세요.
+              먼저 홈의 <b>AI 연결</b>에서 힉스필드나 매그니픽 계정을 연결하거나, 이 컴퓨터의 Codex CLI에 로그인해 주세요.
             </div>
           )}
           <div style={{ display: 'grid', gridTemplateColumns: '84px 1fr', gap: '10px 12px', alignItems: 'center' }}>
             <span className="small muted">이미지 모델</span>
             <div className="row" style={{ gap: 8 }}>
               <div className="grow">
-                <ModelSelect kind="image" value={model} onChange={setModel} autoLabel="자동 (서비스 기본 모델)" />
+                <ModelSelect kind="image" value={model} onChange={setModel} autoLabel={providers.length || !codexUsable ? '자동 (서비스 기본 모델)' : '자동 (Codex GPT 이미지)'} />
               </div>
               <span className="tiny muted" style={{ whiteSpace: 'nowrap' }}>
                 프롬프트 언어
@@ -175,7 +177,7 @@ export function AssetGenerator({ brief, onAdd }: { brief: Brief; onAdd(a: Asset)
           )}
 
           <div className="row">
-            <span className="tiny faint grow">만들 때마다 고른 계정의 크레딧을 써요.</span>
+            <span className="tiny faint grow">{provider === 'codex' ? '이 컴퓨터 Codex의 ChatGPT 한도에서 써요. 한 장에 1분쯤 걸려요.' : '만들 때마다 고른 계정의 크레딧을 써요.'}</span>
             <button className="btn primary" disabled={busy || !provider || !prompt.trim()} onClick={() => void generate()} data-testid="gen-run">
               {busy ? <Loader2 size={14} className="spin" /> : <Wand2 size={14} />}
               {busy ? (style === 'flat-character' ? '만들고 SVG로 바꾸는 중…' : '만드는 중…') : '만들기'}

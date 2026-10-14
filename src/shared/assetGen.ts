@@ -150,7 +150,7 @@ export function defaultPromptLang(model: string): PromptLang {
 }
 
 export interface GenRequest {
-  provider: 'higgsfield' | 'magnific'
+  provider: 'higgsfield' | 'magnific' | 'codex'
   /** service model id ('' = the service's own default) */
   model: string
   modelLabel?: string

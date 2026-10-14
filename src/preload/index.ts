@@ -139,6 +139,7 @@ const api: StudioApi & { internal: { previewBase: string } } = {
     keepCandidate: (id, cid) => invoke('ai:keepCandidate', id, cid),
     reconvert: (id, dir, framing, colors) => invoke('ai:reconvert', id, dir, framing, colors),
     askHelper: (sid, message, ctx) => invoke('ai:askHelper', sid, message, ctx),
+    codexStatus: (force) => invoke('ai:codexStatus', force),
   },
   internal: {
     previewBase: (process.argv.find((a) => a.startsWith('--ms-preview-base=')) ?? '').split('=')[1] ?? '',

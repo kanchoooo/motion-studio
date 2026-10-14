@@ -12,12 +12,15 @@ import { buildPrompt, FLAT_NEGATIVE, type GenCandidate, type GenRequest, type Ra
 import { convertCharacter } from '../character/convert'
 import { newId, nowIso, readJson, writeJson } from '../util'
 import { failIfError, payload } from './catalog'
+import { codexImage } from './codex'
 import { callTool, listTools, type ToolResult } from './connect'
 import { saveResultMedia } from './media'
 
 type Schema = { type?: string; properties?: Record<string, Schema>; enum?: unknown[]; description?: string; items?: Schema }
+/** services reached through their MCP tools (Codex runs as a local CLI instead) */
+type McpProvider = Exclude<GenRequest['provider'], 'codex'>
 
-const GENERATE_TOOL: Record<GenRequest['provider'], RegExp> = { magnific: /^images?_generate$/, higgsfield: /^generate_image$/ }
+const GENERATE_TOOL: Record<McpProvider, RegExp> = { magnific: /^images?_generate$/, higgsfield: /^generate_image$/ }
 const genDir = (projectDir: string) => join(projectDir, '.studio', 'generations')
 const listFile = (projectDir: string) => join(genDir(projectDir), 'candidates.json')
 
@@ -61,7 +64,7 @@ function queued(v: unknown, out: string[] = []): string[] {
 const still = (r: ToolResult) => /in[_ -]?progress|queued|pending|processing|running|poll_after|not[_ ]ready/i.test(JSON.stringify(payload(r)) ?? '')
 
 /** waits for a queued generation and returns the result that holds its files */
-async function waitFor(provider: GenRequest['provider'], ids: string[]): Promise<ToolResult | null> {
+async function waitFor(provider: McpProvider, ids: string[]): Promise<ToolResult | null> {
   for (let i = 0; i < 12; i++) {
     if (provider === 'magnific') {
       const w = await callTool('magnific', 'creations_wait', { identifiers: ids, timeoutSeconds: 25 }, 60_000)
@@ -79,7 +82,7 @@ async function waitFor(provider: GenRequest['provider'], ids: string[]): Promise
 }
 
 /** reference images in the form the tool takes: base64 when its description says so, else an uploaded URL */
-async function referenceValues(provider: GenRequest['provider'], files: string[], prop: Schema, tools: { name: string; inputSchema?: unknown }[]): Promise<string[]> {
+async function referenceValues(provider: McpProvider, files: string[], prop: Schema, tools: { name: string; inputSchema?: unknown }[]): Promise<string[]> {
   const base64 = /base64/i.test(prop.description ?? '') || /base64/i.test(prop.items?.description ?? '')
   if (base64) return files.map((f) => readFileSync(f).toString('base64'))
   const upload = tools.find((t) => /upload/i.test(t.name))
@@ -103,7 +106,7 @@ async function referenceValues(provider: GenRequest['provider'], files: string[]
 }
 
 /** the tool arguments for one image, following the tool's own schema */
-async function argumentsFor(req: GenRequest, sent: string, references: string[]): Promise<{ tool: string; args: Record<string, unknown> }> {
+async function argumentsFor(req: GenRequest & { provider: McpProvider }, sent: string, references: string[]): Promise<{ tool: string; args: Record<string, unknown> }> {
   const tools = (await listTools(req.provider)) as { name: string; inputSchema?: unknown }[]
   const tool = tools.find((t) => GENERATE_TOOL[req.provider].test(t.name))
   if (!tool) throw new Error('이 서비스에서 이미지 만들기 도구를 찾지 못했어요. AI 연결을 다시 확인해 주세요.')
@@ -139,22 +142,27 @@ export async function generateCandidate(projectDir: string, req: GenRequest): Pr
   try {
     const sent = buildPrompt(req.style, req.framing, req.lang, req.prompt)
     const refs = req.references.map((r) => join(projectDir, 'composition', r))
-    const { tool, args } = await argumentsFor(req, sent, refs)
-    let r = await callTool(req.provider, tool, args, 300_000)
-    failIfError(r)
-    let saved = await saveResultMedia(folder, 'gen', r, 1)
-    if (!saved.length) {
-      const ids = queued(payload(r))
-      const done = ids.length ? await waitFor(req.provider, ids.slice(0, 4)) : null
-      if (done) {
-        r = done
-        saved = await saveResultMedia(folder, 'gen', r, 1)
+    let raw: string
+    if (req.provider === 'codex') raw = await codexImage({ prompt: sent, ratio: req.ratio, references: refs, workDir: folder })
+    else {
+      const mcp = req as GenRequest & { provider: McpProvider }
+      const { tool, args } = await argumentsFor(mcp, sent, refs)
+      let r = await callTool(mcp.provider, tool, args, 300_000)
+      failIfError(r)
+      let saved = await saveResultMedia(folder, 'gen', r, 1)
+      if (!saved.length) {
+        const ids = queued(payload(r))
+        const done = ids.length ? await waitFor(mcp.provider, ids.slice(0, 4)) : null
+        if (done) {
+          r = done
+          saved = await saveResultMedia(folder, 'gen', r, 1)
+        }
       }
+      const img = saved.find((m) => m.kind === 'image')
+      if (!img) throw new Error('이미지를 받지 못했어요. 잠시 뒤 다시 시도해 주세요.')
+      raw = join(folder, img.file)
     }
-    const img = saved.find((m) => m.kind === 'image')
-    if (!img) throw new Error('이미지를 받지 못했어요. 잠시 뒤 다시 시도해 주세요.')
     // one format for the next steps (SVG conversion reads it, Claude looks at it)
-    const raw = join(folder, img.file)
     await sharp(raw).rotate().png().toFile(join(folder, 'source.png'))
     rmSync(join(folder, 'assets'), { recursive: true, force: true })
     const candidate: GenCandidate = { id, at: nowIso(), file: `.studio/generations/${id}/source.png`, request: req, sent }
