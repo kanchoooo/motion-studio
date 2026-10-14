@@ -189,6 +189,7 @@ poc/               Phase 0 기술 검증 기록 (RESULTS.md)
 - 이 맥의 CPU용 앱만 서명해서 만들어요. 공증·dmg·zip은 만들지 않아요. 이 맥에서 만든 앱이라 격리 표시가 없어요.
 - `/Applications/MotionStudio.app`에 덮어써요. 앱이 열려 있으면 정상 종료한 뒤 설치하고 다시 열어요.
 - 작업 중이면 앱이 종료를 묻고, 그때는 스크립트가 멈춰요.
+- 빌드만 하려면 `npm run dist:mac-local-build`(= `--local --no-install`)를 써요. 테스트 중인 앱을 끄지 않아요. 설치는 사용자가 요청할 때만 해요.
 - GitHub 릴리스는 하지 않아요. 와이프분께 배포할 때만 `--release`를 써요.
 
 ## 7. Claude 로그인과 키체인

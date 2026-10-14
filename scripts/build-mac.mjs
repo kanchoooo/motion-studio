@@ -3,6 +3,7 @@
 //   --release: 빌드가 끝나면 GitHub Releases(kanchoooo/motion-studio)에 v<버전>으로 올린다 → 설치된 앱이 다음 실행 때 자동 업데이트
 //   --local: 개발 중 빠른 확인용. 이 맥의 CPU용 앱만 서명해서 만들고(공증·dmg·zip 없음, 이 맥에서 만든 앱이라 격리 표시가 없음)
 //            /Applications/MotionStudio.app 에 덮어써 설치한다. 열려 있던 앱은 정상 종료 후 다시 연다.
+//   --local --no-install: 빌드만 한다(테스트 중인 앱을 끄지 않게). 앱은 release/mac(-arm64)/MotionStudio.app
 //
 // 미니미광장(scripts/build-mac.mjs)과 같은 서명 방식·키체인 안전 규칙을 쓴다.
 // 서명: ~/.minimi-signing/DeveloperID_Application.p12 (+ p12-password)
@@ -265,7 +266,8 @@ try {
 }
 
 if (process.argv.includes('--release')) publishRelease()
-if (local) installLocal()
+if (local && !process.argv.includes('--no-install')) installLocal()
+else if (local) console.log(`\n▶ 빌드만 했어요(설치 안 함): ${arches[0] === 'arm64' ? 'release/mac-arm64' : 'release/mac'}/MotionStudio.app`)
 
 /** --local: replaces /Applications/MotionStudio.app with the build (quits the open app first, reopens it after) */
 function installLocal() {
