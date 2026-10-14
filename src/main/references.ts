@@ -7,6 +7,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync 
 import { extname, join } from 'node:path'
 import { promisify } from 'node:util'
 import type { ReferenceItem } from '@shared/brief'
+import sharp from 'sharp'
 import { probeMedia } from './media'
 import { bin } from './paths'
 import { newId, readJson, writeJson } from './util'
@@ -162,10 +163,68 @@ export async function analyze(dir: string, id: string, notify: Notify) {
       await run(bin.ffmpeg(), ['-v', 'error', '-y', '-ss', String(t), '-i', src, '-frames:v', '1', '-vf', 'scale=960:-2', '-q:v', '4', join(folder, name)])
       if (existsSync(join(folder, name))) frames.push({ t, file: `references/${id}/frames/${name}` })
     }
-    patch(dir, id, { status: 'ready', error: undefined, meta: { duration, width: meta.width, height: meta.height }, frames }, notify)
+    // the motion itself: every 0.1 s, as sheets Claude can look at, plus how much changes per step
+    const { sheets, motion } = await motionSheets(dir, id, src, duration)
+    patch(dir, id, { status: 'ready', error: undefined, meta: { duration, width: meta.width, height: meta.height }, frames, sheets, motion, cuts: cuts.map((t) => +t.toFixed(2)) }, notify)
   } catch (e) {
     patch(dir, id, { status: 'error', error: '분석하지 못했어요.' + (e instanceof Error ? ` (${e.message.slice(0, 120)})` : '') }, notify)
   }
+}
+
+const STEP = 0.1
+const PER_SHEET = 20
+const COLS = 5
+
+/**
+ * The whole reference every 0.1 s (10 frames a second): sheets of 20 frames (5×4,
+ * 2 s each, with their seconds written under them) and, for every step, how much
+ * of the picture changed (0–100) so the moves and the still moments are easy to find.
+ */
+async function motionSheets(dir: string, id: string, src: string, duration: number): Promise<{ sheets: { from: number; to: number; file: string }[]; motion: number[] }> {
+  const seq = join(dir, 'references', id, 'seq')
+  const out = join(dir, 'references', id, 'sheets')
+  rmSync(seq, { recursive: true, force: true })
+  rmSync(out, { recursive: true, force: true })
+  mkdirSync(seq, { recursive: true })
+  mkdirSync(out, { recursive: true })
+  await run(bin.ffmpeg(), ['-v', 'error', '-y', '-i', src, '-vf', `fps=${1 / STEP},scale=320:-2`, '-q:v', '5', join(seq, 'f%05d.jpg')], { maxBuffer: 16 * 1024 * 1024 })
+  const files = readdirSync(seq).filter((f) => f.endsWith('.jpg')).sort()
+  // change per step, from small grey thumbnails (32×18)
+  const raw = (await run(bin.ffmpeg(), ['-v', 'error', '-i', src, '-vf', `fps=${1 / STEP},scale=32:18,format=gray`, '-f', 'rawvideo', '-'], { encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 })) as unknown as { stdout: Buffer }
+  const px = 32 * 18
+  const motion: number[] = []
+  for (let k = 1; k * px + px <= raw.stdout.length; k++) {
+    let d = 0
+    for (let i = 0; i < px; i++) d += Math.abs(raw.stdout[k * px + i] - raw.stdout[(k - 1) * px + i])
+    motion.push(+((d / px / 255) * 100).toFixed(1))
+  }
+  const sheets: { from: number; to: number; file: string }[] = []
+  if (!files.length) return { sheets, motion }
+  const first = await sharp(join(seq, files[0])).metadata()
+  const w = first.width ?? 320
+  const h = first.height ?? 180
+  const label = 22
+  for (let s = 0; s * PER_SHEET < files.length; s++) {
+    const part = files.slice(s * PER_SHEET, (s + 1) * PER_SHEET)
+    const rows = Math.ceil(part.length / COLS)
+    const tiles = part.map((f, i) => {
+      const t = ((s * PER_SHEET + i) * STEP).toFixed(1)
+      const x = (i % COLS) * (w + 4)
+      const y = Math.floor(i / COLS) * (h + label + 4)
+      return [
+        { input: join(seq, f), left: x, top: y },
+        { input: Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${label}"><rect width="100%" height="100%" fill="#111"/><text x="6" y="16" font-family="Arial, Helvetica, sans-serif" font-size="14" fill="#ffd166">${t}s</text></svg>`), left: x, top: y + h },
+      ]
+    })
+    const name = `sheet_${String(s + 1).padStart(3, '0')}.jpg`
+    await sharp({ create: { width: COLS * (w + 4) - 4, height: rows * (h + label + 4) - 4, channels: 3, background: '#222' } })
+      .composite(tiles.flat())
+      .jpeg({ quality: 78 })
+      .toFile(join(out, name))
+    sheets.push({ from: +(s * PER_SHEET * STEP).toFixed(1), to: +Math.min(duration, ((s + 1) * PER_SHEET - 1) * STEP).toFixed(1), file: `references/${id}/sheets/${name}` })
+  }
+  rmSync(seq, { recursive: true, force: true })
+  return { sheets, motion }
 }
 
 /** frames of a reference at given seconds, as JPEG files (for Claude) */

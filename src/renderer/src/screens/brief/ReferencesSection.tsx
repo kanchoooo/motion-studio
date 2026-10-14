@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { AlertCircle, Film, Image as ImageIcon, Link2, Loader2, Plus, Scissors, Trash2, X, MonitorPlay } from 'lucide-react'
+import { AlertCircle, Film, Image as ImageIcon, Link2, Loader2, Plus, Scissors, Trash2, X, MonitorPlay, Info } from 'lucide-react'
 import type { ReferenceItem } from '@shared/brief'
 import { formatTime } from '../../components/ui'
 import { studio, useStore } from '../../store'
@@ -45,6 +45,12 @@ export function ReferencesSection() {
         title="레퍼런스"
         desc="참고하고 싶은 영상·이미지를 넣어 주세요. 참고할 구간이나 메모를 남기면 그 부분을 중심으로, 비워 두면 Claude가 좋은 포인트를 직접 찾아 참고해요. 똑같이 베끼는 것은 자동으로 막아요."
       />
+      <div className="row small" style={{ gap: 8, padding: '10px 12px', borderRadius: 8, background: 'var(--accent-soft)', color: 'var(--text)', lineHeight: 1.6 }}>
+        <Info size={15} color="var(--accent)" style={{ flex: 'none' }} />
+        <span>
+          영상 레퍼런스는 Claude가 움직임을 볼 수 있게 <b>0.1초 간격으로 전부</b> 분석해요. 참고하고 싶은 장면만 <b>미리 잘라서</b> 넣으면 분석이 빠르고, Claude도 그 움직임에 더 집중해요. (권장: 한 파일에 30초 이내)
+        </span>
+      </div>
       <div
         className="card"
         onDragOver={(e) => {
@@ -105,7 +111,16 @@ function ReferenceCard({ item, base }: { item: ReferenceItem; base: string }) {
             {item.status === 'downloading' ? '내려받는 중' : '분석 중'}
           </span>
         )}
-        {item.status === 'ready' && <span className="badge success">분석 완료 · 장면 {item.frames?.length ?? 0}개</span>}
+        {item.status === 'ready' && (
+          <span className="badge success" title="0.1초 간격 움직임 시트(한 장에 2초)">
+            분석 완료 · 장면 {item.frames?.length ?? 0}개{item.sheets?.length ? ` · 0.1초 시트 ${item.sheets.length}장` : ''}
+          </span>
+        )}
+        {item.status === 'ready' && (item.meta?.duration ?? 0) > 30 && (
+          <span className="badge warning" title="필요한 장면만 잘라서 다시 넣으면 Claude가 그 움직임에 더 집중해요">
+            {Math.round(item.meta!.duration!)}초 · 길어요, 필요한 구간만 잘라 주세요
+          </span>
+        )}
         {item.status === 'error' && (
           <span className="badge danger" title={item.error}>
             <AlertCircle size={11} />

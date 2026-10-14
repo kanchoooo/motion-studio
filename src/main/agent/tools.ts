@@ -49,6 +49,34 @@ function compactSchema(s: unknown, depth = 0): unknown {
   return out
 }
 
+/** seconds between cuts (the edit rhythm) */
+function shotLengths(cuts: number[], duration: number): number[] {
+  const marks = [0, ...cuts.filter((t) => t > 0.05 && t < duration - 0.05), duration]
+  return marks.slice(1).map((t, i) => +(t - marks[i]).toFixed(2))
+}
+
+/** stretches where the picture changes a lot between 0.1 s frames (motion), strongest first */
+function movesOf(motion: number[]): { from: number; to: number; peak: number }[] {
+  const sorted = [...motion].sort((a, b) => a - b)
+  const median = sorted[Math.floor(sorted.length / 2)] ?? 0
+  const on = Math.max(1.5, median * 2)
+  const out: { from: number; to: number; peak: number }[] = []
+  let start = -1
+  let peak = 0
+  motion.forEach((v, i) => {
+    if (v >= on) {
+      if (start < 0) start = i
+      peak = Math.max(peak, v)
+    } else if (start >= 0) {
+      out.push({ from: +(start * 0.1).toFixed(1), to: +((i + 1) * 0.1).toFixed(1), peak })
+      start = -1
+      peak = 0
+    }
+  })
+  if (start >= 0) out.push({ from: +(start * 0.1).toFixed(1), to: +((motion.length + 1) * 0.1).toFixed(1), peak })
+  return out.sort((a, b) => b.peak - a.peak).slice(0, 24).sort((a, b) => a.from - b.from)
+}
+
 export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServer {
   const server = new McpServer({ name: 'studio', version: '1.0.0' })
   const dir = () => projects.pathOf(projectId)
@@ -185,7 +213,7 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
 
   server.registerTool(
     'get_references',
-    { description: 'List the reference videos/images the designer attached: title, note, ranges to focus on, and keyframes (project-relative jpg paths you can open with Read, with their seconds).' },
+    { description: 'List the reference videos/images the designer attached: title, note, ranges to focus on, keyframes, and for videos the MOTION SHEETS — the whole video every 0.1 s, 20 frames (2 s) per sheet with seconds under each frame (project-relative jpgs to open with Read) — plus scene cuts, shot lengths and the moments where the picture moves most.' },
     async () => {
       const refs = listReferences(dir())
       if (!refs.length) return text('레퍼런스가 없어요.')
@@ -201,6 +229,10 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
             duration: r.meta?.duration,
             size: r.meta?.width ? `${r.meta.width}x${r.meta.height}` : undefined,
             keyframes: r.frames?.map((f) => ({ t: f.t, file: f.file })),
+            motionSheets: r.sheets?.length ? { every: '0.1s', perSheet: '2s (20 frames, 5×4, read left→right, top→bottom)', sheets: r.sheets } : undefined,
+            cuts: r.cuts?.length ? r.cuts : undefined,
+            shotLengths: r.cuts?.length ? shotLengths(r.cuts, r.meta?.duration ?? 0) : undefined,
+            moves: r.motion?.length ? movesOf(r.motion) : undefined,
           })),
           null,
           1,
