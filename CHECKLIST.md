@@ -493,7 +493,7 @@
 - [x] 6. SVG 캐릭터: 눈 장치(흰자 전체+눈동자 clip), 턱선 자르기·목 연장(underhang)·턱 그늘 follow·레이어 표·움직임 한계, character_check(극단 자세 틈·남은 조각·눈), SvgRig.pose/eyeRig/layer, 생성 문장·입 선 보존
 - [x] 7. 결과물 보기에서 세로 영상이 창보다 커지던 문제 해결(창 안에 맞춤)
 - [x] 8. 첫 콘티 요청에 "원하는 방향" 입력(선택)
-- [x] 9. 품질: 보관된 세션 분석(앱 세션 0.2.7~0.2.8 vs 스튜디오 총괄 세션) → BRIEF.md(general-video·companion·storyboard), 필수 참고 읽기·조사·DESIGN.md/STORYBOARD.md 뒤에 콘티, 인용 레시피 읽기 뒤에 제작, 독립 검수 에이전트(motion-reviewer) + 끝내기 전 확인(Stop 훅), 기본 추론 강도 xhigh, 시스템 프롬프트 정리(미디어 안내는 스킬로)
+- [x] 9. 품질: 보관된 세션 분석(앱 세션 0.2.7~0.2.8 vs 스튜디오 총괄 세션) → BRIEF.md(general-video·companion·storyboard), 필수 참고 읽기·조사·DESIGN.md/STORYBOARD.md 뒤에 콘티, 인용 레시피 읽기 뒤에 제작, 독립 검수 에이전트(motion-reviewer) + 끝내기 전 확인(Stop 훅), 기본 추론 강도 high(검수 에이전트만 xhigh), 시스템 프롬프트 정리(미디어 안내는 스킬로)
 - 테스트: 단위(gates·BRIEF.md·character-rig 포함), home-tree(폴더·베리에이션·템플릿·결과물·콘티 카드·방향 입력), revise-live(Codex 실제 2장), quality-flow-live(실제 Claude, 새 흐름 끝까지)
 
 ## 작업 기록

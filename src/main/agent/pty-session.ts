@@ -37,9 +37,9 @@ type Emit = (e: AgentEvent) => void
 
 export const pluginDir = () => (isDev ? join(appRoot(), 'resources', 'claude-plugin') : join(process.resourcesPath, 'claude-plugin'))
 
-/** project default unless the designer picks another in the chat panel: latest Opus, extra-high effort (a build plans, researches and reviews) */
+/** project default unless the designer picks another in the chat panel: latest Opus, high effort */
 export const DEFAULT_MODEL = 'opus'
-export const DEFAULT_EFFORT = 'xhigh'
+export const DEFAULT_EFFORT = 'high'
 /** variation re-layouts running at the same time (each is a Claude session of its own) */
 export const MAX_ADAPTING = 4
 

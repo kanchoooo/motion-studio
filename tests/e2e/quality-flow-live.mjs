@@ -1,4 +1,4 @@
-// Phase 11 quality flow with a real Claude session (logged-in account, Opus · xhigh):
+// Phase 11 quality flow with a real Claude session (logged-in account, Opus · high):
 // a NEW project with a brief → 브리프대로 콘티 먼저 보여줘 (+ a direction) → the storyboard
 // card → 이대로 만들기 → the build. Then, from the Claude Code transcript (and its
 // subagents): the mandatory references were Read, DESIGN.md / STORYBOARD.md were written,
@@ -95,7 +95,7 @@ try {
   await win.evaluate((id) => window.studio.agent.setPermission(id, 'ask'), pid)
   check('BRIEF.md written for the official workflow', /workflow: general-video\nflow: companion\nstoryboard: yes/.test(readFileSync(join(dir, 'composition', 'BRIEF.md'), 'utf8')))
   await waitFor('session', async () => /대기 중/.test(await badge()), 3)
-  check('session ready (Opus · 매우 높음)', /대기 중/.test(await badge()) && /xhigh/.test(JSON.stringify(await win.evaluate((id) => window.studio.agent.state(id), pid))), await badge())
+  check('session ready (Opus · 높음)', /대기 중/.test(await badge()) && /"effort":"high"/.test(JSON.stringify(await win.evaluate((id) => window.studio.agent.state(id), pid))), await badge())
 
   // ---- the storyboard ----
   await win.getByTestId('first-direction').fill('첫 1초에 라떼 잔과 벚꽃 꽃잎이 크게 터지듯 등장하고, 문구는 박자에 맞춰 툭툭 끊어서 보여 줘.')

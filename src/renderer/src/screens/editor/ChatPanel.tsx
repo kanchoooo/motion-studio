@@ -293,7 +293,7 @@ export function ChatPanel({ onFold }: { onFold?(): void }) {
 
 const errText = (e: unknown) => (e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(e))
 
-// '' = the app default (latest Opus, extra-high effort; see DEFAULT_MODEL / DEFAULT_EFFORT in pty-session)
+// '' = the app default (latest Opus, high effort; see DEFAULT_MODEL / DEFAULT_EFFORT in pty-session)
 const MODELS: { value: AgentModel; label: string }[] = [
   { value: '', label: 'Opus 최신 (기본)' },
   { value: 'fable', label: 'Fable · 가장 강력' },
@@ -301,10 +301,10 @@ const MODELS: { value: AgentModel; label: string }[] = [
   { value: 'haiku', label: 'Haiku · 가장 빠름' },
 ]
 const EFFORTS: { value: AgentEffort; label: string }[] = [
-  { value: '', label: '매우 높음 (기본)' },
+  { value: '', label: '높음 (기본)' },
   { value: 'low', label: '낮음' },
   { value: 'medium', label: '보통' },
-  { value: 'high', label: '높음' },
+  { value: 'xhigh', label: '매우 높음' },
   { value: 'max', label: '최대' },
 ]
 
@@ -466,7 +466,7 @@ function ModelPicker() {
   const pid = project!.meta.id
   // older projects may hold the defaults explicitly
   const model = (project!.meta.agentModel === 'opus' ? '' : (project!.meta.agentModel ?? '')) as AgentModel
-  const effort = (project!.meta.agentEffort === 'xhigh' ? '' : (project!.meta.agentEffort ?? '')) as AgentEffort
+  const effort = (project!.meta.agentEffort === 'high' ? '' : (project!.meta.agentEffort ?? '')) as AgentEffort
   const change = async (next: { model: AgentModel; effort: AgentEffort }) => {
     try {
       const st = await studio.agent.setModel(pid, next)

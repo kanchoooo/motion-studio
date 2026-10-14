@@ -1,4 +1,4 @@
-// SVG character acting with a real Claude session (logged-in account, default Opus + xhigh).
+// SVG character acting with a real Claude session (logged-in account, default Opus + high).
 // A new project gets the ms-svg-character example man as a character asset, and Claude is
 // asked for a short "surprised" acting clip. Checks: tags applied (≤ 0.1% at rest) with the eye rig and
 // the neck under-hang, character_check passed, the
