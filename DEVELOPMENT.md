@@ -112,8 +112,13 @@ poc/               Phase 0 기술 검증 기록 (RESULTS.md)
 - **앱은 Claude 토큰을 저장하거나 전달하지 않는다.** 이것은 Anthropic 정책이다.
 - 대화형 세션은 다음 옵션으로 실행한다.
   - `--remote-control`
-  - `--permission-mode dontAsk` + 허용 규칙. 쓰기는 `composition/`만 허용하고 `ms/`, `vendor/`, `assets/`는 제외한다.
-  - `--tools Read,Write,Edit,Glob,Grep,Skill` (Bash 없음)
+  - `--permission-mode acceptEdits` + 허용·거부 규칙.
+    - 프로젝트 안 편집은 묻지 않는다.
+    - 앱이 관리하는 파일(`ms/`, `vendor/`, `assets/`, brief.json, overrides.json, references/, project.json, .history/, .studio/)은 거부 규칙으로 항상 막는다.
+  - 그 밖의 권한 질문은 `PermissionRequest` **HTTP 훅**이 앱에 묻는다(`/hook/<토큰>/permission`, `agent/permissions.ts`).
+    - "물어보기": 대화창 카드로 묻는다. 14분 안에 답이 없으면 거부한다.
+    - "모두 허용": 앱이 바로 허용한다.
+  - `--tools Read,Write,Edit,Glob,Grep,Skill,Bash,WebFetch,WebSearch` (Bash·웹은 위 질문을 거친다)
   - `--setting-sources ""` (개인 설정, 훅, 플러그인 제외)
   - `--strict-mcp-config` + 앱 MCP 서버만 연결
 - **메시지 입력**: 텍스트를 쓰고 0.8초 뒤 Enter를 따로 보낸다. 한 번에 보내면 붙여넣기로 인식된다.
@@ -136,6 +141,13 @@ poc/               Phase 0 기술 검증 기록 (RESULTS.md)
   - 힉스필드는 JSON(structuredContent)이고 페이지가 나뉘어요. `models_explore`, `list_voices`(preview_url 있음)를 써요.
 - 목소리 찾기의 한국어 검색어 → 영어 설명어 매핑과 느낌 칩은 `src/shared/voiceSearch.ts`에 있어요.
 - 아트리스트 로그인은 `__artlist__` 보조 세션(아트리스트만 넣은 `--mcp-config`)에서 `/mcp`를 열어요. 토큰은 서버 이름과 주소로 저장돼서 프로젝트 세션들이 같이 써요.
+- **소재 생성**(`ai/generate.ts`): 앱이 서비스 생성 도구를 직접 불러요.
+  - 도구 입력 스키마로 프롬프트·모델·비율·개수·네거티브·참고 이미지 키를 찾아요.
+  - 결과는 `.studio/generations/<id>/source.png` 후보로 저장하고, "소재에 추가"를 누르면 `composition/assets/gen-<id>/`로 옮겨요.
+- **캐릭터 SVG**(`character/`, ms-svg-character)
+  - `img2svg/*.cjs`는 원본 그대로의 CommonJS예요. 설치본에 파일로 들어가서(`electron-builder.yml`) `sharp`·`@visioncortex/vtracer`(WASM, 버전 고정)를 node_modules에서 불러요. 변환은 `worker.cjs` 워커 스레드에서 해요.
+  - Claude 도구: `character_info`, `character_tag`(tag.js + 차이 검사), `character_embed`(index.html의 호스트 요소 안에 인라인). 스킬은 `resources/claude-plugin/skills/svg-character-motion/`, 런타임은 `ms/svgrig.js`예요.
+- **프롬프트 도우미**(`ai/promptHelper.ts`): `claude -p --model haiku --effort high --tools ""`를 쓰고, 대화는 `--session-id`/`--resume`로 이어가요. 사용자 설정은 건드리지 않아요.
 - 모델·추론 강도는 세션을 `--model`/`--effort`로 다시 시작해서 바꿔요(`--resume`). 기본값은 `opus` + `high`예요(pty-session `DEFAULT_MODEL`/`DEFAULT_EFFORT`).
   - Claude Code의 `/model`·`/effort` 화면에서 Enter를 누르면 사용자 전체 기본값이 바뀌기 때문이에요.
 
