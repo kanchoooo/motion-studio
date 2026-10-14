@@ -432,7 +432,11 @@
 ### 7-5. 애프터이펙트
 - [x] 가능성 검토 문서(docs/after-effects.md): .aep 직접 생성은 불가, AE 패키지(소재 + build.jsx)로 텍스트 레이어·키프레임까지 가능 — 진행 여부는 사용자 결정
 ### 7-6. 검수
-- [ ] 단위·화면 흐름 테스트, 실제 Claude로 권한 요청·캐릭터 태깅 확인, 0.2.6 배포(맥·윈도우)
+- [x] 단위·화면 흐름 테스트, 실제 Claude로 권한 요청·캐릭터 태깅 확인, 0.2.6 배포(맥·윈도우)
+  - 단위 65, 앱 확인: editor-p7 13 · home-export-p7 5 · assets-p7 8 · login-window 8 · permission-live 5 · character-live 5 · smoke
+  - 설치본(서명된 인텔 앱)에서 캐릭터 SVG 변환 확인 (`character-packaged.mjs`)
+  - 윈도우 CI가 경로 구분자 테스트에서 멈춤(코드는 정상, 테스트가 / 가정) → 테스트 고쳐 수동 실행으로 exe·latest.yml 올림
+  - 미확인: 실제 매그니픽·힉스필드 계정으로 이미지 생성(계정 없음), 실제 윈도우 PC 실행
 
 ## 작업 기록
 
