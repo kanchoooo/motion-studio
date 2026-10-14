@@ -220,7 +220,6 @@ export function FolderTree({ current, onSelect, onUseTemplate }: { current: stri
               }
             } catch (e) {
               toast(errText(e), 'error')
-              throw e
             }
           }}
         />

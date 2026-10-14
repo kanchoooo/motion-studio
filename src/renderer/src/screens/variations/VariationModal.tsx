@@ -117,7 +117,7 @@ export function VariationModal({ onClose, folder }: { onClose: () => void; folde
       width={820}
       footer={
         <>
-          <span className="small muted grow">{valid.length ? `${valid.length}개를 만들어요${claudeCount ? ` · Claude 재구성 ${claudeCount}개는 동시에 진행돼요 (한 번에 4개까지)` : ''}` : '베리에이션을 추가해 주세요'}</span>
+          <span className="small muted grow">{valid.length ? `${valid.length}개를 만들어요${claudeCount > 1 ? ` · Claude 재구성 ${claudeCount}개는 동시에 진행돼요 (한 번에 4개까지)` : claudeCount ? ' · 1개는 Claude가 다시 구성해요' : ''}` : '베리에이션을 추가해 주세요'}</span>
           <button className="btn" onClick={onClose}>
             취소
           </button>
@@ -215,14 +215,15 @@ export function VariationModal({ onClose, folder }: { onClose: () => void; folde
                 <div style={{ width: 110 }}>
                   <NumberField label="⟷" unit="초" value={r.duration} min={1} max={180} precision={1} step={0.5} onChange={(duration) => patch(r.key, { duration })} />
                 </div>
-                <div className="grow" />
-                <span className={`badge ${m.cls}`}>
-                  <Icon size={11} />
-                  {same(r) ? '원본과 같아요' : m.label}
-                </span>
-                <button className="icon-btn" title="이 베리에이션 빼기" disabled={rows.length === 1} onClick={() => setRows((l) => l.filter((x) => x.key !== r.key))}>
-                  <X size={14} />
-                </button>
+                <div className="row" style={{ gap: 6, marginLeft: 'auto', flexWrap: 'nowrap' }}>
+                  <span className={`badge ${m.cls}`} style={{ whiteSpace: 'nowrap' }}>
+                    <Icon size={11} />
+                    {same(r) ? '원본과 같아요' : m.label}
+                  </span>
+                  <button className="icon-btn" title="이 베리에이션 빼기" disabled={rows.length === 1} onClick={() => setRows((l) => l.filter((x) => x.key !== r.key))}>
+                    <X size={14} />
+                  </button>
+                </div>
               </div>
               {lengthOnly && (
                 <div className="row tiny muted" style={{ gap: 8 }}>
