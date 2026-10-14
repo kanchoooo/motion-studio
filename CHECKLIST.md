@@ -427,7 +427,8 @@
 - [x] 편집 대화: 생성 소재 카드(적용 ▾ Claude에게 맡기기·고른 요소에·배경으로 / 소재함에 추가 / 버리기)
 - [x] 캐릭터 SVG 자동 변환(워커) + 품질 기록·재변환/재생성 안내 (예시 남자: 도형 26개, 0.3%)
 - [x] svg-character-motion 스킬(앱 도구에 맞게 고침), character_info / character_tag / character_embed 도구, ms/svgrig.js, Read로 원본·도형 시트 보기
-- [ ] 예시(남자 이미지)로 태깅 → tagged.svg 차이 ≤ 0.1% 확인
+- [x] 예시(남자 이미지)로 실제 Claude(Opus·높음)가 태깅 → tagged.svg → 삽입 → svgrig 연기(깜빡임·움츠림·놀람·머리카락 따라옴·땀) 약 3분, `tests/e2e/character-live.mjs`
+  - 발견: 진행 메모 일부를 영어로 씀 → 한국어 규칙을 한국어로 다시 강조, 명령 설명도 한국어로
 ### 7-5. 애프터이펙트
 - [x] 가능성 검토 문서(docs/after-effects.md): .aep 직접 생성은 불가, AE 패키지(소재 + build.jsx)로 텍스트 레이어·키프레임까지 가능 — 진행 여부는 사용자 결정
 ### 7-6. 검수
