@@ -35,6 +35,7 @@ import { projectForToken } from './agent/mcp-http'
 import { discardCandidate, generateCandidate, listCandidates, reconvert, writeCandidates } from './ai/generate'
 import { askHelper } from './ai/promptHelper'
 import type { Framing, GenRequest } from '@shared/assetGen'
+import { exportAePackage } from './ae/export'
 
 export function registerIpc(getWindow: () => BrowserWindow | null): SessionManager {
   const send = (channel: string, payload: unknown) => getWindow()?.webContents.send(channel, payload)
@@ -275,6 +276,10 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
     return startExport(id, opts, progress)
   })
   handle('renders:cancel', (_id: string, renderId: string) => cancelExport(renderId))
+  handle('renders:exportAe', (id: string, opts: { name: string; copyTo?: string }) => {
+    notWhileBusy(id, 'AE 패키지를 만들어 주세요')
+    return exportAePackage(id, opts, (p) => send('renders:aeProgress', { projectId: id, ...p }))
+  })
   handle('renders:update', (id: string, renderId: string, patch: { starred?: boolean; note?: string }) => updateRender(projects.pathOf(id), renderId, patch))
   handle('renders:remove', (id: string, renderId: string) => removeRender(projects.pathOf(id), renderId))
   handle('renders:fileUrl', (id: string, renderId: string) => {

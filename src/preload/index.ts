@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { AiLoginEvent } from '@shared/ai'
-import type { AgentEvent, ExportProgress, StudioApi } from '@shared/api'
+import type { AgentEvent, ExportProgress, StudioApi, AeProgress } from '@shared/api'
 
 const invoke = (channel: string, ...args: unknown[]) => ipcRenderer.invoke(channel, ...args)
 
@@ -107,6 +107,8 @@ const api: StudioApi & { internal: { previewBase: string } } = {
     remove: (id, renderId) => invoke('renders:remove', id, renderId),
     fileUrl: (id, renderId) => invoke('renders:fileUrl', id, renderId),
     onProgress: (cb) => subscribe<ExportProgress>('renders:progress', cb),
+    exportAe: (id, opts) => invoke('renders:exportAe', id, opts),
+    onAeProgress: (cb) => subscribe<AeProgress>('renders:aeProgress', cb),
   },
   fonts: {
     list: () => invoke('fonts:list'),

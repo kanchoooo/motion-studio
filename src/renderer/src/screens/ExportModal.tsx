@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { AlertCircle, CheckCircle2, FolderOpen, Loader2, X } from 'lucide-react'
+import { AlertCircle, CheckCircle2, FolderOpen, Layers, Loader2, X } from 'lucide-react'
+import type { AeProgress } from '@shared/api'
 import { FORMAT_LABELS, OUTPUT_PRESETS, type OutputFormat, type OutputQuality } from '@shared/brief'
 import { Field, Modal, Segmented } from '../components/ui'
 import { studio, useStore } from '../store'
@@ -177,6 +178,7 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
           <div className="tiny faint">
             {out.width}×{out.height} · {out.fps}fps · {out.duration}초
           </div>
+          <AeSection pid={pid} name={fileName} saveDir={saveDir} />
         </>
       ) : (
         <div className="col" style={{ gap: 14 }}>
@@ -232,5 +234,59 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
         </div>
       )}
     </Modal>
+  )
+}
+
+/** After Effects package (experimental): build.jsx + assets, opened in AE with File > Scripts */
+function AeSection({ pid, name, saveDir }: { pid: string; name: string; saveDir: string | null }) {
+  const { toast } = useStore()
+  const [p, setP] = useState<AeProgress | null>(null)
+  useEffect(() => studio.renders.onAeProgress((e) => e.projectId === pid && setP(e)), [pid])
+  const running = !!p && !['done', 'error'].includes(p.phase)
+  const start = async () => {
+    setP({ projectId: pid, phase: 'measuring', percent: 1, message: '시작하고 있어요' })
+    try {
+      await studio.renders.exportAe(pid, { name: name.trim() || '모션스튜디오', copyTo: saveDir ?? undefined })
+    } catch (e) {
+      toast(e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(e), 'error')
+      setP(null)
+    }
+  }
+  return (
+    <div className="col" style={{ gap: 8, paddingTop: 12, borderTop: '1px solid var(--border)' }} data-testid="ae-section">
+      <div className="row" style={{ gap: 8 }}>
+        <Layers size={15} color="var(--accent)" />
+        <span className="grow" style={{ fontWeight: 600 }}>
+          애프터이펙트로 가져가기 <span className="badge">실험</span>
+        </span>
+        <button className="btn sm" disabled={running} onClick={() => void start()} data-testid="ae-start">
+          {running ? <Loader2 size={13} className="spin" /> : <Layers size={13} />}
+          AE 패키지 만들기
+        </button>
+      </div>
+      <div className="tiny muted" style={{ lineHeight: 1.6 }}>
+        글자는 텍스트 레이어, 그림은 투명 PNG 레이어, 움직임은 키프레임으로 담은 폴더를 만들어요. 애프터이펙트에서 <b>파일 › 스크립트 › 스크립트 파일 실행</b>으로 폴더 안 build.jsx를 열면 컴포지션이 만들어져요.
+      </div>
+      {p && p.phase !== 'done' && p.phase !== 'error' && (
+        <div className="col" style={{ gap: 4 }}>
+          <div className="tiny">{p.message}</div>
+          <div className="progress">
+            <div style={{ width: `${p.percent}%` }} />
+          </div>
+        </div>
+      )}
+      {p?.phase === 'done' && p.folder && (
+        <div className="row small" style={{ gap: 8, color: 'var(--success)' }}>
+          <CheckCircle2 size={14} />
+          <span className="grow ellipsis" title={p.folder}>
+            만들었어요: {p.folder}
+          </span>
+          <button className="btn sm" onClick={() => studio.app.reveal(p.folder!)}>
+            <FolderOpen size={13} />
+            폴더에서 보기
+          </button>
+        </div>
+      )}
+    </div>
   )
 }

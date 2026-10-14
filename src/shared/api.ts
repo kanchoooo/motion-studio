@@ -199,6 +199,14 @@ export interface ExportOptions {
   copyTo?: string
 }
 
+export interface AeProgress {
+  projectId: string
+  phase: 'measuring' | 'capturing' | 'writing' | 'done' | 'error'
+  percent: number
+  message: string
+  folder?: string
+}
+
 export interface ExportProgress {
   projectId: string
   renderId: string
@@ -347,6 +355,9 @@ export interface StudioApi {
     remove(projectId: string, renderId: string): Promise<void>
     fileUrl(projectId: string, renderId: string): Promise<string>
     onProgress(cb: (p: ExportProgress) => void): () => void
+    /** After Effects package (experimental): a folder with build.jsx + assets; returns the folder */
+    exportAe(projectId: string, opts: { name: string; copyTo?: string }): Promise<string>
+    onAeProgress(cb: (p: AeProgress) => void): () => void
   }
   fonts: {
     list(): Promise<FontFamily[]>
