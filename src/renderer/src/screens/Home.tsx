@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { Clapperboard, FolderOpen, MoreHorizontal, Plus, Settings2, Sparkles, Trash2 } from 'lucide-react'
+import { Clapperboard, FolderOpen, Loader2, MoreHorizontal, Pencil, Plus, Settings2, Sparkles, Trash2 } from 'lucide-react'
 import { ConnectionsModal } from '../components/ai/ConnectionsModal'
+import { NameModal } from '../components/NameModal'
 import { OUTPUT_PRESETS, type OutputPresetId } from '@shared/brief'
 import type { ProjectSummary } from '@shared/project'
 import { Menu, Modal, NumberField, relativeTime } from '../components/ui'
@@ -12,10 +13,23 @@ export function Home() {
   const { projects, refreshProjects, openProject, go, toast, aiOpen } = useStore()
   const [creating, setCreating] = useState(false)
   const [menu, setMenu] = useState<string | null>(null)
+  const [renaming, setRenaming] = useState<ProjectSummary | null>(null)
 
   useEffect(() => {
     void refreshProjects()
+    // card pictures made in the background show up as they are ready
+    return studio.projects.onChanged(() => void refreshProjects())
   }, [refreshProjects])
+
+  const rename = async (p: ProjectSummary, name: string) => {
+    try {
+      await studio.projects.renameAt(p.path, name)
+      await refreshProjects()
+      toast('이름을 바꿨어요', 'success')
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), 'error')
+    }
+  }
 
   const open = async (p: ProjectSummary) => {
     try {
@@ -28,6 +42,7 @@ export function Home() {
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       {aiOpen && <ConnectionsModal onClose={() => useStore.setState({ aiOpen: false })} />}
+      {renaming && <NameModal title="프로젝트 이름 바꾸기" initial={renaming.name} confirm="바꾸기" onSubmit={(name) => rename(renaming, name)} onClose={() => setRenaming(null)} />}
       <div className="row drag" style={{ height: 'var(--titlebar)', padding: '0 16px 0 88px', borderBottom: '1px solid var(--border)', flex: 'none' }}>
         <Clapperboard size={18} color="var(--accent)" />
         <div style={{ fontWeight: 700 }}>모션스튜디오</div>
@@ -75,7 +90,16 @@ export function Home() {
                   {p.thumbnail ? (
                     <img src={p.thumbnail} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                   ) : (
-                    <span className="faint small">{p.hasVideo ? '미리보기 없음' : '아직 영상이 없어요'}</span>
+                    <span className="faint small row" style={{ gap: 6 }}>
+                      {p.hasVideo ? (
+                        <>
+                          <Loader2 size={13} className="spin" />
+                          미리보기 만드는 중
+                        </>
+                      ) : (
+                        '아직 영상이 없어요'
+                      )}
+                    </span>
                   )}
                 </div>
                 <div className="row" style={{ padding: '10px 12px' }}>
@@ -122,6 +146,7 @@ export function Home() {
                       style={{ right: 8, bottom: 48 }}
                       onClose={() => setMenu(null)}
                       items={[
+                        { label: '이름 바꾸기', icon: <Pencil size={14} />, onClick: () => setRenaming(p) },
                         { label: '폴더에서 보기', icon: <FolderOpen size={14} />, onClick: () => studio.app.reveal(p.path) },
                         {
                           label: '휴지통으로 이동',

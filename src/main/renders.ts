@@ -1,7 +1,7 @@
 // Export ("내보내기"): render, post-process, thumbnail, gallery index, history link.
 import { execFile } from 'node:child_process'
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs'
-import { basename, join } from 'node:path'
+import { basename, extname, join } from 'node:path'
 import { promisify } from 'node:util'
 import type { ExportOptions, ExportProgress } from '@shared/api'
 import { OUTPUT_PRESETS, type Brief } from '@shared/brief'
@@ -46,6 +46,8 @@ const PHASE: Record<string, { phase: ExportProgress['phase']; message: string }>
 
 export async function startExport(projectId: string, opts: ExportOptions, emit: (p: ExportProgress) => void): Promise<string> {
   const dir = projects.pathOf(projectId)
+  // a save folder that is gone (unplugged drive, deleted) is reported before rendering, not after
+  if (opts.copyTo && !existsSync(opts.copyTo)) throw new Error(`저장 위치를 찾을 수 없어요: ${opts.copyTo}\n다른 폴더를 골라 주세요.`)
   const renderId = newId()
   const abort = new AbortController()
   running.set(renderId, abort)
@@ -144,13 +146,17 @@ export async function startExport(projectId: string, opts: ExportOptions, emit: 
         versionName: opts.versionName,
       }
       writeJson(indexPath(dir), [record, ...listRenders(dir)])
+      let savedTo: string | undefined
       if (opts.copyTo) {
-        const dst = join(opts.copyTo, basename(out))
-        if (isSeq) cpSync(out, dst, { recursive: true })
-        else copyFileSync(out, dst)
+        // never overwrite a file already in the designer's folder: "name-2.mp4" instead
+        const ext = isSeq ? '' : extname(out)
+        const stem = basename(out, ext)
+        savedTo = uniquePath((n) => join(opts.copyTo!, `${stem}${n ? `-${n + 1}` : ''}${ext}`))
+        if (isSeq) cpSync(out, savedTo, { recursive: true })
+        else copyFileSync(out, savedTo)
       }
       projects.touch(projectId)
-      send({ phase: 'done', percent: 100, message: '내보내기를 마쳤어요', record })
+      send({ phase: 'done', percent: 100, message: '내보내기를 마쳤어요', record, savedTo })
     } catch (e) {
       send({
         phase: 'error',

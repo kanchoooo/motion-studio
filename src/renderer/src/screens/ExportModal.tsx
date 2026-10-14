@@ -1,8 +1,26 @@
 import { useEffect, useMemo, useState } from 'react'
-import { AlertCircle, CheckCircle2, FolderOpen, Loader2 } from 'lucide-react'
+import { AlertCircle, CheckCircle2, FolderOpen, Loader2, X } from 'lucide-react'
 import { FORMAT_LABELS, OUTPUT_PRESETS, type OutputFormat, type OutputQuality } from '@shared/brief'
-import { Field, Modal, Segmented, Toggle } from '../components/ui'
+import { Field, Modal, Segmented } from '../components/ui'
 import { studio, useStore } from '../store'
+
+// the folder chosen last time, remembered on this computer
+const DIR_KEY = 'ms-export-dir'
+function savedDir(): string | null {
+  try {
+    return localStorage.getItem(DIR_KEY) || null
+  } catch {
+    return null
+  }
+}
+function rememberDir(dir: string | null) {
+  try {
+    if (dir) localStorage.setItem(DIR_KEY, dir)
+    else localStorage.removeItem(DIR_KEY)
+  } catch {
+    /* storage unavailable: asked again next time */
+  }
+}
 
 function defaultName(n: number) {
   const { brief } = useStore.getState().project!
@@ -24,7 +42,13 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
   const [quality, setQuality] = useState<OutputQuality>(out.quality)
   const [fileName, setFileName] = useState('')
   const [versionName, setVersionName] = useState('')
-  const [copyTo, setCopyTo] = useState<string | null>(null)
+  const [saveDir, setSaveDir] = useState<string | null>(savedDir)
+  const chooseDir = async () => {
+    const dir = await studio.app.pickFolder()
+    if (!dir) return
+    setSaveDir(dir)
+    rememberDir(dir)
+  }
   // an export still running when the dialog is opened again is shown, not hidden behind a new form
   const live = exportProgress && exportProgress.projectId === pid && !['done', 'error', 'cancelled'].includes(exportProgress.phase) ? exportProgress : null
   const [renderId, setRenderId] = useState<string | null>(live?.renderId ?? null)
@@ -46,7 +70,7 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
     if (starting) return
     setStarting(true)
     try {
-      const id = await studio.renders.start(pid, { format, quality, fileName, versionName: versionName.trim() || undefined, copyTo: copyTo ?? undefined })
+      const id = await studio.renders.start(pid, { format, quality, fileName, versionName: versionName.trim() || undefined, copyTo: saveDir ?? undefined })
       setRenderId(id)
     } catch (e) {
       toast(e instanceof Error ? e.message : String(e), 'error')
@@ -77,7 +101,7 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
         ) : (
           <>
             {p?.phase === 'done' && p.record && (
-              <button className="btn" onClick={() => studio.app.reveal(`${project!.path}/${p.record!.file}`)}>
+              <button className="btn" onClick={() => studio.app.reveal(p.savedTo ?? `${project!.path}/${p.record!.file}`)}>
                 <FolderOpen size={14} />
                 폴더에서 보기
               </button>
@@ -125,21 +149,44 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
           <Field label="버전 이름 (선택)" hint="예: 광고주 1차 시안 — 이력에서 이 이름으로 찾을 수 있어요.">
             <input className="input" value={versionName} onChange={(e) => setVersionName(e.target.value)} placeholder="이름 없이 저장" />
           </Field>
-          <div className="row">
-            <Toggle on={!!copyTo} onChange={async (on) => setCopyTo(on ? await studio.app.pickFolder() : null)} />
-            <span className="small">다른 폴더에도 저장</span>
-            {copyTo && <span className="tiny faint ellipsis grow" title={copyTo}>{copyTo}</span>}
-          </div>
+          <Field label="저장 위치" hint="어디에 저장해도 프로젝트의 결과물 탭에 함께 보관돼요. 고른 폴더는 다음에도 기억해요.">
+            <div className="row" style={{ gap: 6 }} data-testid="export-dir">
+              <div className="input row grow" style={{ gap: 6, height: 34, minWidth: 0, cursor: 'pointer' }} onClick={chooseDir} title={saveDir ?? undefined}>
+                <FolderOpen size={14} color="var(--text-3)" style={{ flex: 'none' }} />
+                <span className={`ellipsis small${saveDir ? '' : ' muted'}`} style={{ direction: saveDir ? 'rtl' : undefined, textAlign: 'left' }}>
+                  {saveDir ?? '결과물 보관함에만 저장'}
+                </span>
+              </div>
+              <button className="btn" onClick={chooseDir}>
+                {saveDir ? '바꾸기' : '폴더 고르기'}
+              </button>
+              {saveDir && (
+                <button
+                  className="icon-btn"
+                  title="폴더에 저장하지 않기"
+                  onClick={() => {
+                    setSaveDir(null)
+                    rememberDir(null)
+                  }}
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+          </Field>
           <div className="tiny faint">
-            {out.width}×{out.height} · {out.fps}fps · {out.duration}초 · 결과물은 프로젝트의 결과물 보관함에도 저장돼요.
+            {out.width}×{out.height} · {out.fps}fps · {out.duration}초
           </div>
         </>
       ) : (
         <div className="col" style={{ gap: 14 }}>
           {p?.phase === 'done' ? (
-            <div className="row" style={{ color: 'var(--success)', fontWeight: 650 }}>
-              <CheckCircle2 size={18} />
-              내보내기를 마쳤어요
+            <div className="col" style={{ gap: 6 }}>
+              <div className="row" style={{ color: 'var(--success)', fontWeight: 650 }}>
+                <CheckCircle2 size={18} />
+                내보내기를 마쳤어요
+              </div>
+              {p.savedTo && <div className="small muted" style={{ wordBreak: 'break-all' }}>저장한 곳: {p.savedTo}</div>}
             </div>
           ) : p?.phase === 'error' ? (
             <div className="col" style={{ gap: 6 }}>

@@ -21,6 +21,7 @@ import { listBrands, removeBrand, saveBrand } from './brands'
 import { addReferenceFiles, addYoutube, listReferences, removeReference, updateReference } from './references'
 import type { AiConnectProvider, AiLoginEvent, AiMediaKind, AiSettings, AiVoiceInfo, AudioCandidate, AudioCandidateList, LoginWindow } from '@shared/ai'
 import { loginBrowsers } from './ai/browser'
+import { refreshThumbnail } from './thumbnail'
 import { patchAccount, publicInfo, removeAccount, setActive } from './ai/accounts'
 import { clearCatalog, listModels, listVoices } from './ai/catalog'
 import { cancelLogin, login, resetConnections } from './ai/connect'
@@ -90,7 +91,15 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
   })
 
   // ---- projects ----
-  handle('projects:list', () => projects.listProjects())
+  handle('projects:list', () => {
+    const list = projects.listProjects()
+    // projects made before card pictures existed (or never exported) get one in the background
+    for (const p of list) {
+      if (p.hasVideo && !p.thumbnail) refreshThumbnail(p.path, { width: p.width, height: p.height, duration: p.duration }, { onDone: (ok) => ok && send('projects:changed', null) })
+    }
+    return list
+  })
+  handle('projects:renameAt', (path: string, name: string) => projects.renameAt(path, name))
   handle('projects:create', (input: Parameters<typeof projects.createProject>[0]) => projects.createProject(input))
   handle('projects:open', (path: string) => projects.openProject(path))
   handle('projects:state', (id: string) => projects.state(id))

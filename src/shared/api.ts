@@ -187,6 +187,8 @@ export interface ExportProgress {
   percent: number
   message: string
   record?: RenderRecord
+  /** the copy in the folder the designer chose */
+  savedTo?: string
   detail?: string
 }
 
@@ -234,6 +236,10 @@ export interface StudioApi {
   }
   projects: {
     list(): Promise<ProjectSummary[]>
+    /** renames a project from the home list (open or not) */
+    renameAt(path: string, name: string): Promise<void>
+    /** project list pictures were made in the background */
+    onChanged(cb: () => void): () => void
     create(input: { name: string; presetId: Brief['output']['preset']; duration: number }): Promise<ProjectState>
     open(path: string): Promise<ProjectState>
     /** current state of an already-open project (no side effects) */

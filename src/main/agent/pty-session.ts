@@ -25,6 +25,7 @@ import { previewBase } from '../preview-server'
 import * as projects from '../projects'
 import { newId, nowIso, writeText } from '../util'
 import { setFamilyStatus } from '../variations'
+import { refreshThumbnail } from '../thumbnail'
 import { mcpTokenFor, setToolHooks } from './mcp-http'
 import { STUDIO_PROMPT } from './prompt'
 import { TranscriptTail } from './transcript'
@@ -461,6 +462,17 @@ export class SessionManager {
       projects.touch(l.projectId)
       this.emit({ type: 'composition-changed', projectId: l.projectId })
       this.emit({ type: 'history-changed', projectId: l.projectId })
+      // project card + this history entry get a picture of the new video
+      const out = projects.state(l.projectId).brief.output
+      const rel = entry ? `thumbnails/turn-${entry.id.slice(0, 12)}.jpg` : undefined
+      refreshThumbnail(l.dir, { width: out.width, height: out.height, duration: out.duration }, {
+        historyRel: rel,
+        onDone: (ok) => {
+          if (!ok || !entry || !rel) return
+          history.setThumbnail(l.dir, entry.id, rel)
+          this.emit({ type: 'history-changed', projectId: l.projectId })
+        },
+      })
     }
   }
 

@@ -204,6 +204,13 @@ export function renameProject(projectId: string, name: string): ProjectState {
   return state(projectId)
 }
 
+/** renames a project from the home list (it may not be open); the folder keeps its name */
+export function renameAt(dir: string, name: string): void {
+  const meta = readJson<ProjectMeta | null>(f.meta(dir), null)
+  if (!meta) throw new Error('프로젝트 정보(project.json)를 읽을 수 없어요.')
+  writeJson(f.meta(dir), { ...meta, name: safeName(name, '새 프로젝트'), updatedAt: nowIso() })
+}
+
 export async function removeProject(dir: string): Promise<void> {
   for (const [id, p] of open) if (p === dir) open.delete(id)
   writeJson(recentPath(), readJson<string[]>(recentPath(), []).filter((p) => p !== dir))
