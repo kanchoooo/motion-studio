@@ -67,6 +67,22 @@ export type AgentEvent =
   | { type: 'references-changed'; projectId: string }
   /** Claude found music / sound effects for the designer to audition */
   | { type: 'audio-candidates'; projectId: string; list: AudioCandidateList }
+  /** Claude is waiting for the designer's permission (asks: every open question; added: the new one) */
+  | { type: 'permissions'; projectId: string; asks: PermissionAsk[]; added?: PermissionAsk }
+
+/** "물어보기": Claude asks in the chat before acting outside its standing permissions; "모두 허용": the app allows */
+export type AgentPermission = 'ask' | 'all'
+
+export interface PermissionAsk {
+  id: string
+  projectId: string
+  tool: string
+  /** e.g. "명령 실행 · 이미지 크기 확인" */
+  title: string
+  /** the command, file or address */
+  detail: string
+  at: string
+}
 
 export interface SendMessageInput {
   projectId: string
@@ -274,6 +290,12 @@ export interface StudioApi {
     approveStoryboard(projectId: string, itemId: string): Promise<void>
     /** switches model / reasoning effort (restarts the session with --resume; waits for a running turn) */
     setModel(projectId: string, opts: { model: AgentModel; effort: AgentEffort }): Promise<SessionState>
+    /** permission mode for this project (takes effect at once, no restart) */
+    setPermission(projectId: string, mode: AgentPermission): Promise<void>
+    /** questions Claude is waiting on */
+    permissions(projectId: string): Promise<PermissionAsk[]>
+    /** always: allow this kind of action for the rest of the conversation */
+    answerPermission(projectId: string, askId: string, answer: 'allow' | 'always' | 'deny'): Promise<void>
     onEvent(cb: (e: AgentEvent) => void): () => void
   }
   terminal: {

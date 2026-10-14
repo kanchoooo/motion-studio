@@ -64,6 +64,9 @@ const api: StudioApi & { internal: { previewBase: string } } = {
     transcript: (id) => invoke('agent:transcript', id),
     approveStoryboard: (id, itemId) => invoke('agent:approveStoryboard', id, itemId),
     setModel: (id, opts) => invoke('agent:setModel', id, opts),
+    setPermission: (id, mode) => invoke('agent:setPermission', id, mode),
+    permissions: (id) => invoke('agent:permissions', id),
+    answerPermission: (id, askId, answer) => invoke('agent:answerPermission', id, askId, answer),
     onEvent: (cb) => subscribe<AgentEvent>('agent:event', cb),
   },
   terminal: {

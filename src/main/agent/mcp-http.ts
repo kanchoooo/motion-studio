@@ -13,6 +13,9 @@ export function setToolHooks(h: ToolHooks) {
   hooks = h
 }
 
+/** the project a session token belongs to (MCP and hook URLs share it) */
+export const projectForToken = (token: string) => tokens.get(token)
+
 export function mcpTokenFor(projectId: string): string {
   let t = byProject.get(projectId)
   if (!t) {

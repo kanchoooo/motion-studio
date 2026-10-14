@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { AlertCircle, ArrowUp, Check, ChevronsLeft, Clapperboard, Cpu, ImagePlus, Info, Loader2, MapPin, Square, SquareDashed, X } from 'lucide-react'
-import type { AgentEffort, AgentModel, ChatItem, Storyboard } from '@shared/api'
+import { AlertCircle, ArrowUp, Check, ChevronsLeft, Clapperboard, Cpu, ImagePlus, Info, Loader2, MapPin, ShieldCheck, ShieldQuestion, Square, SquareDashed, X } from 'lucide-react'
+import type { AgentEffort, AgentModel, AgentPermission, ChatItem, PermissionAsk, Storyboard } from '@shared/api'
 import { Markdown } from '../../components/Markdown'
 import { studio, useStore } from '../../store'
 import { useEditor } from './editorStore'
@@ -10,7 +10,7 @@ import { captureAnnotatedFrame } from './Preview'
 const FIRST = '브리프대로 콘티 먼저 보여줘'
 
 export function ChatPanel({ onFold }: { onFold?(): void }) {
-  const { project, chat, session, toast, setTerminal } = useStore()
+  const { project, chat, session, toast, setTerminal, asks } = useStore()
   const { marks, markTime, removeMark, updateMark, clearMarks, player } = useEditor()
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
@@ -28,7 +28,7 @@ export function ChatPanel({ onFold }: { onFold?(): void }) {
     if (!el) return
     if (atBottom.current) el.scrollTop = el.scrollHeight
     else setBehind(true)
-  }, [chat.length, chat[chat.length - 1]])
+  }, [chat.length, chat[chat.length - 1], asks.length])
   const toBottom = () => {
     const el = list.current
     if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
@@ -144,6 +144,9 @@ export function ChatPanel({ onFold }: { onFold?(): void }) {
             Claude가 작업하고 있어요 · 지금 보내는 메시지는 다음 차례에 전달돼요
           </div>
         )}
+        {asks.map((a) => (
+          <PermissionCard key={a.id} ask={a} />
+        ))}
       </div>
 
       <div style={{ padding: 12, borderTop: '1px solid var(--border)', flex: 'none', position: 'relative' }} className="col">
@@ -257,7 +260,10 @@ export function ChatPanel({ onFold }: { onFold?(): void }) {
             </button>
           </div>
         </div>
-        <ModelPicker />
+        <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
+          <ModelPicker />
+          <PermissionPicker />
+        </div>
       </div>
       {dropping && (
         <div style={{ position: 'absolute', inset: 0, background: 'var(--accent-soft)', border: '2px dashed var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', zIndex: 5 }} className="small">
@@ -284,6 +290,73 @@ const EFFORTS: { value: AgentEffort; label: string }[] = [
   { value: 'xhigh', label: '매우 높음' },
   { value: 'max', label: '최대' },
 ]
+
+/** Claude waits for the designer: allow once, for the rest of the conversation, or refuse */
+function PermissionCard({ ask }: { ask: PermissionAsk }) {
+  const { toast } = useStore()
+  const [busy, setBusy] = useState(false)
+  const answer = async (a: 'allow' | 'always' | 'deny') => {
+    setBusy(true)
+    try {
+      await studio.agent.answerPermission(ask.projectId, ask.id, a)
+    } catch (e) {
+      toast(errText(e), 'error')
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="card fade-in" style={{ padding: 12, borderColor: 'var(--warning)', background: 'color-mix(in srgb, var(--warning) 8%, var(--surface))' }} data-testid="permission-card">
+      <div className="row small" style={{ gap: 6, fontWeight: 650, marginBottom: 6 }}>
+        <ShieldQuestion size={15} color="var(--warning)" />
+        <span className="grow">Claude가 허락을 기다려요 · {ask.title}</span>
+      </div>
+      {ask.detail && (
+        <pre className="mono tiny" style={{ margin: '0 0 10px', padding: 8, borderRadius: 6, background: 'var(--surface-2)', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 140, overflow: 'auto' }}>
+          {ask.detail}
+        </pre>
+      )}
+      <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+        <button className="btn sm primary" disabled={busy} onClick={() => answer('allow')}>
+          허용
+        </button>
+        <button className="btn sm" disabled={busy} onClick={() => answer('always')} title="이 대화가 끝날 때까지 같은 종류의 작업은 묻지 않아요">
+          이 대화에서 계속 허용
+        </button>
+        <div className="grow" />
+        <button className="btn sm ghost" disabled={busy} onClick={() => answer('deny')}>
+          거부
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/** "물어보기" / "모두 허용" for this project (no restart needed) */
+function PermissionPicker() {
+  const { project, toast, setProject } = useStore()
+  const pid = project!.meta.id
+  const mode: AgentPermission = project!.meta.agentPermission === 'all' ? 'all' : 'ask'
+  const change = async (next: AgentPermission) => {
+    if (next === 'all' && !confirm('Claude가 묻지 않고 명령 실행·웹 접속·프로젝트 밖 파일 쓰기까지 할 수 있어요.\n앱이 관리하는 파일(브리프·직접 수정값 등)은 그대로 보호돼요.\n모두 허용으로 바꿀까요?')) return
+    try {
+      await studio.agent.setPermission(pid, next)
+      setProject(await studio.projects.state(pid))
+      toast(next === 'all' ? '이제 Claude가 묻지 않고 진행해요' : '이제 Claude가 필요할 때 대화창에서 물어봐요', 'success')
+    } catch (e) {
+      toast(errText(e), 'error')
+    }
+  }
+  return (
+    <div className="row tiny muted" style={{ gap: 6 }} data-testid="permission-picker" title="Claude가 명령 실행·웹 접속처럼 평소 권한 밖의 작업을 할 때">
+      {mode === 'all' ? <ShieldCheck size={12} color="var(--warning)" /> : <ShieldQuestion size={12} />}
+      <span>권한</span>
+      <select className="select" style={{ height: 24, fontSize: 11, padding: '0 6px', width: 'auto' }} value={mode} onChange={(e) => void change(e.target.value as AgentPermission)}>
+        <option value="ask">물어보기</option>
+        <option value="all">모두 허용</option>
+      </select>
+    </div>
+  )
+}
 
 /** model + reasoning effort for this project's Claude session */
 function ModelPicker() {

@@ -27,6 +27,7 @@ import { newId, nowIso, writeText } from '../util'
 import { setFamilyStatus } from '../variations'
 import { refreshThumbnail } from '../thumbnail'
 import { mcpTokenFor, setToolHooks } from './mcp-http'
+import { endPermissions } from './permissions'
 import { STUDIO_PROMPT } from './prompt'
 import { TranscriptTail } from './transcript'
 
@@ -47,7 +48,7 @@ const ATTENTION: { id: NonNullable<SessionState['attention']>; re: RegExp }[] = 
   { id: 'login', re: /Selectloginmethod|Pleaserun\/login|InvalidAPIkey|OAuthtokenhasexpired|notloggedin/i },
   { id: 'usage', re: /You'vehityour|You'vereachedyour|You'reoutofusage|usagelimitreached/i },
 ]
-// the welcome banner, or the input box footer (always drawn in our dontAsk sessions): after --resume
+// the welcome banner, or the input box footer (always drawn in our acceptEdits sessions): after --resume
 // of a long conversation the banner scrolls far up, the footer is redrawn at the bottom
 const BANNER = /ClaudeCodev\d|don'taskon|shift\+tabtocycle/
 const toPlain = (d: string) => d.replace(/\x1b\[(\d*)C/g, (_m, n) => ' '.repeat(Math.min(200, Number(n) || 1))).replace(ANSI, '')
@@ -266,7 +267,13 @@ export class SessionManager {
       permissions: {
         // Read(path) covers every file-reading tool (Glob, Grep), Edit(path) every writing tool
         allow: ['mcp__studio', ...(artlist ? ['mcp__artlist'] : []), 'Skill', 'Read(./**)', 'Edit(./composition/**)'],
-        deny: ['Edit(./composition/ms/**)', 'Edit(./composition/vendor/**)', 'Edit(./composition/assets/**)', 'Edit(./brief.json)', 'Edit(./overrides.json)', 'Edit(./references/**)'],
+        // files the app manages: denied in every mode, never even asked
+        deny: ['Edit(./composition/ms/**)', 'Edit(./composition/vendor/**)', 'Edit(./composition/assets/**)', 'Edit(./brief.json)', 'Edit(./overrides.json)', 'Edit(./references/**)', 'Edit(./project.json)', 'Edit(./.history/**)', 'Edit(./.studio/**)'],
+      },
+      // anything else (a command, a web page, a file outside the project) is asked through the app:
+      // a card in the chat ("물어보기") or allowed at once ("모두 허용")
+      hooks: {
+        PermissionRequest: [{ matcher: '*', hooks: [{ type: 'http', url: `${previewBase()}/hook/${mcpTokenFor(projectId)}/permission`, timeout: 900 }] }],
       },
     })
     const name = `모션스튜디오 · ${meta.name}`.slice(0, 60)
@@ -277,8 +284,10 @@ export class SessionManager {
       '--setting-sources', '',
       '--settings', settings,
       '--strict-mcp-config', '--mcp-config', mcpConfig,
-      '--permission-mode', 'dontAsk',
-      '--tools', 'Read,Write,Edit,Glob,Grep,Skill',
+      // acceptEdits: edits inside the project need no question (the deny rules above still hold);
+      // its footer ("shift+tab to cycle") also tells us the input box is drawn
+      '--permission-mode', 'acceptEdits',
+      '--tools', 'Read,Write,Edit,Glob,Grep,Skill,Bash,WebFetch,WebSearch',
       '--plugin-dir', pluginDir(),
       '--add-dir', pluginDir(),
       '--append-system-prompt-file', promptFile,
@@ -330,6 +339,7 @@ export class SessionManager {
     term.onExit(({ exitCode }) => {
       l.tail.stop()
       if (!current()) return
+      endPermissions(projectId)
       this.pendingRestart.delete(projectId) // a fresh start picks the new model/effort anyway
       // a resume that Claude Code could not find (only while it was still starting)
       const failedResume = resume && l.state.status === 'starting' && /No conversation found/i.test(l.plain)

@@ -28,6 +28,8 @@ export interface ProjectMeta {
   agentModel?: string
   /** Claude effort level (undefined = Claude Code default) */
   agentEffort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+  /** 'ask' (default): Claude asks in the chat before acting outside its standing permissions; 'all': allowed */
+  agentPermission?: 'ask' | 'all'
 }
 
 export interface ProjectSummary {

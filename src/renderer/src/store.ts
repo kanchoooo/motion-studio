@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { AudioCandidateList } from '@shared/ai'
-import type { AgentEvent, ChatItem, DoctorReport, ExportProgress, FontFamily, SessionState } from '@shared/api'
+import type { AgentEvent, ChatItem, DoctorReport, ExportProgress, FontFamily, SessionState, PermissionAsk } from '@shared/api'
 import type { ProjectState, ProjectSummary } from '@shared/project'
 
 export const studio = window.studio
@@ -33,6 +33,8 @@ interface State {
   toasts: Toast[]
   /** latest music / sound candidates Claude found for the open project */
   audioCandidates: AudioCandidateList | null
+  /** what Claude is waiting for the designer to allow */
+  asks: PermissionAsk[]
   aiOpen: boolean
   /** the export dialog is open (otherwise the result is announced with a toast) */
   exportOpen: boolean
@@ -85,6 +87,7 @@ export const useStore = create<State>((set, get) => ({
   fonts: [],
   toasts: [],
   audioCandidates: null,
+  asks: [],
   aiOpen: false,
   exportOpen: false,
 
@@ -101,16 +104,16 @@ export const useStore = create<State>((set, get) => ({
     await leaveProject()
     const project = await studio.projects.open(path)
     const id = project.meta.id
-    set({ project, screen: 'project', tab: project.hasVideo ? 'editor' : 'brief', chat: [], session: { status: 'starting' }, exportProgress: null, audioCandidates: null })
+    set({ project, screen: 'project', tab: project.hasVideo ? 'editor' : 'brief', chat: [], session: { status: 'starting' }, exportProgress: null, audioCandidates: null, asks: [] })
     const session = await studio.agent.start(id)
-    const chat = await studio.agent.transcript(id)
-    if (get().project?.meta.id === id) set({ session, chat, terminalOpen: session.attention === 'trust' || get().terminalOpen })
+    const [chat, asks] = await Promise.all([studio.agent.transcript(id), studio.agent.permissions(id)])
+    if (get().project?.meta.id === id) set({ session, chat, asks, terminalOpen: session.attention === 'trust' || get().terminalOpen })
   },
   setProject: (project) => set({ project }),
   closeProject: () => {
     void (async () => {
       await leaveProject()
-      set({ project: null, screen: 'home', chat: [], audioCandidates: null })
+      set({ project: null, screen: 'home', chat: [], audioCandidates: null, asks: [] })
       void get().refreshProjects()
     })()
   },
@@ -153,6 +156,10 @@ studio.agent.onEvent((e: AgentEvent) => {
       break
     case 'history-changed':
       useStore.setState({ historyNonce: s.historyNonce + 1 })
+      break
+    case 'permissions':
+      useStore.setState({ asks: e.asks })
+      if (e.added) useStore.getState().toast('Claude가 허락을 기다리고 있어요. 대화창에서 확인해 주세요.', 'info')
       break
     case 'audio-candidates':
       useStore.setState({ audioCandidates: e.list })

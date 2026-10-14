@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron'
-import type { AgentEvent, ExportOptions, ExportProgress, SendMessageInput } from '@shared/api'
+import type { AgentEvent, ExportOptions, ExportProgress, SendMessageInput, AgentPermission } from '@shared/api'
 import type { Brief } from '@shared/brief'
 import type { Overrides } from '@shared/overrides'
 import { hasAccess, unlock } from './access'
@@ -30,6 +30,8 @@ import { importUrl } from './ai/media'
 import { aiSettings, saveAiSettings } from './ai/settings'
 import { ttsSample } from './ai/tts'
 import { readJson } from './util'
+import { answerPermission, askingFor, setPermissionHooks, type PermissionAnswer } from './agent/permissions'
+import { projectForToken } from './agent/mcp-http'
 
 export function registerIpc(getWindow: () => BrowserWindow | null): SessionManager {
   const send = (channel: string, payload: unknown) => getWindow()?.webContents.send(channel, payload)
@@ -149,6 +151,27 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
   handle('agent:transcript', (id: string) => agent.transcript(id))
   handle('agent:approveStoryboard', (id: string, itemId: string) => agent.approveStoryboard(id, itemId))
   handle('agent:setModel', (id: string, opts: { model: string; effort: string }) => agent.setModel(id, opts))
+  handle('agent:setPermission', (id: string, mode: AgentPermission) => {
+    projects.touch(id, { agentPermission: mode === 'all' ? 'all' : undefined })
+    // questions already waiting are answered by the new mode
+    if (mode === 'all') for (const a of askingFor(id)) answerPermission(id, a.id, 'allow')
+  })
+  handle('agent:permissions', (id: string) => askingFor(id))
+  handle('agent:answerPermission', (id: string, askId: string, answer: PermissionAnswer) => answerPermission(id, askId, answer))
+  setPermissionHooks({
+    projectFor: projectForToken,
+    mode: (id) => (projects.state(id).meta.agentPermission === 'all' ? 'all' : 'ask'),
+    dirOf: (id) => projects.pathOf(id),
+    changed: (id, asks, added) => {
+      send('agent:event', { type: 'permissions', projectId: id, asks, added } satisfies AgentEvent)
+      // the designer may be in another app while Claude waits
+      const w = getWindow()
+      if (added && w && !w.isFocused()) {
+        if (process.platform === 'darwin') app.dock?.bounce('informational')
+        else w.flashFrame(true)
+      }
+    },
+  })
   handle('terminal:snapshot', (id: string) => agent.snapshot(id))
   ipcMain.on('terminal:write', (_e, id: string, data: string) => agent.write(id, data))
   ipcMain.on('terminal:resize', (_e, id: string, cols: number, rows: number) => agent.resize(id, cols, rows))
