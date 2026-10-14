@@ -5,6 +5,7 @@
 // full source of truth.
 import { join } from 'node:path'
 import { ASSET_KIND_LABELS, describeTiming, OUTPUT_PRESETS, type Brief } from '@shared/brief'
+import { directionForClaude, styleLabels } from '@shared/direction'
 import { writeText } from '../util'
 
 const DESTINATION: Record<string, string> = { 'youtube-16x9': 'youtube', 'shorts-9x16': 'shorts-reels', 'feed-4x5': 'instagram-feed', 'square-1x1': 'square-feed' }
@@ -50,6 +51,10 @@ export function briefMarkdown(brief: Brief): string {
   for (const t of brief.texts) custom.push(`- 필수 문구${t.locked ? '(글자 그대로)' : ''}: ${q(t.text)}${t.timing.mode !== 'any' ? ` · ${describeTiming(t.timing)}` : ''}`)
   if (brief.storyboard.length) custom.push(`- 디자이너가 짠 장면 ${brief.storyboard.length}개 (get_brief의 storyboard): 순서와 장면 길이, 문구를 따른다.`)
   if (brief.ai.narration.enabled) custom.push(`- 내레이션${brief.ai.narration.voiceName ? ` (${brief.ai.narration.voiceName})` : ''}${brief.ai.narration.script ? `: ${q(brief.ai.narration.script)}` : ' — 대본은 Claude가 쓴다'}`)
+  const dir = directionForClaude(brief.tempo, brief.styles)
+  if (dir?.tempo) custom.push(`- 템포(디자이너가 고름): ${dir.tempo}`)
+  if (dir?.styles) custom.push(`- 스타일(디자이너가 고름, ${styleLabels(brief.styles)}):`, ...dir.styles.map((x) => `  - ${x}`))
+  if (dir) custom.push(`  - ${dir.note}`)
   if (brief.brand) custom.push(`- 브랜드 키트 "${brief.brand.name}": 색 ${brief.brand.colors.map((c) => `${c.name} ${c.hex}`).join(', ') || '-'} · 글꼴 ${[brief.brand.fonts.headline, brief.brand.fonts.body].filter(Boolean).join(' / ') || '-'}`)
   if (custom.length) lines.push('', '## Customizations', '', ...custom)
   lines.push(

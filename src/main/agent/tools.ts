@@ -9,6 +9,7 @@ import { z } from 'zod'
 import type { Storyboard } from '@shared/api'
 import { AI_PROVIDERS, type AiConnectProvider, type AudioCandidateList } from '@shared/ai'
 import { describeTiming, SECTION_LABELS } from '@shared/brief'
+import { directionForClaude } from '@shared/direction'
 import { activeAccount } from '../ai/accounts'
 import { codexImage, codexStatus } from '../ai/codex'
 import { callTool, connectedProviders, listTools } from '../ai/connect'
@@ -89,7 +90,7 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
 
   server.registerTool(
     'get_brief',
-    { description: 'Read the project brief: output spec, required texts, advertiser assets (with sizes), tone & manner, and whether a video already exists.' },
+    { description: 'Read the project brief: output spec, required texts, advertiser assets (with sizes), tone & manner, the tempo and styles the designer chose (direction), and whether a video already exists.' },
     async () => {
       const { brief, hasVideo } = st()
       return text(
@@ -101,6 +102,7 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
             campaign: brief.campaign,
             output: { ...brief.output, dataFpsAttribute: Math.round(brief.output.fps), fpsNote: 'Write data-fps as the integer dataFpsAttribute; the app renders at the exact rate (e.g. 29.97).' },
             tone: brief.tone,
+            direction: directionForClaude(brief.tempo, brief.styles) ?? 'not set: choose the tempo and style yourself from the tone, the brand and your research',
             background:
               brief.output.background === 'auto'
                 ? 'AI 자율: design the background yourself (colour, gradient, texture, shapes or a generated image) to fit the tone and each scene.'

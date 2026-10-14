@@ -1,5 +1,6 @@
 // Brief: everything the designer configures before/while talking to Claude.
 import type { CharacterInfo, Framing, GenRequest, GenStyle, VideoGenRequest } from './assetGen'
+import { cleanDirection, type StyleId, type TempoId } from './direction'
 
 export type OutputPresetId = 'youtube-16x9' | 'shorts-9x16' | 'feed-4x5' | 'square-1x1' | 'custom'
 export type OutputFormat = 'mp4-h264' | 'mp4-h265' | 'mov-prores4444' | 'webm-vp9' | 'png-sequence'
@@ -203,6 +204,10 @@ export interface Brief {
   references: ReferenceItem[]
   /** free-form tone & manner notes */
   tone: string
+  /** 영상 템포 (optional; unset = Claude decides) */
+  tempo?: TempoId
+  /** motion graphics styles (optional, up to MAX_STYLES; the first leads) */
+  styles?: StyleId[]
   /** brand kit applied to this brief (structured for Claude) */
   brand?: Omit<BrandPreset, 'logo'>
   /** optional scene-by-scene plan */
@@ -303,7 +308,7 @@ export function normalizeBrief(b: Partial<Brief> & { title?: string }): Brief {
   const base = emptyBrief(b.title ?? '')
   const ai = { ...defaultAi(), ...(b.ai ?? {}) }
   ai.narration = { ...defaultAi().narration, ...(b.ai?.narration ?? {}) }
-  return { ...base, ...b, output: { ...base.output, ...(b.output ?? {}) }, storyboard: b.storyboard ?? [], ai } as Brief
+  return { ...base, ...b, output: { ...base.output, ...(b.output ?? {}) }, storyboard: b.storyboard ?? [], ai, ...cleanDirection(b.tempo, b.styles) } as Brief
 }
 
 export function newScene(id: string): StoryScene {

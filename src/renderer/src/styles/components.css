@@ -868,3 +868,31 @@
   background: var(--surface-3);
   color: var(--text);
 }
+
+/* brief › 스타일 chips */
+.style-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 8px;
+}
+.style-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 11px;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.style-chip:hover {
+  border-color: var(--border-strong, var(--accent));
+}
+.style-chip.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}

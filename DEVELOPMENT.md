@@ -162,6 +162,12 @@ poc/               Phase 0 기술 검증 기록 (RESULTS.md)
 - `src/main/registry.ts`: 사본 목록(`registryItems`), 검색(`searchRegistry`: 단어 끝 맞추기, 이름·제목 4 > 태그 3 > 설명 1, 맞춘 단어 비율을 곱함, 1점 미만 버림), 설치(`addRegistryItem` = `hyperframes add --no-clipboard --json`).
 - 앱 크기: 패키지 안 약 150MB(압축 설치 파일 기준 약 +45~60MB).
 
+## 5-5. 영상 템포·스타일 (0.3.1)
+
+- `src/shared/direction.ts`: `TEMPOS`(느림 3~4초·80~90 BPM … 매우 빠름 0.5~1초·140~150 BPM, 움직임 설명), `STYLES` 14가지(라벨·설명·Claude용 규칙·visual-styles.md 시작점·find_blocks 검색어), `MAX_STYLES = 2`(첫 번째가 주 스타일). `brief.tempo`·`brief.styles`는 선택(없으면 Claude가 정함), `normalizeBrief`가 모르는 값을 버림.
+- Claude에게: BRIEF.md Customizations와 get_brief `direction`(`directionForClaude`)에 숫자·규칙으로. 프롬프트 4단계: 고른 값은 결정이라 박자·장면 길이·DESIGN.md를 거기에 맞춤. 검수 에이전트 7번 항목에서 확인.
+- 화면: 브리프 › 톤앤매너·스타일(`ToneSection.tsx`의 `DirectionFields`).
+
 ## 5-1. AI 서비스 연결
 
 | 서비스 | 연결 방식 | 로그인 |

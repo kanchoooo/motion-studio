@@ -15,7 +15,7 @@ const SECTIONS = [
   { id: 'texts', label: '필수 문구', icon: FileText },
   { id: 'assets', label: '소재', icon: Image },
   { id: 'references', label: '레퍼런스', icon: Clapperboard },
-  { id: 'tone', label: '톤앤매너·메모', icon: Palette },
+  { id: 'tone', label: '톤앤매너·스타일', icon: Palette },
   { id: 'storyboard', label: '스토리보드', icon: Film },
   { id: 'ai', label: 'AI 생성·음성', icon: Sparkles },
 ] as const

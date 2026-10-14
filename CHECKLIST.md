@@ -501,7 +501,8 @@
 - [x] 기본 추론 강도 매우 높음 → 높음. 검수 에이전트도 채팅에서 고른 강도를 따름(PreToolUse 훅이 검수 호출에 세션 강도를 넣음)
 - [x] HyperFrames 레지스트리(블록 210·컴포넌트 237, CLI와 같은 v0.8.157)를 앱에 내장: `hyperframes add`·`catalog`가 인터넷 없이 바로, 설치 때 디자이너 클립보드를 덮어쓰지 않게
 - [x] Claude 도구 find_blocks(쉬운 영어로 찾기, 움직임 세 장면 미리보기 152개)·add_block(바로 설치)
-- 테스트: 단위(주소→사본, 검색, 네트워크 막고 CLI 설치·검색, 세션 명령의 클립보드, MCP 도구), 패키지 앱에서 한글 경로·네트워크 차단 설치, reviewer-effort-live·quality-flow-live(실제 Claude)
+- [x] 브리프 › 톤앤매너·스타일: 영상 템포(맡기기·느림·보통·빠름·매우 빠름 → 장면 길이·BPM·움직임 숫자)와 스타일 14가지(2개까지, 주·보조) → BRIEF.md·get_brief에 숫자와 규칙으로, 검수 에이전트도 확인
+- 테스트: 단위(주소→사본, 검색, 네트워크 막고 CLI 설치·검색, 세션 명령의 클립보드, MCP 도구, 템포·스타일), brief-direction(화면), 패키지 앱에서 한글 경로·네트워크 차단 설치, reviewer-effort-live·quality-flow-live(실제 Claude)
 
 ## 작업 기록
 
