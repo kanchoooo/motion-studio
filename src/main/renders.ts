@@ -15,6 +15,10 @@ import { formatDate, newId, nowIso, readJson, safeName, uniquePath, writeJson } 
 
 const run = promisify(execFile)
 const running = new Map<string, AbortController>()
+/** the project folder each running export writes into */
+const runningDirs = new Map<string, string>()
+/** project folders with an export running (a folder must not move under it) */
+export const exportingDirs = () => [...runningDirs.values()]
 
 const EXT: Record<ExportOptions['format'], string> = {
   'mp4-h264': '.mp4',
@@ -51,6 +55,7 @@ export async function startExport(projectId: string, opts: ExportOptions, emit: 
   const renderId = newId()
   const abort = new AbortController()
   running.set(renderId, abort)
+  runningDirs.set(renderId, dir)
   const send = (p: Omit<ExportProgress, 'projectId' | 'renderId'>) => emit({ projectId, renderId, ...p })
 
   void (async () => {
@@ -166,6 +171,7 @@ export async function startExport(projectId: string, opts: ExportOptions, emit: 
       })
     } finally {
       running.delete(renderId)
+      runningDirs.delete(renderId)
     }
   })()
   return renderId

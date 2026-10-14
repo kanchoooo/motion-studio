@@ -84,6 +84,8 @@ export class TranscriptTail {
 
   start() {
     this.poll(true)
+    // helpers started by an earlier run of Claude Code are gone with that process
+    this.background.clear()
     this.timer = setInterval(() => this.poll(false), 600)
   }
 
@@ -91,6 +93,7 @@ export class TranscriptTail {
     if (this.timer) clearInterval(this.timer)
     this.timer = null
     this.cancelEnd()
+    if (this.bgTimer) clearTimeout(this.bgTimer)
   }
 
   get busy() {
@@ -112,6 +115,7 @@ export class TranscriptTail {
   /** background work Claude started (run_in_background agents / commands) that has not reported back yet */
   private background = new Set<string>()
   private doneTasks = new Set<string>()
+  private bgTimer: NodeJS.Timeout | null = null
 
   private finishTurn() {
     this.endTimer = null
@@ -121,7 +125,16 @@ export class TranscriptTail {
       return
     }
     // Claude ended its turn to wait for a helper running in the background: it goes on when that reports back
-    if (this.background.size) return
+    // (a helper that never reports back does not keep the project busy for good)
+    if (this.background.size) {
+      if (!this.bgTimer)
+        this.bgTimer = setTimeout(() => {
+          this.bgTimer = null
+          this.background.clear()
+          if (!this.endTimer) this.finishTurn()
+        }, 45 * 60_000)
+      return
+    }
     this.setBusy(false)
     this.ev.turnEnd(this.lastText, this.endHow)
   }
@@ -134,7 +147,8 @@ export class TranscriptTail {
   /** the stop gate sent Claude back: this turn's end (already seen, or about to be) is not the end */
   hold() {
     if (this.endTimer) this.cancelEnd()
-    else this.heldAt = Date.now()
+    // the end record has not been read yet; when the turn already ended, the next end is a real one
+    else if (this.busyNow) this.heldAt = Date.now()
     this.setBusy(true)
   }
 
@@ -240,6 +254,10 @@ export class TranscriptTail {
       this.cancelEnd()
       this.heldAt = 0
     }
+    if (!initial && this.bgTimer && r.type === 'assistant') {
+      clearTimeout(this.bgTimer)
+      this.bgTimer = null
+    }
     if (r.type === 'user' && (r.isCompactSummary || r.isVisibleInTranscriptOnly)) {
       this.emitItem({ id: r.uuid ?? at, at, role: 'notice', text: '대화가 길어져서 앞부분을 요약했어요. 작업은 그대로 이어져요.' }, initial)
       return
@@ -270,6 +288,7 @@ export class TranscriptTail {
       if (/^\[Request interrupted by user/.test(t)) {
         this.cancelEnd()
         this.heldAt = 0
+        this.background.clear()
         this.closeStatuses(initial)
         this.emitItem({ id: r.uuid ?? at, at, role: 'notice', text: '작업을 멈췄어요.' }, initial)
         if (!initial) {
@@ -285,6 +304,8 @@ export class TranscriptTail {
         this.finishTurn()
       }
       this.heldAt = 0
+      // the designer's next message: nothing from the previous turn is still awaited
+      this.background.clear()
       // already shown when it was queued
       if (!this.takeQueued(t, initial, Date.parse(at))) this.emitItem(this.userItem(r.uuid ?? at, at, t), initial)
       if (!initial) this.setBusy(true)
@@ -326,14 +347,20 @@ export class TranscriptTail {
       const synthetic = (r.message as { model?: string }).model === '<synthetic>'
       for (const b of content) {
         if (b.type === 'text' && b.text?.trim() && !failed && !synthetic) {
-          // a short note that slipped out in English is shown as a plain progress line (the designer reads Korean)
-          if (!HANGUL.test(b.text) && b.text.length < 400) {
+          // a short note that slipped out in English is shown as a plain progress line (the designer reads Korean);
+          // a final reply is always shown
+          if (!HANGUL.test(b.text) && b.text.length < 400 && r.message.stop_reason !== 'end_turn') {
             this.emitItem({ id: `${r.uuid}-t`, at, role: 'status', text: '작업을 다듬고 있어요', done: true }, initial)
             continue
           }
           this.lastText = b.text
           this.emitItem({ id: `${r.uuid}-t`, at, role: 'assistant', text: b.text }, initial)
         } else if (b.type === 'tool_use' && b.id) {
+          // a helper stopped on purpose never reports back
+          if (/^(TaskStop|KillShell|KillBash)$/.test(b.name ?? '')) {
+            const id = b.input?.task_id ?? b.input?.shell_id ?? b.input?.bash_id ?? b.input?.id
+            if (typeof id === 'string') this.background.delete(id)
+          }
           const label = STUDIO_TOOL_LABELS[b.name ?? ''] ?? (b.name?.startsWith('mcp__artlist') ? '아트리스트에서 찾고 있어요' : '작업하고 있어요')
           const item: Extract<ChatItem, { role: 'status' }> = { id: b.id, at, role: 'status', text: label, done: initial }
           this.status.set(b.id, item)

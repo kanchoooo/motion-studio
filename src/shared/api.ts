@@ -311,6 +311,8 @@ export interface StudioApi {
     create(input: { name: string; presetId: Brief['output']['preset']; duration: number; folder?: string }): Promise<ProjectState>
     /** moves a project into a folder ('' = top); returns its new path */
     move(path: string, folder: string): Promise<string>
+    /** the video uses another file in place of an asset (composition-relative paths); returns how many places changed */
+    replaceAssetFile(projectId: string, from: string, to: string): Promise<number>
     open(path: string): Promise<ProjectState>
     /** current state of an already-open project (no side effects) */
     state(projectId: string): Promise<ProjectState>

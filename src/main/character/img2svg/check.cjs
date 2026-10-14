@@ -55,7 +55,9 @@ const hexRgb = (h) => [1, 3, 5].map((k) => parseInt(h.slice(k, k + 2), 16))
 /** thin gaps: pixels that a small closing fills (inside the disc) */
 function cracks(img, w, h, cx, cy, R) {
   const x0 = Math.max(0, Math.round(cx - R)), y0 = Math.max(0, Math.round(cy - R)), x1 = Math.min(w, Math.round(cx + R)), y1 = Math.min(h, Math.round(cy + R))
-  const W = x1 - x0, H = y1 - y0, a = new Uint8Array(W * H)
+  const W = x1 - x0, H = y1 - y0
+  if (W <= 0 || H <= 0) return []
+  const a = new Uint8Array(W * H)
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) a[y * W + x] = img[((y + y0) * w + x + x0) * 4 + 3] > 127 ? 1 : 0
   const morph = (src, grow, r) => {
     const out = new Uint8Array(W * H)
@@ -84,8 +86,9 @@ function cracks(img, w, h, cx, cy, R) {
 async function tile(img, w, h, cx, cy, R, marks, label, size = 280) {
   const buf = Buffer.from(img)
   for (const [list, col] of marks) for (const i of list) { buf[i * 4] = col[0]; buf[i * 4 + 1] = col[1]; buf[i * 4 + 2] = col[2]; buf[i * 4 + 3] = 255 }
-  const left = Math.max(0, Math.round(cx - R)), top = Math.max(0, Math.round(cy - R))
-  const width = Math.min(w - left, Math.round(2 * R)), height = Math.min(h - top, Math.round(2 * R))
+  // a pivot at or beyond the edge (a cropped body) still gets a tile of the canvas around it
+  const left = Math.min(w - 1, Math.max(0, Math.round(cx - R))), top = Math.min(h - 1, Math.max(0, Math.round(cy - R)))
+  const width = Math.max(1, Math.min(w - left, Math.round(2 * R))), height = Math.max(1, Math.min(h - top, Math.round(2 * R)))
   const pic = await sharp(buf, { raw: { width: w, height: h, channels: 4 } }).extract({ left, top, width, height }).flatten({ background: '#d9d9d9' }).resize(size, size, { fit: 'contain', background: '#d9d9d9' }).png().toBuffer()
   const caption = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="26"><rect width="100%" height="100%" fill="#111"/><text x="8" y="18" font-family="Arial" font-size="14" fill="#ffd166">${label.replace(/[<&]/g, '')}</text></svg>`)
   return sharp({ create: { width: size, height: size + 26, channels: 4, background: '#111' } }).composite([{ input: pic, left: 0, top: 0 }, { input: caption, left: 0, top: size }]).png().toBuffer()

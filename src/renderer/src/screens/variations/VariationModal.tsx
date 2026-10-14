@@ -50,6 +50,13 @@ export function VariationModal({ onClose, folder }: { onClose: () => void; folde
   useEffect(() => {
     if (!sourcePath) return
     let alive = true
+    // nothing of the previously picked original may be used while the new one loads
+    if (!inProject) {
+      setSource(null)
+      setRows([])
+      setRenders([])
+      setVersions([])
+    }
     void (async () => {
       try {
         const s = inProject ? project! : await studio.projects.open(sourcePath)
@@ -65,6 +72,10 @@ export function VariationModal({ onClose, folder }: { onClose: () => void; folde
         const next = OUTPUT_PRESETS.find((p) => (o.width >= o.height ? p.height > p.width : p.width > p.height)) ?? OUTPUT_PRESETS[0]
         setRows([{ key: ++seq, preset: next.id, width: next.width, height: next.height, duration: o.duration, lengthMethod: 'claude', note: '' }])
       } catch (e) {
+        if (alive) {
+          setSource(null)
+          setRows([])
+        }
         toast(errText(e), 'error')
       }
     })()

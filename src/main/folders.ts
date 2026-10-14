@@ -1,7 +1,7 @@
 // Project folders (홈의 폴더 트리): plain folders inside the projects folder, so the tree
 // is the same in Finder / Explorer. A folder holds projects (*.msproj) and more folders;
 // hidden folders (.templates, …) belong to the app and are never listed.
-import { existsSync, mkdirSync, readdirSync, renameSync, statSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { projectsDir } from './paths'
 import { safeName, uniquePath } from './util'
@@ -70,14 +70,14 @@ export function createFolder(parent: string, name: string): string {
 }
 
 /** renames a folder in place; returns its new relative path (callers move open projects along) */
-export function renameFolder(rel: string, name: string): { from: string; to: string; rel: string } {
+export async function renameFolder(rel: string, name: string): Promise<{ from: string; to: string; rel: string }> {
   const from = folderPath(rel)
   if (!rel || !existsSync(from)) throw new Error('폴더를 찾을 수 없어요.')
   const n = cleanName(name)
   const to = join(dirname(from), n)
   if (to === from) return { from, to, rel }
-  if (existsSync(to)) throw new Error('같은 이름의 폴더가 이미 있어요.')
-  renameSync(from, to)
+  if (existsSync(to) && to.toLowerCase() !== from.toLowerCase()) throw new Error('같은 이름의 폴더가 이미 있어요.')
+  await moveDir(from, to)
   return { from, to, rel: [...rel.split('/').filter(Boolean).slice(0, -1), n].join('/') }
 }
 
@@ -112,6 +112,28 @@ export function moveTarget(projectDir: string, to: string): string {
   mkdirSync(base, { recursive: true })
   const name = basename(projectDir).replace(/\.msproj$/i, '')
   return uniquePath((n) => join(base, `${name}${n ? ` ${n + 1}` : ''}.msproj`))
+}
+
+/**
+ * Renames a folder, waiting a little when it is still in use (on Windows a Claude process that was
+ * just closed can hold it for a moment) and copying when it goes to another drive.
+ */
+export async function moveDir(from: string, to: string): Promise<void> {
+  for (let i = 0; ; i++) {
+    try {
+      renameSync(from, to)
+      return
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code
+      if (code === 'EXDEV') {
+        cpSync(from, to, { recursive: true })
+        rmSync(from, { recursive: true, force: true })
+        return
+      }
+      if (!/^(EBUSY|EPERM|EACCES|ENOTEMPTY)$/.test(code ?? '') || i >= 15) throw new Error(code === 'EBUSY' || code === 'EPERM' ? '폴더가 아직 사용 중이에요. 잠시 뒤 다시 해 주세요.' : (e as Error).message)
+      await new Promise((r) => setTimeout(r, 400))
+    }
+  }
 }
 
 /** true when `p` is `dir` itself or inside it */

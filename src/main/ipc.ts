@@ -17,7 +17,8 @@ import { previewBase } from './preview-server'
 import * as projects from './projects'
 import * as folders from './folders'
 import * as templates from './templates'
-import { cancelExport, exportAll, listRenders, removeRender, startExport, updateRender } from './renders'
+import { writeBriefDoc } from './agent/briefDoc'
+import { cancelExport, exportAll, exportingDirs, listRenders, removeRender, startExport, updateRender } from './renders'
 import { createVariations, setFamilyStatus } from './variations'
 import { listBrands, removeBrand, saveBrand } from './brands'
 import { addReferenceFiles, addYoutube, listReferences, removeReference, updateReference } from './references'
@@ -123,6 +124,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
       }
     })
     if (working.length) throw new Error(`Claude가 작업 중인 프로젝트가 있어요. 작업이 끝난 뒤에 ${what}.`)
+    if (exportingDirs().some((d) => folders.isInside(d, dir))) throw new Error(`내보내는 중인 프로젝트가 있어요. 내보내기가 끝난 뒤에 ${what}.`)
     // idle sessions there are closed: their working folder is about to change
     for (const id of projects.openIds()) {
       try {
@@ -134,9 +136,9 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
   }
   handle('folders:list', () => folders.scan().folders)
   handle('folders:create', (parent: string, name: string) => folders.createFolder(String(parent ?? ''), String(name ?? '')))
-  handle('folders:rename', (rel: string, name: string) => {
+  handle('folders:rename', async (rel: string, name: string) => {
     notWhileWorking(folders.folderPath(rel), '이름을 바꿔 주세요')
-    const r = folders.renameFolder(rel, name)
+    const r = await folders.renameFolder(rel, name)
     projects.forgetInside(r.from)
     projects.movedOnDisk(r.from, r.to)
     return r.rel
@@ -168,6 +170,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
     const t = templates.projectSlots(dir)
     if (!t) throw new Error('템플릿으로 만든 프로젝트가 아니에요.')
     const r = await templates.applySlots(dir, t.slots, values)
+    writeBriefDoc(dir, projects.state(id).brief)
     projects.refreshFontCss(dir)
     projects.applyAudioEdits(dir)
     projects.touch(id)
@@ -176,6 +179,15 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
     const msg = templates.claudeMessage(t.name, r.changed, r.todo, !!check)
     if (msg) await agent.send({ projectId: id, text: msg })
     return projects.state(id)
+  })
+  handle('projects:replaceAssetFile', async (id: string, from: string, to: string) => {
+    notWhileBusy(id, '소재를 바꿔 주세요')
+    const n = projects.replaceAssetFile(id, from, to)
+    if (n) {
+      await history.record(projects.pathOf(id), { actor: 'designer', summary: '영상 속 소재를 고친 것으로 바꿨어요' })
+      send('agent:event', { type: 'composition-changed', projectId: id } satisfies AgentEvent)
+    }
+    return n
   })
   handle('projects:move', (path: string, folder: string) => {
     notWhileWorking(path, '옮겨 주세요')

@@ -21,7 +21,12 @@ import { serveFolder } from './preview-server'
 import { newId, nowIso, readJson, safeName, uniquePath, writeJson, writeText } from './util'
 
 export const templatesDir = () => join(projectsDir(), '.templates')
-const templateDir = (id: string) => join(templatesDir(), id.replace(/[^\w-]/g, ''))
+const templateDir = (id: string) => {
+  const safe = String(id ?? '').replace(/[^\w-]/g, '')
+  if (!safe) throw new Error('템플릿을 찾을 수 없어요.')
+  return join(templatesDir(), safe)
+}
+const same = (a: string, b: string) => a.replace(/\s+/g, ' ').trim() === b.replace(/\s+/g, ' ').trim()
 const SKIP = /[\\/](renders|snapshots|\.cache|\.history)([\\/]|$)/
 
 /** the slots a project could offer: every text, image, clip and narration Claude marked as editable */
@@ -143,7 +148,7 @@ export async function applySlots(projectDir: string, slots: TemplateSlot[], valu
       if (v.text === before) continue
       overrides.elements[slot.id] = { ...overrides.elements[slot.id], text: v.text }
       // a required brief text that was this slot follows the new copy
-      brief.texts = brief.texts.map((t) => (t.text.trim() === before.trim() ? { ...t, text: v.text! } : t))
+      brief.texts = brief.texts.map((t) => (same(t.text, before) ? { ...t, text: v.text! } : t))
       changed.push(slot.label)
       continue
     }
@@ -165,10 +170,18 @@ export async function applySlots(projectDir: string, slots: TemplateSlot[], valu
     const rel = `assets/${basename(dst)}`
     html = setAttr(html, media.at, 'src', rel)
     const meta = await probeMedia(dst)
-    if (slot.kind === 'voice' && meta.duration) {
-      // the narration plays for its own length
+    if (slot.kind === 'voice' || slot.kind === 'video') {
+      // the new file is the element's own now: an earlier audio edit of the designer must not put the old one back
       const again = findElements(html).find((e) => e.id === slot.id)!
-      html = setAttr(html, again.open, 'data-duration', meta.duration.toFixed(2))
+      html = setAttr(html, again.open, 'data-ms-original-src', null)
+      const edit = overrides.audio?.[slot.id]
+      if (edit) {
+        delete edit.src
+        delete edit.start
+        delete edit.duration
+      }
+      // the narration plays for its own length
+      if (slot.kind === 'voice' && meta.duration) html = setAttr(html, findElements(html).find((e) => e.id === slot.id)!.open, 'data-duration', meta.duration.toFixed(2))
     }
     // the brief's asset entry for the old file now holds the new one
     brief.assets = brief.assets.map((a: Asset) => (a.file === media.src ? { ...a, file: rel, originalName: basename(v.file!), meta: { ...meta, bytes: statSync(dst).size } } : a))

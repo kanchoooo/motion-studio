@@ -1,4 +1,4 @@
-import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs'
+import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { basename, extname, join } from 'node:path'
 import { app, shell } from 'electron'
 import { emptyBrief, normalizeBrief, OUTPUT_PRESETS, type Asset, type AssetKind, type Brief, type OutputPresetId } from '@shared/brief'
@@ -13,7 +13,7 @@ import { candidateFolder, candidateTarget, discardCandidate } from './ai/generat
 import type { GenCandidate } from '@shared/assetGen'
 import type { CollectItem } from '@shared/api'
 import { dataDir, runtimeFiles } from './paths'
-import { folderOf, folderPath, isInside, moveTarget, scan } from './folders'
+import { folderOf, folderPath, isInside, moveDir, moveTarget, scan } from './folders'
 import { writeBriefDoc } from './agent/briefDoc'
 import { serveFolder } from './preview-server'
 import { compositionHasVideo, HYPERFRAMES_JSON, starterComposition } from './template'
@@ -234,12 +234,13 @@ export function movedOnDisk(from: string, to: string): void {
 }
 
 /** moves a project into another folder ('' = the top); returns its new path */
-export function moveProject(dir: string, folder: string): string {
+export async function moveProject(dir: string, folder: string): Promise<string> {
   if (!existsSync(f.meta(dir))) throw new Error('프로젝트 폴더를 찾을 수 없어요.')
   if (folderOf(dir) === folder) return dir
   const to = moveTarget(dir, folder)
+  await moveDir(dir, to)
+  // only once it really moved: the open entry and the recent list follow
   forgetInside(dir)
-  renameSync(dir, to)
   movedOnDisk(dir, to)
   return to
 }
@@ -385,6 +386,39 @@ export async function keepCandidate(projectId: string, candidate: GenCandidate):
   }
   discardCandidate(dir, candidate.id)
   return asset
+}
+
+/** the composition (every .html / .css it has) uses `to` wherever it used the asset file `from`; returns the count */
+export function replaceAssetFile(projectId: string, from: string, to: string): number {
+  const dir = pathOf(projectId)
+  const ok = (p: string) => /^assets\/[^"'<>\\]+$/.test(p) && !p.includes('..')
+  if (!ok(from) || !ok(to) || !existsSync(join(f.comp(dir), to))) throw new Error('바꿀 소재 파일이 올바르지 않아요.')
+  const esc = from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const re = new RegExp(`(["'(=\\s])(\\./)?${esc}(?=["')\\s?#])`, 'g')
+  let count = 0
+  const walk = (d: string, depth: number) => {
+    for (const name of readdirSync(d)) {
+      const p = join(d, name)
+      if (depth === 0 && /^(ms|vendor|assets|fonts|snapshots)$/.test(name)) continue
+      if (statSync(p).isDirectory()) {
+        if (depth < 2 && !name.startsWith('.')) walk(p, depth + 1)
+        continue
+      }
+      if (!/\.(html?|css)$/i.test(name)) continue
+      const text = readFileSync(p, 'utf8')
+      let n = 0
+      const next = text.replace(re, (_m, pre: string, dot: string | undefined) => {
+        n++
+        return `${pre}${dot ?? ''}${to}`
+      })
+      if (n) {
+        writeText(p, next)
+        count += n
+      }
+    }
+  }
+  walk(f.comp(dir), 0)
+  return count
 }
 
 /** disk use of a project by category (bytes) */

@@ -39,6 +39,7 @@ const api: StudioApi & { internal: { previewBase: string } } = {
     onChanged: (cb) => subscribe<null>('projects:changed', cb),
     create: (input) => invoke('projects:create', input),
     move: (path, folder) => invoke('projects:move', path, folder),
+    replaceAssetFile: (id, from, to) => invoke('projects:replaceAssetFile', id, from, to),
     open: (path) => invoke('projects:open', path),
     state: (id) => invoke('projects:state', id),
     rename: (id, name) => invoke('projects:rename', id, name),

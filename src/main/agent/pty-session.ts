@@ -384,16 +384,7 @@ export class SessionManager {
       // nothing to resume: start a new conversation right away instead of showing "종료됨"
       if (failedResume) setTimeout(() => current() && this.start(projectId), 300)
       // a variation re-layout that was running here will not finish
-      if (this.adapting.has(projectId)) {
-        this.adapting.delete(projectId)
-        try {
-          setFamilyStatus(projectId, 'error')
-        } catch {
-          /* folder gone */
-        }
-        this.emit({ type: 'family-changed', projectId })
-        setTimeout(() => void this.pump(), 500)
-      }
+      this.endAdaptation(projectId, 'error')
     })
     l.tail.start()
     return l.state
@@ -439,8 +430,24 @@ export class SessionManager {
     while (this.adapting.size < MAX_ADAPTING && this.adaptQueue.length) void this.runAdaptation(this.adaptQueue.shift()!)
   }
 
+  /** a re-layout ended (done, failed, or its session went away): its slot goes to the next one */
+  private endAdaptation(projectId: string, status: 'done' | 'error') {
+    const queued = this.adaptQueue.findIndex((q) => q.projectId === projectId)
+    if (queued >= 0 && status === 'error') this.adaptQueue.splice(queued, 1)
+    if (!this.adapting.delete(projectId) && queued < 0) return
+    try {
+      setFamilyStatus(projectId, status)
+    } catch {
+      /* folder gone */
+    }
+    this.emit({ type: 'family-changed', projectId })
+    setTimeout(() => void this.pump(), 500)
+  }
+
   private async runAdaptation(next: { projectId: string; text: string }) {
     this.adapting.add(next.projectId)
+    // the designer may be talking with this variation already: its own turn finishes first
+    for (let i = 0; i < 900 && this.live.get(next.projectId)?.state.status === 'busy'; i++) await new Promise((r) => setTimeout(r, 2000))
     try {
       setFamilyStatus(next.projectId, 'working')
       this.emit({ type: 'family-changed', projectId: next.projectId })
@@ -477,17 +484,8 @@ export class SessionManager {
   }
 
   private async onTurnEnd(l: Live, lastText: string, how: 'done' | 'stopped' | 'failed' = 'done') {
-    if (this.adapting.has(l.projectId)) {
-      this.adapting.delete(l.projectId)
-      try {
-        // a stopped or failed re-layout is not a finished variation
-        setFamilyStatus(l.projectId, how === 'done' ? 'done' : 'error')
-      } catch {
-        /* folder gone */
-      }
-      this.emit({ type: 'family-changed', projectId: l.projectId })
-      setTimeout(() => void this.pump(), 500)
-    }
+    // a stopped or failed re-layout is not a finished variation
+    if (this.adapting.has(l.projectId)) this.endAdaptation(l.projectId, how === 'done' ? 'done' : 'error')
     if (this.pendingRestart.has(l.projectId)) {
       // a message queued during the turn starts right away: restart only once the session is really idle
       setTimeout(() => {
@@ -672,6 +670,8 @@ export class SessionManager {
 
   kill(projectId: string) {
     const l = this.live.get(projectId)
+    // its exit is no longer heard (it is not the current session): a re-layout running here ends now
+    if (this.adapting.has(projectId)) this.endAdaptation(projectId, 'error')
     if (!l) return
     l.tail.stop()
     try {

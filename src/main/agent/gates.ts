@@ -21,12 +21,19 @@ interface Rec {
   type?: string
   content?: string
   isMeta?: boolean
+  isCompactSummary?: boolean
+  isVisibleInTranscriptOnly?: boolean
   timestamp?: string
   message?: { content?: string | { type?: string; name?: string; id?: string; tool_use_id?: string; input?: Record<string, unknown>; content?: unknown; text?: string }[] }
 }
 
+/** the last transcript read (a hook may read the same file a few times in one call) */
+let cache: { file: string; size: number; mtime: number; recs: Rec[] } | null = null
+
 function records(file: string): Rec[] {
   if (!existsSync(file)) return []
+  const st = statSync(file)
+  if (cache && cache.file === file && cache.size === st.size && cache.mtime === st.mtimeMs) return cache.recs
   const out: Rec[] = []
   for (const line of readFileSync(file, 'utf8').split('\n')) {
     if (!line.trim()) continue
@@ -36,6 +43,7 @@ function records(file: string): Rec[] {
       /* a partly written line */
     }
   }
+  cache = { file, size: st.size, mtime: st.mtimeMs, recs: out }
   return out
 }
 
@@ -79,14 +87,18 @@ function toolUses(recs: Rec[]): ToolUse[] {
 function turnStart(recs: Rec[]): { at: number; text: string } {
   for (let i = recs.length - 1; i >= 0; i--) {
     const r = recs[i]
-    if (r.type !== 'user' || r.isMeta) continue
+    // hook feedback, a compaction summary and helper notifications are not the designer asking
+    if (r.type !== 'user' || r.isMeta || r.isCompactSummary || r.isVisibleInTranscriptOnly) continue
     const c = r.message?.content
-    const text = typeof c === 'string' ? c : Array.isArray(c) && c.every((b) => b?.type === 'text') ? c.map((b) => b.text ?? '').join('\n') : null
+    const text = typeof c === 'string' ? c : Array.isArray(c) && c.length && c.every((b) => b?.type === 'text' || b?.type === 'image') ? c.filter((b) => b.type === 'text').map((b) => b.text ?? '').join('\n') : null
     if (text == null || !text.trim() || text.trim().startsWith('<')) continue
     return { at: r.timestamp ? Date.parse(r.timestamp) : 0, text }
   }
   return { at: 0, text: '' }
 }
+
+/** identity of the current turn (when the designer's message was written) */
+export const turnKey = (transcript: string) => String(turnStart(records(transcript)).at)
 
 /** every Read in the conversation (main session and subagents) */
 export function readsIn(transcript: string): string[] {

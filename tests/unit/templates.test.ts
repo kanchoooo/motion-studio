@@ -32,6 +32,13 @@ describe('finding slots in the HTML', () => {
     expect(mediaOf(HTML, els.find((e) => e.id === 'photo')!)?.src).toBe('assets/cup.png')
     expect(mediaOf(HTML, els.find((e) => e.id === 'logo')!)?.src).toBe('assets/logo.png')
   })
+  it('changes the real attribute, never text inside another value, and can remove one', () => {
+    const h = '<img alt="photo src=fake.png" src="a.png" data-ms-original-src="old.png">'
+    const at: [number, number] = [0, h.length]
+    expect(setAttr(h, at, 'src', 'b.png')).toBe('<img alt="photo src=fake.png" src="b.png" data-ms-original-src="old.png">')
+    expect(setAttr(h, at, 'data-ms-original-src', null)).toBe('<img alt="photo src=fake.png" src="a.png">')
+    expect(setAttr('<audio id="v"></audio>', [0, 14], 'data-duration', '3.20')).toBe('<audio id="v" data-duration="3.20"></audio>')
+  })
   it('sets an attribute of an opening tag', () => {
     const logo = findElements(HTML).find((e) => e.id === 'logo')!
     const next = setAttr(HTML, logo.open, 'src', 'assets/tpl-new.png')
@@ -77,8 +84,12 @@ describe('filling a template', () => {
     const brief = JSON.parse(readFileSync(join(dir, 'brief.json'), 'utf8'))
     expect(brief.texts[0].text).toBe('여름이\n왔다')
     expect(brief.assets[0].file).toBe('assets/tpl-new_cup.png')
-    // narration: a recording takes the slot (its length follows); a script goes to Claude
+    // narration: a recording takes the slot (its length follows), even after the designer had replaced the old take;
+    // a script goes to Claude
+    const ov2 = JSON.parse(readFileSync(join(dir, 'overrides.json'), 'utf8'))
+    writeFileSync(join(dir, 'overrides.json'), JSON.stringify({ ...ov2, audio: { 'voice-1': { src: 'assets/other.mp3', volume: 0.5 } } }))
     const v = await applySlots(dir, slots, { 'voice-1': { file: voice } })
+    expect(JSON.parse(readFileSync(join(dir, 'overrides.json'), 'utf8')).audio['voice-1']).toEqual({ volume: 0.5 })
     expect(readFileSync(join(dir, 'composition', 'index.html'), 'utf8')).toMatch(/data-ms-id="voice-1"[^>]*src="assets\/tpl-take\.mp3"[^>]*data-duration="3\.2\d"/)
     expect(v.changed).toEqual(['내레이션'])
     const s = await applySlots(dir, slots, { 'voice-1': { script: '이제 앱으로 주문하세요' } })

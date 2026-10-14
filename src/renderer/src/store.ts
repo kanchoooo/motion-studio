@@ -105,7 +105,8 @@ export const useStore = create<State>((set, get) => ({
     set({ theme })
   },
   refreshProjects: async () => {
-    const [projects, folders, templates] = await Promise.all([studio.projects.list(), studio.folders.list(), studio.templates.list()])
+    // one list that fails to load (an unreadable folder) does not hold back the others
+    const [projects, folders, templates] = await Promise.all([studio.projects.list(), studio.folders.list().catch(() => get().folders), studio.templates.list().catch(() => get().templates)])
     set({ projects, folders, templates })
   },
   openProject: async (path) => {

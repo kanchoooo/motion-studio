@@ -116,11 +116,32 @@ export function slotKind(el: FoundElement): SlotKind | null {
   return null
 }
 
-/** sets one attribute in the opening tag found at [start, end) */
-export function setAttr(html: string, at: [number, number], name: string, value: string): string {
+/** where an attribute sits in an opening tag (walking the attributes, so text inside another value never matches) */
+function attrSpan(tag: string, name: string): [number, number] | null {
+  const head = tag.match(/^<[a-zA-Z][\w:-]*/)?.[0].length ?? 0
+  const re = new RegExp(ATTR.source, 'g')
+  re.lastIndex = head
+  let m: RegExpExecArray | null
+  while ((m = re.exec(tag))) {
+    if (!m[0]) {
+      re.lastIndex++
+      continue
+    }
+    if (m[1].toLowerCase() === name.toLowerCase()) {
+      // include the whitespace before it
+      let s = m.index
+      while (s > 0 && /\s/.test(tag[s - 1])) s--
+      return [s, m.index + m[0].length]
+    }
+  }
+  return null
+}
+
+/** sets (or, with null, removes) one attribute in the opening tag found at [start, end) */
+export function setAttr(html: string, at: [number, number], name: string, value: string | null): string {
   const tag = html.slice(at[0], at[1])
-  const esc = value.replace(/&/g, '&amp;').replace(/"/g, '&quot;')
-  const re = new RegExp(`(\\s${name}\\s*=\\s*)("[^"]*"|'[^']*'|[^\\s"'>]+)`, 'i')
-  const next = re.test(tag) ? tag.replace(re, `$1"${esc}"`) : tag.replace(/\s*(\/?)>$/, ` ${name}="${esc}"$1>`)
+  const span = attrSpan(tag, name)
+  const piece = value == null ? '' : ` ${name}="${value.replace(/&/g, '&amp;').replace(/"/g, '&quot;')}"`
+  const next = span ? tag.slice(0, span[0]) + piece + tag.slice(span[1]) : value == null ? tag : tag.replace(/\s*(\/?)>$/, `${piece}$1>`)
   return html.slice(0, at[0]) + next + html.slice(at[1])
 }

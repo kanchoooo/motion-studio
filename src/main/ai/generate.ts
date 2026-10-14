@@ -6,7 +6,7 @@
 // folder (.studio/generations/<id>/) and, for the flat character style, turned
 // into an SVG right away.
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
-import { basename, extname, join, relative, resolve } from 'node:path'
+import { basename, extname, isAbsolute, join, relative, resolve } from 'node:path'
 import sharp from 'sharp'
 import { buildPrompt, negativeFor, withRevision, type GenCandidate, type GenRequest, type Ratio } from '@shared/assetGen'
 import { convertCharacter } from '../character/convert'
@@ -153,13 +153,15 @@ async function imageTool(provider: McpProvider) {
 /** whether the chosen image tool takes reference images (else a revision goes as words only) */
 async function takesImages(provider: McpProvider): Promise<boolean> {
   const { props } = await imageTool(provider)
-  return !Object.keys(props).length || !!keyOf(props, REF_KEY, /prompt|negative/i)
+  // a tool without a described reference field cannot be sent the picture: the change goes in words
+  return !!keyOf(props, REF_KEY, /prompt|negative/i)
 }
 
 /** a reference path: composition-relative (assets/…), or project-relative (.studio/…, composition/…) */
 export function referencePath(projectDir: string, rel: string): string {
   const abs = /^(\.studio|composition)\//.test(rel) ? resolve(projectDir, rel) : resolve(projectDir, 'composition', rel)
-  if (relative(projectDir, abs).startsWith('..')) throw new Error('프로젝트 밖의 이미지는 참고로 쓸 수 없어요.')
+  const r = relative(projectDir, abs)
+  if (r.startsWith('..') || isAbsolute(r)) throw new Error('프로젝트 밖의 이미지는 참고로 쓸 수 없어요.')
   return abs
 }
 
@@ -198,7 +200,8 @@ export async function generateCandidate(projectDir: string, req: GenRequest): Pr
     if (previous && !existsSync(previous)) throw new Error('고칠 이미지를 찾을 수 없어요. 후보가 지워졌다면 처음부터 다시 만들어 주세요.')
     const withImage = !!previous && (req.provider === 'codex' || (await takesImages(req.provider)))
     const sent = withRevision(buildPrompt(req.style, req.framing, req.lang, req.prompt, req.kind), req.lang, req.revision, withImage)
-    const refs = [...req.references.map((r) => referencePath(projectDir, r)), ...(withImage ? [previous!] : [])]
+    // the previous picture first: a tool that takes one image gets that one
+    const refs = [...(withImage ? [previous!] : []), ...req.references.map((r) => referencePath(projectDir, r))]
     let raw: string
     if (req.provider === 'codex') raw = await codexImage({ prompt: sent, ratio: req.ratio, references: refs, workDir: folder })
     else {

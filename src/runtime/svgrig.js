@@ -102,7 +102,7 @@
 
   // ---------- tagged parts (character_tag): pose about data-pivot, followers, eye rig, layer order ----------
   function nums(s) { return (s || '').trim().split(/\s+/).map(Number) }
-  function byId(root, id) { return root.querySelector('#' + id) || root.querySelector('[id="' + id + '"]') }
+  function byId(root, id) { return root.querySelector('[id="' + String(id).replace(/["\\]/g, '\\$&') + '"]') }
   /** rotate / scale / move a tagged part about its own pivot; the angle stays within data-max-rot;
    *  elements with data-follow="<id>" (e.g. the chin shadow) get the same transform */
   function pose(root, id, p) {
@@ -130,9 +130,12 @@
     var dx = clamp(p.lookX || 0, -1, 1) * rx * 0.45, dy = clamp(p.lookY || 0, -1, 1) * ry * 0.45
     c.setAttribute('transform', 'translate(' + f(px + dx) + ' ' + f(py + dy) + ') scale(' + Math.round(ps * 1000) / 1000 + ') translate(' + f(-px) + ' ' + f(-py) + ')')
   }
-  /** put a part just above or below another one (moves the element only when the order changes) */
+  /** put a part just above or below another one (moves the element only when the order changes). A part inside
+   *  a group (a hand in its arm) moves with its whole branch, so it never leaves the group it turns with */
   function layer(root, id, refId, where) {
     var el = byId(root, id), ref = byId(root, refId); if (!el || !ref || el === ref) return
+    while (el && el.parentNode !== ref.parentNode) el = el.parentNode
+    if (!el || el === ref || !el.parentNode || el === root) return
     if (where === 'below') { if (el.nextElementSibling !== ref) ref.parentNode.insertBefore(el, ref) }
     else if (ref.nextElementSibling !== el) ref.parentNode.insertBefore(el, ref.nextSibling)
   }

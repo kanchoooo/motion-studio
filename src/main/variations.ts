@@ -12,6 +12,8 @@ import { normalizeOverrides, type Overrides } from '@shared/overrides'
 import type { FamilyInfo, ProjectMeta, ProjectState, VariationMethod } from '@shared/project'
 import * as history from './history'
 import * as projects from './projects'
+import { isInside } from './folders'
+import { projectsDir } from './paths'
 import { newId, nowIso, readJson, safeName, uniquePath, writeJson } from './util'
 
 export interface VariationTarget {
@@ -136,8 +138,9 @@ export async function createVariations(projectId: string, req: VariationRequest)
     // display name keeps "9:16"; the folder name can't contain ":" (Windows/macOS)
     const name = `${rootName} · ${label}`
     const folder = safeName(name.replace(/(\d+):(\d+)/g, '$1x$2'))
-    // next to the original (in the same project folder)
-    const dir = uniquePath((n) => join(dirname(parent.path), `${folder}${n ? ` (${n + 1})` : ''}.msproj`))
+    // next to the original (in the same project folder); an original kept outside the projects folder gets them in the projects folder
+    const home = isInside(parent.path, projectsDir()) ? dirname(parent.path) : projectsDir()
+    const dir = uniquePath((n) => join(home, `${folder}${n ? ` (${n + 1})` : ''}.msproj`))
     const { brief: baseBrief, overrides: baseOverrides } = await copyBase(parent.path, dir, req.base)
     const method = methodFor(baseBrief.output, t)
     const preset = OUTPUT_PRESETS.find((p) => p.id === t.preset)

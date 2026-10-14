@@ -10,7 +10,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { basename, dirname, isAbsolute, join, relative, resolve as resolvePath } from 'node:path'
 import type { AgentPermission, PermissionAsk } from '@shared/api'
 import { findTranscript } from './transcript'
-import { buildWriteMissing, stopMissing } from './gates'
+import { buildWriteMissing, stopMissing, turnKey } from './gates'
 
 export type PermissionAnswer = 'allow' | 'always' | 'deny'
 
@@ -145,8 +145,9 @@ async function handleStop(req: IncomingMessage, res: ServerResponse, path: strin
     const transcript = (session && findTranscript(session)) || (typeof body.transcript_path === 'string' ? body.transcript_path : '')
     if (!transcript) return (pass(), true)
     const missing = stopMissing(join(hooks.dirOf(projectId), 'composition'), transcript)
-    const key = `${session}:${lastUserLine(transcript)}`
+    const key = `${session}:${turnKey(transcript)}`
     const n = stopBlocks.get(key) ?? 0
+    if (stopBlocks.size > 200) stopBlocks.clear()
     if (!missing || n >= MAX_STOP_BLOCKS) return (pass(), true)
     stopBlocks.set(key, n + 1)
     hooks.stopBlocked?.(projectId)
@@ -160,17 +161,6 @@ async function handleStop(req: IncomingMessage, res: ServerResponse, path: strin
     pass()
   }
   return true
-}
-
-/** the timestamp of the last real user line (a turn's identity) */
-function lastUserLine(transcript: string): string {
-  const lines = readFileSync(transcript, 'utf8').split('\n')
-  for (let i = lines.length - 1; i >= 0; i--) {
-    if (!lines[i].includes('"type":"user"') || lines[i].includes('"isMeta":true') || lines[i].includes('"tool_result"')) continue
-    const t = lines[i].match(/"timestamp":"([^"]+)"/)
-    if (t) return t[1]
-  }
-  return ''
 }
 
 // The HyperFrames workflows only help when Claude reads them. Before the first write

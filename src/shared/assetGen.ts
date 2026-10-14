@@ -184,6 +184,8 @@ export interface GenRequest {
   revision?: string[]
   /** the image being revised (project-relative: .studio/generations/<id>/source.png or composition/assets/…); sent along when the model takes images */
   revisedFrom?: string
+  /** the brief asset this revision (or the revision it came from) started from: it can take that asset's place */
+  replacesAsset?: string
 }
 
 /** SVG conversion of a character image and what Claude did with it */
@@ -225,8 +227,10 @@ export interface VideoGenRequest {
   end?: string
   /** 수정해서 다시 만들기: the designer's change requests, oldest first */
   revision?: string[]
-  /** the clip being revised (project-relative; not sent, it tells which asset a revision may replace) */
+  /** the clip being revised (project-relative; not sent) */
   revisedFrom?: string
+  /** the brief asset this revision started from: it can take that asset's place */
+  replacesAsset?: string
 }
 
 const REVISE_WITH_IMAGE: Record<PromptLang, string> = {

@@ -186,8 +186,10 @@ export function AssetGenerator({ brief, onAdd, onReplace, revise }: { brief: Bri
   }
 
   // 수정해서 다시 만들기: the same request plus the designer's change (and the previous image when the model takes it)
-  const reviseImage = (req: GenRequest, from: string, note: string, useImage: boolean) => generate({ ...req, revision: [...(req.revision ?? []), note], revisedFrom: useImage ? from : undefined })
-  const reviseVideo = (req: VideoGenRequest, from: string, note: string) => generateVideo({ ...req, revision: [...(req.revision ?? []), note], revisedFrom: from })
+  const fromAsset = (from: string, prev?: string) => (from.startsWith('composition/') ? from : prev)
+  const reviseImage = (req: GenRequest, from: string, note: string, useImage: boolean) =>
+    generate({ ...req, revision: [...(req.revision ?? []), note], revisedFrom: useImage ? from : undefined, replacesAsset: fromAsset(from, req.replacesAsset) })
+  const reviseVideo = (req: VideoGenRequest, from: string, note: string) => generateVideo({ ...req, revision: [...(req.revision ?? []), note], revisedFrom: from, replacesAsset: fromAsset(from, req.replacesAsset) })
   const reviseAsset = (a: Asset, note: string, useImage: boolean) => {
     const r = assetRequest(a)
     if (r?.video) return reviseVideo(r.video, `composition/${a.file}`, note)
@@ -195,7 +197,7 @@ export function AssetGenerator({ brief, onAdd, onReplace, revise }: { brief: Bri
   }
   /** a revision of a brief asset can take that asset's place */
   const replaces = (c: GenCandidate) => {
-    const from = c.video ? c.video.request.revisedFrom : c.request.revisedFrom
+    const from = c.video ? c.video.request.replacesAsset : c.request.replacesAsset
     return from ? brief.assets.find((a) => from === `composition/${a.file}`) : undefined
   }
 
@@ -471,11 +473,12 @@ export function AssetGenerator({ brief, onAdd, onReplace, revise }: { brief: Bri
                       if (!old || !onReplace) return
                       try {
                         const a = await studio.ai.keepCandidate(pid, c.id)
-                        // the new picture takes the old one's place, role and notes
+                        // the new picture takes the old one's place, role and notes — in the brief and in the video
                         onReplace(old.id, { ...a, kind: old.kind, required: old.required, timing: old.timing, position: old.position, transform: old.transform, note: old.note })
+                        const used = await studio.projects.replaceAssetFile(pid, old.file, a.file)
                         setCandidates((l) => l.filter((x) => x.id !== c.id))
                         setRevising(null)
-                        toast('소재를 고친 것으로 바꿨어요', 'success')
+                        toast(used ? '소재를 고친 것으로 바꿨어요. 영상 속 그림도 바뀌었어요.' : '소재를 고친 것으로 바꿨어요', 'success')
                       } catch (e) {
                         toast(errText(e), 'error')
                       }
