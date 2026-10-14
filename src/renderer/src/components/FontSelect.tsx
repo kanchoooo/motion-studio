@@ -1,14 +1,42 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, Search } from 'lucide-react'
-import { useStore } from '../store'
+import type { FontFamily } from '@shared/api'
+import { studio, useStore } from '../store'
 
-/** searchable system-font picker that previews each family in its own face */
+/** the open project's downloaded web fonts, loaded into the app so they preview in their own face */
+function useProjectFonts(open: boolean): FontFamily[] {
+  const { project } = useStore()
+  const [list, setList] = useState<FontFamily[]>([])
+  useEffect(() => {
+    if (!project || !open) return
+    const pid = project.meta.id
+    void studio.projects.webFonts(pid).then(async (w) => {
+      setList(w.map((f) => ({ family: f.family, hangul: true, weights: f.weights, faces: [] })))
+      if (!w.length) return
+      const href = await studio.projects.fileUrl(pid, 'composition/fonts/web-fonts.css')
+      const id = `ms-web-fonts-${pid}`
+      const old = document.getElementById(id) as HTMLLinkElement | null
+      if (old?.href === href) return
+      old?.remove()
+      const link = document.createElement('link')
+      link.id = id
+      link.rel = 'stylesheet'
+      link.href = `${href}?v=${w.map((f) => f.family + f.weights.join('')).join('|')}`
+      document.head.appendChild(link)
+    })
+  }, [project, open])
+  return list
+}
+
+/** searchable font picker (the project's web fonts first, then system fonts) that previews each family in its own face */
 export function FontSelect({ value, onChange, placeholder = '폰트 선택' }: { value?: string; onChange: (family: string) => void; placeholder?: string }) {
-  const { fonts, loadFonts } = useStore()
+  const { fonts: system, loadFonts } = useStore()
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
   const [koOnly, setKoOnly] = useState(true)
   const ref = useRef<HTMLDivElement>(null)
+  const own = useProjectFonts(open || !!value)
+  const fonts = useMemo(() => [...own, ...system.filter((f) => !own.some((o) => o.family === f.family))], [own, system])
 
   useEffect(() => {
     if (open) void loadFonts()
@@ -61,6 +89,7 @@ export function FontSelect({ value, onChange, placeholder = '폰트 선택' }: {
               >
                 <span style={{ fontFamily: `"${f.family}"`, fontSize: 15 }}>{f.familyKo ?? f.family} · 가나다 Aa</span>
                 <span className="tiny faint">
+                  {own.some((o) => o.family === f.family) ? '이 프로젝트 폰트 · ' : ''}
                   {f.familyKo ? `${f.family} · ` : ''}
                   굵기 {f.weights.length}종
                 </span>

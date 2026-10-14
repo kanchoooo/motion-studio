@@ -8,6 +8,7 @@ import type { Overrides } from '@shared/overrides'
 import { makeTimeMap } from '@shared/timeRemap'
 import { findFamily, usedFamilies } from './fontcss'
 import { hasFont } from './fonts'
+import { webFontFamilies } from './webfonts'
 import { check as hfCheck } from './hyperframes'
 
 export interface EditorElementInfo {
@@ -43,7 +44,8 @@ const norm = (s: string) =>
     .replace(/\s+/g, ' ')
     .trim()
 
-export function staticFindings(html: string, brief: Brief, overrides: Overrides, elements?: EditorElementInfo[], audit?: AuditInfo): CheckFinding[] {
+export function staticFindings(html: string, brief: Brief, overrides: Overrides, elements?: EditorElementInfo[], audit?: AuditInfo, webFonts: string[] = []): CheckFinding[] {
+  const ownFont = (fam: string) => webFonts.some((w) => w.toLowerCase() === fam.toLowerCase())
   const out: CheckFinding[] = []
   const head = html.split(/<\/head>/i)[0] ?? ''
 
@@ -60,7 +62,7 @@ export function staticFindings(html: string, brief: Brief, overrides: Overrides,
     out.push({ severity: 'error', code: 'ms_fonts_css_missing', message: '<head>에 <link rel="stylesheet" href="ms/fonts.css" />가 없어요. 시스템 폰트 선언 파일이라 꼭 필요해요.' })
   }
   for (const fam of usedFamilies(html, overrides)) {
-    if (!findFamily(fam)) out.push({ severity: 'error', code: 'ms_font_missing', message: `"${fam}" 폰트가 이 컴퓨터에 설치되어 있지 않아요. get_fonts 도구로 설치된 폰트를 확인해서 바꿔 주세요.` })
+    if (!findFamily(fam) && !ownFont(fam)) out.push({ severity: 'error', code: 'ms_font_missing', message: `"${fam}" 폰트가 이 컴퓨터에 없고 프로젝트에 받아 둔 웹 폰트도 아니에요. get_fonts의 설치된 폰트를 쓰거나 get_web_font로 받아 주세요.` })
   }
 
   // 2. offline: no network scripts/styles (company networks, determinism)
@@ -154,7 +156,8 @@ export function staticFindings(html: string, brief: Brief, overrides: Overrides,
 export async function fullCheck(projectDir: string, brief: Brief, overrides: Overrides, elements?: EditorElementInfo[], withRuntime = true, audit?: AuditInfo): Promise<CheckFinding[]> {
   const index = join(projectDir, 'composition', 'index.html')
   const html = existsSync(index) ? readFileSync(index, 'utf8') : ''
-  const findings = staticFindings(html, brief, overrides, elements, audit)
+  const own = webFontFamilies(projectDir)
+  const findings = staticFindings(html, brief, overrides, elements, audit, own)
   if (withRuntime && !html.includes('data-ms-empty="true"')) {
     const res = await hfCheck(join(projectDir, 'composition')).catch(() => null)
     for (const i of res?.issues ?? []) {
@@ -162,7 +165,7 @@ export async function fullCheck(projectDir: string, brief: Brief, overrides: Ove
       if (i.code === 'font_family_without_font_face') {
         // HyperFrames only trusts fonts it can embed; installed system fonts render fine locally
         const families = (i.message.match(/declaration: ([^.]+)\./)?.[1] ?? '').split(',').map((x) => x.trim()).filter(Boolean)
-        for (const fam of families.filter((x) => !hasFont(x) && !GENERIC_FAMILIES.has(x.toLowerCase()))) {
+        for (const fam of families.filter((x) => !hasFont(x) && !GENERIC_FAMILIES.has(x.toLowerCase()) && !own.some((w) => w.toLowerCase() === x.toLowerCase()))) {
           findings.push({ severity: 'error', code: 'ms_font_missing', message: `"${fam}" 폰트가 이 컴퓨터에 설치되어 있지 않아요. 설치된 폰트로 바꿔 주세요.` })
         }
         continue

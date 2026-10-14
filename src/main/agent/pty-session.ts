@@ -284,7 +284,7 @@ export class SessionManager {
         // Read(path) covers every file-reading tool (Glob, Grep), Edit(path) every writing tool
         allow: ['mcp__studio', ...(artlist ? ['mcp__artlist'] : []), 'Skill', 'Read(./**)', 'Edit(./composition/**)'],
         // files the app manages: denied in every mode, never even asked
-        deny: ['Edit(./composition/ms/**)', 'Edit(./composition/vendor/**)', 'Edit(./composition/assets/**)', 'Edit(./brief.json)', 'Edit(./overrides.json)', 'Edit(./references/**)', 'Edit(./project.json)', 'Edit(./.history/**)', 'Edit(./.studio/**)'],
+        deny: ['Edit(./composition/ms/**)', 'Edit(./composition/vendor/**)', 'Edit(./composition/assets/**)', 'Edit(./composition/fonts/**)', 'Edit(./brief.json)', 'Edit(./overrides.json)', 'Edit(./references/**)', 'Edit(./project.json)', 'Edit(./.history/**)', 'Edit(./.studio/**)'],
       },
       // anything else (a command, a web page, a file outside the project) is asked through the app:
       // a card in the chat ("물어보기") or allowed at once ("모두 허용")

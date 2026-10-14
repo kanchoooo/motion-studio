@@ -37,6 +37,7 @@ import { askHelper } from './ai/promptHelper'
 import type { Framing, GenRequest } from '@shared/assetGen'
 import { exportAePackage } from './ae/export'
 import { codexStatus } from './ai/codex'
+import { listWebFonts } from './webfonts'
 
 export function registerIpc(getWindow: () => BrowserWindow | null): SessionManager {
   const send = (channel: string, payload: unknown) => getWindow()?.webContents.send(channel, payload)
@@ -107,6 +108,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
     return list
   })
   handle('projects:renameAt', (path: string, name: string) => projects.renameAt(path, name))
+  handle('projects:webFonts', (id: string) => listWebFonts(projects.pathOf(id)).map((f) => ({ family: f.family, weights: f.weights })))
   handle('projects:create', (input: Parameters<typeof projects.createProject>[0]) => projects.createProject(input))
   handle('projects:open', (path: string) => projects.openProject(path))
   handle('projects:state', (id: string) => projects.state(id))

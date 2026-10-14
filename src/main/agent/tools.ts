@@ -25,6 +25,7 @@ import { snapshot } from '../hyperframes'
 import { bin } from '../paths'
 import * as projects from '../projects'
 import { characterParts, embedCharacter, readCharacter, tagCharacter } from '../character/convert'
+import { addWebFont, listWebFonts } from '../webfonts'
 
 const run = promisify(execFile)
 const text = (t: string) => ({ content: [{ type: 'text' as const, text: t }] })
@@ -405,6 +406,19 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
           1,
         ),
       )
+    },
+  )
+
+  server.registerTool(
+    'get_web_font',
+    {
+      description:
+        "Download a free web font into the project (composition/fonts/) when the brief and the designer did not name a font: any Google Fonts family (exact name, e.g. 'Noto Sans KR', 'Gothic A1', 'Black Han Sans', 'Do Hyeon', 'Gowun Dodum', 'Nanum Myeongjo', 'IBM Plex Sans KR', 'Hahmlet', 'Orbit', 'Montserrat', 'Bebas Neue') or 'Pretendard'. Then put <link rel=\"stylesheet\" href=\"fonts/web-fonts.css\" /> in <head> right after ms/fonts.css and use font-family: '<family>'. The files stay in the project, so preview and export work offline.",
+      inputSchema: { family: z.string(), weights: z.array(z.number().int().min(100).max(900)).default([400, 700]) },
+    },
+    async ({ family, weights }) => {
+      const f = await addWebFont(dir(), family, weights)
+      return text(`Ready: font-family '${f.family}' (weights ${f.weights.join(', ')}). <head>: <link rel="stylesheet" href="fonts/web-fonts.css" /> after ms/fonts.css. Fonts in the project now: ${listWebFonts(dir()).map((x) => x.family).join(', ')}.`)
     },
   )
 

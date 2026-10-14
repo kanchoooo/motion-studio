@@ -16,7 +16,8 @@ export function isTracked(f: string): boolean {
   if (f.startsWith('feedback/')) return f.endsWith('.json')
   if (!f.startsWith('composition/')) return false
   // originals are never deleted, renders/snapshots are regenerable
-  return !/^composition\/(assets|renders|snapshots|\.thumbnails)\//.test(f) && !f.endsWith('.tmp')
+  // fonts: downloaded web font files (re-downloadable, binary) are not versioned
+  return !/^composition\/(assets|renders|snapshots|\.thumbnails|fonts)\//.test(f) && !f.endsWith('.tmp')
 }
 
 const repo = (dir: string) => ({ fs, dir, gitdir: join(dir, '.history') })

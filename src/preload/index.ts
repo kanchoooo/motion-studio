@@ -35,6 +35,7 @@ const api: StudioApi & { internal: { previewBase: string } } = {
   projects: {
     list: () => invoke('projects:list'),
     renameAt: (path, name) => invoke('projects:renameAt', path, name),
+    webFonts: (id) => invoke('projects:webFonts', id),
     onChanged: (cb) => subscribe<null>('projects:changed', cb),
     create: (input) => invoke('projects:create', input),
     open: (path) => invoke('projects:open', path),

@@ -263,6 +263,8 @@ export interface StudioApi {
   }
   projects: {
     list(): Promise<ProjectSummary[]>
+    /** web fonts the project downloaded (composition/fonts/) */
+    webFonts(projectId: string): Promise<{ family: string; weights: number[] }[]>
     /** renames a project from the home list (open or not) */
     renameAt(path: string, name: string): Promise<void>
     /** project list pictures were made in the background */
