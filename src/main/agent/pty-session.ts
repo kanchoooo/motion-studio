@@ -30,7 +30,7 @@ import { mcpTokenFor, setToolHooks } from './mcp-http'
 import { endPermissions } from './permissions'
 import { sessionPath } from './cliShims'
 import { COMPOSITION_CONTRACT, STUDIO_PROMPT } from './prompt'
-import { TranscriptTail } from './transcript'
+import { findTranscript, TranscriptTail } from './transcript'
 
 type Emit = (e: AgentEvent) => void
 
@@ -263,7 +263,9 @@ export class SessionManager {
     if (existing && existing.state.status !== 'exited') return existing.state
     const dir = projects.pathOf(projectId)
     const meta = projects.state(projectId).meta
-    const resume = !!meta.agentSessionId
+    // a conversation exists once its first message was written; a session that was started
+    // but never used (e.g. the model was changed before the first request) starts anew
+    const resume = !!meta.agentSessionId && !!findTranscript(meta.agentSessionId)
     const sessionId = meta.agentSessionId ?? randomUUID()
     if (!resume) projects.touch(projectId, { agentSessionId: sessionId })
 
@@ -294,7 +296,11 @@ export class SessionManager {
       // a card in the chat ("물어보기") or allowed at once ("모두 허용")
       hooks: {
         PermissionRequest: [{ matcher: '*', hooks: [{ type: 'http', url: `${previewBase()}/hook/${mcpTokenFor(projectId)}/permission`, timeout: 900 }] }],
+        // the first composition write of a conversation waits until the HyperFrames workflow skill was read
+        PreToolUse: [{ matcher: 'Write|Edit|MultiEdit', hooks: [{ type: 'http', url: `${previewBase()}/hook/${mcpTokenFor(projectId)}/pretool`, timeout: 30 }] }],
       },
+      // replies and the notes between tool calls in the designer's language
+      language: 'Korean',
     })
     const name = `모션스튜디오 · ${meta.name}`.slice(0, 60)
     const args = [
@@ -367,6 +373,8 @@ export class SessionManager {
       const failedResume = resume && l.state.status === 'starting' && /No conversation found/i.test(l.plain)
       if (failedResume) projects.touch(projectId, { agentSessionId: undefined })
       this.setState(l, { status: 'exited', exitCode, attention: failedResume ? null : l.state.attention })
+      // nothing to resume: start a new conversation right away instead of showing "종료됨"
+      if (failedResume) setTimeout(() => current() && this.start(projectId), 300)
       // a variation re-layout that was running here will not finish
       if (this.adapting === projectId) {
         this.adapting = null

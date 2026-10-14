@@ -6,7 +6,7 @@ import type { AddressInfo } from 'node:net'
 import { join, normalize, sep } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { handleMcp } from './agent/mcp-http'
-import { handlePermission } from './agent/permissions'
+import { handleHook } from './agent/permissions'
 import { hyperframes } from './paths'
 import { mimeOf } from './media'
 
@@ -69,7 +69,7 @@ function serve(req: IncomingMessage, res: ServerResponse): void {
     return
   }
   if (path.startsWith('/hook/')) {
-    void handlePermission(req, res, path)
+    void handleHook(req, res, path)
     return
   }
   if (path === '/__ms/player.js') return sendFile(req, res, hyperframes.playerScript())
