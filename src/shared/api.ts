@@ -1,5 +1,5 @@
 import type { Asset, BrandPreset, Brief, OutputFormat, OutputQuality, ReferenceItem } from './brief'
-import type { CharacterInfo, Framing, GenCandidate, GenRequest } from './assetGen'
+import type { CharacterInfo, Framing, GenCandidate, GenRequest, VideoGenRequest } from './assetGen'
 import type { AiAccountInfo, AiLoginEvent, AiModelInfo, AiModelList, AiSettings, AiVoiceInfo, AudioCandidate, AudioCandidateList, LoginBrowser, LoginWindow, CodexStatus } from './ai'
 import type { Overrides } from './overrides'
 import type { FeedbackMark, HistoryEntry, ProjectState, ProjectSummary, RenderRecord } from './project'
@@ -396,6 +396,16 @@ export interface StudioApi {
     artlistLoginDone(): Promise<void>
     /** 소재 > AI로 만들기: one image (characters are converted to SVG before it returns) */
     generate(projectId: string, req: GenRequest): Promise<GenCandidate>
+    /** AI 웹 수집: Claude looks the brand up on the web (progress through onCollect) */
+    collect(projectId: string, query: { brand: string; focus: string }): Promise<CollectResultInfo>
+    cancelCollect(): Promise<void>
+    collected(projectId: string): Promise<CollectResultInfo | null>
+    dropCollected(projectId: string, ids: string[]): Promise<CollectResultInfo | null>
+    /** the kept items → new assets, brand colours and brand notes for the brief (they leave the list) */
+    keepCollected(projectId: string, ids: string[]): Promise<{ assets: Asset[]; colors: { name: string; hex: string }[]; notes: string[]; left: CollectResultInfo | null }>
+    onCollect(cb: (e: { projectId: string; line: string }) => void): () => void
+    /** a clip from a video model, optionally between a first and a last frame */
+    generateVideo(projectId: string, req: VideoGenRequest): Promise<GenCandidate>
     candidates(projectId: string): Promise<GenCandidate[]>
     discardCandidate(projectId: string, candidateId: string): Promise<GenCandidate[]>
     /** the candidate's files move into composition/assets/gen-…/; the returned asset is for the brief */
@@ -409,8 +419,33 @@ export interface StudioApi {
   }
 }
 
+/** something AI 웹 수집 found (images are already downloaded into the project) */
+export interface CollectItem {
+  id: string
+  type: 'logo' | 'image' | 'color' | 'fact' | 'copy'
+  title: string
+  /** logo / image: the web address it came from, and the downloaded file (project-relative) */
+  url?: string
+  file?: string
+  hex?: string
+  text?: string
+  /** the page it was found on */
+  source?: string
+}
+
+export interface CollectResultInfo {
+  summary: string
+  items: CollectItem[]
+  at: string
+  query: { brand: string; focus: string }
+}
+
 export interface HelperContext {
+  /** '이미지' | '영상' */
+  media?: string
   model: string
+  /** 종류 (인물·캐릭터, 사물·제품, …) */
+  kind?: string
   lang: string
   style: string
   framing: string

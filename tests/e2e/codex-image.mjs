@@ -44,6 +44,7 @@ try {
   await win.getByRole('button', { name: /^소재/ }).first().click()
   const gen = win.getByTestId('asset-generator')
   await gen.waitFor()
+  await gen.getByTestId('gen-toggle').click() // folded by default
   const select = gen.locator('select').first()
   await select.locator('option', { hasText: 'GPT 이미지 (Codex)' }).waitFor({ state: 'attached', timeout: 30000 })
   check('"GPT 이미지 (Codex)" is in the image model list', (await select.locator('option', { hasText: 'GPT 이미지 (Codex)' }).count()) === 1)

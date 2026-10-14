@@ -6,6 +6,7 @@ import { Field, formatBytes, Modal, Segmented, Toggle } from '../../components/u
 import { studio, useStore } from '../../store'
 import { SectionHeader } from './BriefTab'
 import { AssetGenerator, CharacterLine, CompareModal } from './AssetGenerator'
+import { WebCollector } from './WebCollector'
 
 export function AssetsSection({ brief, onChange }: { brief: Brief; onChange: (b: Brief) => void }) {
   const { project, toast } = useStore()
@@ -84,6 +85,15 @@ export function AssetsSection({ brief, onChange }: { brief: Brief; onChange: (b:
       </div>
 
       <AssetGenerator brief={brief} onAdd={(a) => onChange({ ...brief, assets: [...brief.assets, a] })} />
+      <WebCollector
+        brief={brief}
+        onKeep={(r, name) => {
+          const brand = brief.brand ?? { id: crypto.randomUUID(), name: brief.client || name, colors: [], fonts: {}, notes: '' }
+          const colors = [...brand.colors, ...r.colors.filter((c) => !brand.colors.some((x) => x.hex.toUpperCase() === c.hex.toUpperCase()))]
+          const notes = [brand.notes.trim(), ...r.notes.map((n) => `• ${n}`)].filter(Boolean).join('\n')
+          onChange({ ...brief, assets: [...brief.assets, ...r.assets], brand: r.colors.length || r.notes.length || brief.brand ? { ...brand, colors, notes } : brief.brand })
+        }}
+      />
       {compare && <CompareModal dir={compare} base={projectBase} onClose={() => setCompare(null)} />}
 
       {psdAsk && (

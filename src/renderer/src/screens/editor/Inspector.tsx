@@ -4,6 +4,7 @@ import { FontSelect } from '../../components/FontSelect'
 import { ColorField, NumberField, Segmented } from '../../components/ui'
 import { useStore } from '../../store'
 import { useEditor } from './editorStore'
+import { useEditLocked } from './editLock'
 import { MotionPanel } from './MotionPanel'
 import { MultiEditor } from './MultiEditor'
 import { lastSaved, rgbToHex, useOverrides } from './overrides'
@@ -17,6 +18,7 @@ export function Inspector() {
   const { value: ov, load, past, future, undo, redo } = useOverrides()
   const sel = elements.find((e) => e.id === selected)
   const many = selection.length > 1
+  const locked = useEditLocked()
 
   useEffect(() => {
     // take the saved overrides unless the designer has unsaved edits (restore, Claude turn, first open);
@@ -43,14 +45,20 @@ export function Inspector() {
             사운드
           </button>
         </div>
-        <button className="icon-btn" title="실행 취소 (⌘Z)" disabled={!past.length} onClick={undo}>
+        <button className="icon-btn" title="실행 취소 (⌘Z)" disabled={!past.length || locked} onClick={undo}>
           <Undo2 size={15} />
         </button>
-        <button className="icon-btn" title="다시 실행 (⇧⌘Z)" disabled={!future.length} onClick={redo}>
+        <button className="icon-btn" title="다시 실행 (⇧⌘Z)" disabled={!future.length || locked} onClick={redo}>
           <Redo2 size={15} />
         </button>
       </div>
       <div style={{ flex: 1, overflow: 'auto', padding: 12 }} className="col">
+        {locked && project?.hasVideo && (
+          <div className="row tiny" style={{ padding: '6px 8px', borderRadius: 6, background: 'var(--accent-soft)', color: 'var(--accent)', marginBottom: 4 }} data-testid="inspector-locked">
+            <Lock size={11} />
+            <span className="grow">Claude가 작업을 마치면 수정할 수 있어요</span>
+          </div>
+        )}
         {panel === 'sound' && project?.hasVideo && <SoundPanel />}
         {panel === 'motion' && project?.hasVideo && <MotionPanel />}
         {panel === 'elements' && sel && !many && (
@@ -92,8 +100,11 @@ export function Inspector() {
             })}
           </>
         )}
-        {panel === 'elements' && many && ov && <MultiEditor />}
-        {panel === 'elements' && sel && !many && ov && <ElementEditor key={sel.id} id={sel.id} fontsReady={fonts.length > 0} />}
+        {panel === 'elements' && (many || sel) && ov && (
+          <fieldset className="lock-fieldset" disabled={locked}>
+            {many ? <MultiEditor /> : sel && <ElementEditor key={sel.id} id={sel.id} fontsReady={fonts.length > 0} />}
+          </fieldset>
+        )}
       </div>
     </div>
   )

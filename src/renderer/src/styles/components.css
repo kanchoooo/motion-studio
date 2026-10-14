@@ -762,3 +762,45 @@
     opacity: 0;
   }
 }
+
+/* editing paused while Claude works */
+.lock-banner {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  font-size: 12.5px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.lock-banner.flash {
+  animation: lock-flash 0.9s ease-out;
+}
+@keyframes lock-flash {
+  0%,
+  40% {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 4px var(--accent-soft), 0 6px 20px rgba(0, 0, 0, 0.18);
+  }
+  100% {
+    border-color: var(--border);
+  }
+}
+.lock-fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.lock-fieldset:disabled {
+  opacity: 0.5;
+}

@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron'
 import type { AgentEvent, ExportOptions, ExportProgress, SendMessageInput, AgentPermission, HelperContext } from '@shared/api'
 import type { Brief } from '@shared/brief'
@@ -33,8 +33,10 @@ import { readJson } from './util'
 import { answerPermission, askingFor, setPermissionHooks, type PermissionAnswer } from './agent/permissions'
 import { projectForToken } from './agent/mcp-http'
 import { discardCandidate, generateCandidate, listCandidates, reconvert, writeCandidates } from './ai/generate'
+import { generateVideoCandidate } from './ai/generateVideo'
+import { cancelCollect, collectBrand, dropCollected, listCollected } from './ai/webCollect'
 import { askHelper } from './ai/promptHelper'
-import type { Framing, GenRequest } from '@shared/assetGen'
+import type { Framing, GenRequest, VideoGenRequest } from '@shared/assetGen'
 import { exportAePackage } from './ae/export'
 import { codexStatus } from './ai/codex'
 import { listWebFonts } from './webfonts'
@@ -333,6 +335,16 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
   })
   handle('ai:generated', (id: string) => listGenerated(projects.pathOf(id)))
   handle('ai:generate', (id: string, req: GenRequest) => generateCandidate(projects.pathOf(id), req))
+  handle('ai:generateVideo', (id: string, req: VideoGenRequest) => generateVideoCandidate(projects.pathOf(id), req))
+  handle('ai:collect', (id: string, query: { brand: string; focus: string }) => collectBrand(projects.pathOf(id), query, (line) => send('ai:collect', { projectId: id, line })))
+  handle('ai:cancelCollect', () => cancelCollect())
+  handle('ai:collected', (id: string) => listCollected(projects.pathOf(id)))
+  handle('ai:dropCollected', (id: string, ids: string[]) => dropCollected(projects.pathOf(id), ids))
+  handle('ai:keepCollected', async (id: string, ids: string[]) => {
+    const all = listCollected(projects.pathOf(id))?.items ?? []
+    const kept = await projects.keepCollected(id, all.filter((x) => ids.includes(x.id)))
+    return { ...kept, left: dropCollected(projects.pathOf(id), ids) }
+  })
   handle('ai:candidates', (id: string) => listCandidates(projects.pathOf(id)))
   handle('ai:discardCandidate', (id: string, cid: string) => {
     discardCandidate(projects.pathOf(id), cid)
@@ -354,8 +366,9 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
     return info
   })
   handle('ai:askHelper', (sid: string, message: string, ctx: HelperContext & { projectId?: string; referenceFiles?: string[] }) => {
-    // the generator's picked reference assets (composition-relative) → files the helper can look at
-    const refs = ctx.projectId ? (ctx.referenceFiles ?? []).map((r) => join(projects.pathOf(ctx.projectId!), 'composition', r)) : []
+    // the generator's picked images → files the helper can look at: reference assets are
+    // composition-relative, video frames may also be candidates (.studio/generations/…)
+    const refs = ctx.projectId ? (ctx.referenceFiles ?? []).map((r) => (r.startsWith('.studio/') ? join(projects.pathOf(ctx.projectId!), r) : join(projects.pathOf(ctx.projectId!), 'composition', r))).filter((f) => !relative(projects.pathOf(ctx.projectId!), f).startsWith('..')) : []
     return askHelper(sid, message, { ...ctx, references: refs })
   })
   handle('ai:codexStatus', (force?: boolean) => codexStatus(!!force))

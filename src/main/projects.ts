@@ -11,6 +11,7 @@ import * as history from './history'
 import { probeMedia } from './media'
 import { candidateFolder, candidateTarget, discardCandidate } from './ai/generate'
 import type { GenCandidate } from '@shared/assetGen'
+import type { CollectItem } from '@shared/api'
 import { dataDir, projectsDir, runtimeFiles } from './paths'
 import { serveFolder } from './preview-server'
 import { compositionHasVideo, HYPERFRAMES_JSON, starterComposition } from './template'
@@ -330,23 +331,25 @@ export async function keepCandidate(projectId: string, candidate: GenCandidate):
   const rel = candidateTarget(candidate.id)
   const to = join(f.comp(dir), rel)
   const from = candidateFolder(dir, candidate.id)
-  if (!existsSync(join(from, 'source.png'))) throw new Error('만든 이미지를 찾을 수 없어요. 다시 만들어 주세요.')
+  const main = candidate.video ? 'video.mp4' : 'source.png'
+  if (!existsSync(join(from, main))) throw new Error(candidate.video ? '만든 영상을 찾을 수 없어요. 다시 만들어 주세요.' : '만든 이미지를 찾을 수 없어요. 다시 만들어 주세요.')
   cpSync(from, to, { recursive: true })
   const character = candidate.character ? { ...candidate.character, dir: `composition/${rel}` } : undefined
   if (character) writeJson(join(to, 'character.json'), character)
-  const meta = await probeMedia(join(to, 'source.png'))
+  const meta = await probeMedia(join(to, main))
   const r = candidate.request
+  const KIND_ASSET: Record<string, Asset['kind']> = { character: 'person', object: 'product', background: 'background' }
   const asset: Asset = {
     id: newId(),
-    file: `${rel}/source.png`,
-    originalName: `AI · ${r.prompt.replace(/\s+/g, ' ').slice(0, 40) || '만든 이미지'}`,
-    kind: r.style === 'flat-character' ? 'person' : 'other',
+    file: `${rel}/${main}`,
+    originalName: `AI · ${r.prompt.replace(/\s+/g, ' ').slice(0, 40) || (candidate.video ? '만든 영상' : '만든 이미지')}`,
+    kind: candidate.video ? 'video' : r.style === 'flat-character' ? 'person' : (KIND_ASSET[r.kind ?? ''] ?? 'other'),
     required: false,
     timing: { mode: 'any' },
     position: 'any',
     transform: 'free',
     note: '',
-    meta: { ...meta, bytes: statSync(join(to, 'source.png')).size },
+    meta: { ...meta, bytes: statSync(join(to, main)).size },
     generated: { provider: r.provider, model: r.modelLabel ?? r.model, prompt: r.prompt, style: r.style, framing: r.framing },
     character,
   }
@@ -394,4 +397,41 @@ export function writeChat<T>(projectId: string, items: T[]): void {
 
 export function removeFile(path: string): void {
   rmSync(path, { force: true })
+}
+
+/**
+ * AI 웹 수집: the items the designer kept → assets (images, logos copied into
+ * composition/assets/), brand colours and brand notes (facts, copy). The brief itself
+ * is changed by the brief screen, which merges what comes back.
+ */
+export async function keepCollected(projectId: string, items: CollectItem[]): Promise<{ assets: Asset[]; colors: { name: string; hex: string }[]; notes: string[] }> {
+  const dir = pathOf(projectId)
+  const assetsDir = join(f.comp(dir), 'assets')
+  mkdirSync(assetsDir, { recursive: true })
+  const assets: Asset[] = []
+  for (const it of items) {
+    if (!it.file || (it.type !== 'logo' && it.type !== 'image')) continue
+    const src = join(dir, it.file)
+    if (!existsSync(src)) continue
+    const ext = extname(src).toLowerCase()
+    const base = safeName(`web-${it.title || it.type}`, 'web').replace(/\s+/g, '_').slice(0, 40)
+    const dst = uniquePath((n) => join(assetsDir, `${base}${n ? `_${n + 1}` : ''}${ext}`))
+    copyFileSync(src, dst)
+    const meta = await probeMedia(dst)
+    assets.push({
+      id: newId(),
+      file: `assets/${basename(dst)}`,
+      originalName: `웹 · ${it.title || (it.type === 'logo' ? '로고' : '이미지')}`,
+      kind: it.type === 'logo' ? 'logo' : 'other',
+      required: false,
+      timing: { mode: 'any' },
+      position: 'any',
+      transform: it.type === 'logo' ? 'none' : 'free',
+      note: it.source ? `웹에서 모은 자료 · 출처 ${it.source} (사용 권한을 확인해 주세요)` : '웹에서 모은 자료 (사용 권한을 확인해 주세요)',
+      meta: { ...meta, bytes: statSync(dst).size },
+    })
+  }
+  const colors = items.filter((x) => x.type === 'color' && x.hex).map((x) => ({ name: x.title || x.hex!, hex: x.hex! }))
+  const notes = items.filter((x) => (x.type === 'fact' || x.type === 'copy') && x.text).map((x) => `${x.type === 'copy' ? '카피' : '사실'}: ${x.text}${x.source ? ` (출처 ${x.source})` : ''}`)
+  return { assets, colors, notes }
 }

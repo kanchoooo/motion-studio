@@ -58,6 +58,8 @@ try {
   await win.locator('.drag .seg').getByRole('button', { name: '브리프' }).click()
   await win.getByRole('button', { name: /^소재/ }).first().click()
   await win.getByTestId('asset-generator').waitFor()
+  check('AI로 만들기 starts folded', (await win.getByTestId('gen-toggle').getAttribute('aria-expanded')) === 'false')
+  await win.getByTestId('gen-toggle').click()
   const card = win.getByTestId('gen-candidate').filter({ hasText: req.prompt }).first()
   await card.waitFor({ timeout: 10000 })
   check('the candidate shows its SVG quality', /SVG 도형 \d+개 · 차이/.test(await card.innerText()), await card.innerText())

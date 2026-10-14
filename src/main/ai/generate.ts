@@ -8,7 +8,7 @@
 import { mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { basename, extname, join } from 'node:path'
 import sharp from 'sharp'
-import { buildPrompt, FLAT_NEGATIVE, type GenCandidate, type GenRequest, type Ratio } from '@shared/assetGen'
+import { buildPrompt, negativeFor, type GenCandidate, type GenRequest, type Ratio } from '@shared/assetGen'
 import { convertCharacter } from '../character/convert'
 import { newId, nowIso, readJson, writeJson } from '../util'
 import { failIfError, payload } from './catalog'
@@ -16,19 +16,19 @@ import { codexImage } from './codex'
 import { callTool, listTools, type ToolResult } from './connect'
 import { saveResultMedia } from './media'
 
-type Schema = { type?: string; properties?: Record<string, Schema>; enum?: unknown[]; description?: string; items?: Schema }
+export type Schema = { type?: string; properties?: Record<string, Schema>; enum?: unknown[]; description?: string; items?: Schema }
 /** services reached through their MCP tools (Codex runs as a local CLI instead) */
-type McpProvider = Exclude<GenRequest['provider'], 'codex'>
+export type McpProvider = Exclude<GenRequest['provider'], 'codex'>
 
 const GENERATE_TOOL: Record<McpProvider, RegExp> = { magnific: /^images?_generate$/, higgsfield: /^generate_image$/ }
-const genDir = (projectDir: string) => join(projectDir, '.studio', 'generations')
+export const genDir = (projectDir: string) => join(projectDir, '.studio', 'generations')
 const listFile = (projectDir: string) => join(genDir(projectDir), 'candidates.json')
 
 export const listCandidates = (projectDir: string) => readJson<GenCandidate[]>(listFile(projectDir), [])
 export const writeCandidates = (projectDir: string, list: GenCandidate[]) => writeJson(listFile(projectDir), list)
 const saveList = writeCandidates
 
-const keyOf = (props: Record<string, Schema>, re: RegExp, not?: RegExp) => Object.keys(props).find((k) => re.test(k) && !not?.test(k))
+export const keyOf = (props: Record<string, Schema>, re: RegExp, not?: RegExp) => Object.keys(props).find((k) => re.test(k) && !not?.test(k))
 
 /** an aspect-ratio value the schema accepts: "3:4", or the nearest enum entry ("traditional_3_4", …) */
 export function pickRatio(s: Schema | undefined, ratio: Ratio): string {
@@ -51,7 +51,7 @@ export function pickRatio(s: Schema | undefined, ratio: Ratio): string {
 }
 
 /** creation / job ids in a queued result */
-function queued(v: unknown, out: string[] = []): string[] {
+export function queued(v: unknown, out: string[] = []): string[] {
   if (Array.isArray(v)) v.forEach((x) => queued(x, out))
   else if (v && typeof v === 'object')
     for (const [k, x] of Object.entries(v)) {
@@ -64,8 +64,8 @@ function queued(v: unknown, out: string[] = []): string[] {
 const still = (r: ToolResult) => /in[_ -]?progress|queued|pending|processing|running|poll_after|not[_ ]ready/i.test(JSON.stringify(payload(r)) ?? '')
 
 /** waits for a queued generation and returns the result that holds its files */
-async function waitFor(provider: McpProvider, ids: string[]): Promise<ToolResult | null> {
-  for (let i = 0; i < 12; i++) {
+export async function waitFor(provider: McpProvider, ids: string[], rounds = 12): Promise<ToolResult | null> {
+  for (let i = 0; i < rounds; i++) {
     if (provider === 'magnific') {
       const w = await callTool('magnific', 'creations_wait', { identifiers: ids, timeoutSeconds: 25 }, 60_000)
       failIfError(w)
@@ -82,25 +82,56 @@ async function waitFor(provider: McpProvider, ids: string[]): Promise<ToolResult
 }
 
 /** reference images in the form the tool takes: base64 when its description says so, else an uploaded URL */
-async function referenceValues(provider: McpProvider, files: string[], prop: Schema, tools: { name: string; inputSchema?: unknown }[]): Promise<string[]> {
+/** the first string value (searched deeply) whose key matches */
+function valueAt(v: unknown, re: RegExp): string | undefined {
+  if (Array.isArray(v)) {
+    for (const x of v) {
+      const f = valueAt(x, re)
+      if (f) return f
+    }
+  } else if (v && typeof v === 'object') {
+    for (const [k, x] of Object.entries(v)) if (re.test(k) && (typeof x === 'string' || typeof x === 'number')) return String(x)
+    for (const x of Object.values(v)) {
+      const f = valueAt(x, re)
+      if (f) return f
+    }
+  }
+  return undefined
+}
+
+const mimeOfImage = (f: string) => (/\.png$/i.test(f) ? 'image/png' : /\.webp$/i.test(f) ? 'image/webp' : 'image/jpeg')
+
+/**
+ * images in the form the tool takes: base64 when its description says so, else uploaded
+ * with the service's upload tool (the file itself, or a signed upload URL it hands out)
+ * and passed on as the URL / id that tool returns
+ */
+export async function referenceValues(provider: McpProvider, files: string[], prop: Schema, tools: { name: string; inputSchema?: unknown }[]): Promise<string[]> {
   const base64 = /base64/i.test(prop.description ?? '') || /base64/i.test(prop.items?.description ?? '')
   if (base64) return files.map((f) => readFileSync(f).toString('base64'))
   const upload = tools.find((t) => /upload/i.test(t.name))
   const props = (upload?.inputSchema as Schema | undefined)?.properties ?? {}
-  const dataKey = keyOf(props, /base64|data|content|file/i, /name|type|mime/i)
-  if (!upload || !dataKey) throw new Error('고른 모델에는 참고 이미지를 함께 보낼 수 없어요. 참고 소재를 빼거나, 편집 탭 대화에서 Claude에게 부탁해 주세요.')
+  const dataKey = keyOf(props, /base64|data|content|^file$/i, /name|type|mime|url/i)
+  const nameKey = keyOf(props, /name/i)
+  if (!upload || (!dataKey && !nameKey)) throw new Error('고른 모델에는 이미지를 함께 보낼 수 없어요. 이미지를 빼거나, 편집 탭 대화에서 Claude에게 부탁해 주세요.')
   const out: string[] = []
   for (const f of files) {
-    const args: Record<string, unknown> = { [dataKey]: readFileSync(f).toString('base64') }
-    const nameKey = keyOf(props, /name/i)
+    const args: Record<string, unknown> = {}
+    if (dataKey) args[dataKey] = readFileSync(f).toString('base64')
     const mimeKey = keyOf(props, /mime|content_?type/i)
     if (nameKey) args[nameKey] = basename(f)
-    if (mimeKey) args[mimeKey] = /\.png$/i.test(f) ? 'image/png' : /\.webp$/i.test(f) ? 'image/webp' : 'image/jpeg'
+    if (mimeKey) args[mimeKey] = mimeOfImage(f)
     const r = await callTool(provider, upload.name, args, 120_000)
     failIfError(r)
-    const url = JSON.stringify(payload(r) ?? '').match(/https:\/\/[^"\\\s]+/)?.[0]
-    if (!url) throw new Error('참고 이미지를 서비스에 올리지 못했어요.')
-    out.push(url)
+    const p = payload(r)
+    const signed = valueAt(p, /^(upload_?url|put_?url|presigned_?url|signed_?url)$/i)
+    if (signed && !dataKey) {
+      const put = await fetch(signed, { method: 'PUT', body: readFileSync(f), headers: { 'Content-Type': mimeOfImage(f) } })
+      if (!put.ok) throw new Error('이미지를 서비스에 올리지 못했어요.')
+    }
+    const value = valueAt(p, /^(url|public_?url|file_?url|cdn_?url|media_?url)$/i) ?? valueAt(p, /^(id|upload_?id|media_?id|file_?id)$/i) ?? JSON.stringify(p ?? '').match(/https:\/\/[^"\\\s]+/)?.[0]
+    if (!value) throw new Error('이미지를 서비스에 올리지 못했어요.')
+    out.push(value)
   }
   return out
 }
@@ -124,7 +155,8 @@ async function argumentsFor(req: GenRequest & { provider: McpProvider }, sent: s
   const countKey = keyOf(props, /^(count|num_?images|n|batch_?size|number_?of_?images)$/i)
   if (countKey) a[countKey] = 1
   const negKey = keyOf(props, /negative/i)
-  if (negKey && req.style === 'flat-character') a[negKey] = FLAT_NEGATIVE
+  const negative = negativeFor(req.style)
+  if (negKey && negative) a[negKey] = negative
   if (references.length) {
     const refKey = keyOf(props, /reference|ref_?images?|input_?images?|image_?urls?|init_?image|source_?image|^images?$/i, /prompt|negative/i)
     if (!refKey) throw new Error('고른 모델에는 참고 이미지를 함께 보낼 수 없어요. 참고 소재를 빼거나 다른 모델을 골라 주세요.')
@@ -140,7 +172,7 @@ export async function generateCandidate(projectDir: string, req: GenRequest): Pr
   const folder = join(genDir(projectDir), id)
   mkdirSync(folder, { recursive: true })
   try {
-    const sent = buildPrompt(req.style, req.framing, req.lang, req.prompt)
+    const sent = buildPrompt(req.style, req.framing, req.lang, req.prompt, req.kind)
     const refs = req.references.map((r) => join(projectDir, 'composition', r))
     let raw: string
     if (req.provider === 'codex') raw = await codexImage({ prompt: sent, ratio: req.ratio, references: refs, workDir: folder })

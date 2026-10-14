@@ -1,6 +1,6 @@
 // 소재 생성: prompt assembly (designer's prompt kept as written), model language,
 // aspect-ratio mapping, prompt helper replies, the SVG conversion worker.
-import { mkdtempSync, existsSync, copyFileSync, readFileSync } from 'node:fs'
+import { mkdtempSync, existsSync, copyFileSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Worker } from 'node:worker_threads'
@@ -83,5 +83,95 @@ describe('permission questions', () => {
     // shown with the computer's own separator (composition\\x.html on Windows)
     expect(say('Write', { file_path: join('/p', 'composition', 'x.html') }, '/p').detail).toBe(join('composition', 'x.html'))
     expect(say('Write', { file_path: '/Users/me/Desktop/x.txt' }, '/p').detail).toBe('/Users/me/Desktop/x.txt')
+  })
+})
+
+describe('video arguments', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ms-vid-'))
+  const a = join(dir, 'a.png')
+  const b = join(dir, 'b.png')
+  // any bytes: base64 inputs are not decoded here
+  writeFileSync(a, Buffer.from('frame-a'))
+  writeFileSync(b, Buffer.from('frame-b'))
+  const req = { provider: 'higgsfield' as const, model: 'kling3_0', lang: 'en' as const, prompt: 'slow push in', ratio: '9:16' as const, duration: 8 }
+  it('puts both frames into Higgsfield medias with roles', async () => {
+    const { videoArguments } = await import('../../src/main/ai/generateVideo')
+    const tools = [{ name: 'generate_video', inputSchema: { properties: { params: { type: 'object', properties: { model: {}, prompt: {}, aspect_ratio: { enum: ['16:9', '9:16', '1:1'] }, duration: { type: 'integer', enum: [5, 10] }, medias: { type: 'array', items: { description: 'base64 image', properties: { role: {}, value: {} } } } } } } } }]
+    const { tool, args } = await videoArguments(req, { start: a, end: b }, tools)
+    expect(tool).toBe('generate_video')
+    const p = args.params as Record<string, unknown>
+    expect(p.model).toBe('kling3_0')
+    expect(p.aspect_ratio).toBe('9:16')
+    expect(p.duration).toBe(10)
+    expect((p.medias as { role: string }[]).map((m) => m.role)).toEqual(['start_image', 'end_image'])
+    expect(typeof (p.medias as { value: string }[])[0].value).toBe('string')
+  })
+  it('uses Magnific-style first/last keys and the slug', async () => {
+    const { videoArguments } = await import('../../src/main/ai/generateVideo')
+    const tools = [{ name: 'video_generate', inputSchema: { properties: { prompt: {}, slug: {}, aspectRatio: { enum: ['widescreen_16_9', 'social_story_9_16'] }, duration: { type: 'string', enum: ['5', '10'] }, firstFrameImage: { description: 'base64' }, lastFrameImage: { description: 'base64' } } } }]
+    const { args } = await videoArguments({ ...req, provider: 'magnific', model: 'kling-v3', duration: 5 }, { start: a, end: b }, tools)
+    expect(args.slug).toBe('kling-v3')
+    expect(args.aspectRatio).toBe('social_story_9_16')
+    expect(args.duration).toBe('5')
+    expect(typeof args.firstFrameImage).toBe('string')
+    expect(typeof args.lastFrameImage).toBe('string')
+  })
+  it('uses Magnific keyframes {start,end} with image urls', async () => {
+    const { videoArguments } = await import('../../src/main/ai/generateVideo')
+    const frame = { type: 'object', properties: { type: {}, url: { description: 'image url or base64 data' } } }
+    const tools = [{ name: 'video_generate', inputSchema: { properties: { prompt: {}, slug: {}, keyframes: { type: 'object', properties: { start: frame, end: frame } } } } }]
+    const { args } = await videoArguments({ ...req, provider: 'magnific', model: 'kling-v3' }, { start: a, end: b }, tools)
+    const k = args.keyframes as Record<string, { type: string; url: string }>
+    expect(k.start.type).toBe('image')
+    expect(typeof k.end.url).toBe('string')
+  })
+  it('says so when the model takes no last frame', async () => {
+    const { videoArguments } = await import('../../src/main/ai/generateVideo')
+    const tools = [{ name: 'video_generate', inputSchema: { properties: { prompt: {}, slug: {}, image: { description: 'base64' } } } }]
+    await expect(videoArguments({ ...req, provider: 'magnific' }, { start: a, end: b }, tools)).rejects.toThrow(/끝 프레임/)
+    const { args } = await videoArguments({ ...req, provider: 'magnific' }, { start: a }, tools)
+    expect(typeof args.image).toBe('string')
+  })
+})
+
+describe('styles and kinds', () => {
+  it('puts the look and the kind before the designer\'s prompt', async () => {
+    const { buildPrompt } = await import('../../src/shared/assetGen')
+    const p = buildPrompt('clay', 'bust', 'ko', '빨간 모자 소년', 'character')
+    expect(p.startsWith('스타일: 클레이')).toBe(true)
+    expect(p).toContain('주인공: 인물·캐릭터 한 명만')
+    expect(p).toContain('구도: 흉상')
+    expect(p.endsWith('빨간 모자 소년')).toBe(true)
+    expect(buildPrompt('photo', 'bust', 'en', 'x', 'background')).not.toContain('FRAMING')
+    expect(buildPrompt('none', 'auto', 'en', 'x', 'object')).toContain('SUBJECT: One object')
+  })
+  it('has every look and kind in all three languages', async () => {
+    const { LOOK_TEXT, KIND_TEXT, LOOK_LABELS } = await import('../../src/shared/genStyles')
+    for (const t of [...Object.values(LOOK_TEXT), ...Object.values(KIND_TEXT)]) for (const l of ['en', 'zh', 'ko'] as const) expect(t[l].length).toBeGreaterThan(40)
+    expect(Object.keys(LOOK_TEXT).sort()).toEqual(Object.keys(LOOK_LABELS).sort())
+  })
+})
+
+describe('web collection', () => {
+  it('reads the JSON block and keeps only usable items', async () => {
+    const { parseCollect } = await import('../../src/main/ai/webCollect')
+    const text = 'blah\n```json\n' + JSON.stringify({
+      summary: '모션커피는 …',
+      items: [
+        { type: 'logo', title: '로고', url: 'https://example.com/logo.svg', source: 'https://example.com' },
+        { type: 'image', title: '가짜', url: 'http://example.com/a.png' },
+        { type: 'color', title: '브라운', hex: '#6f4e37', source: 'https://example.com/brand' },
+        { type: 'color', title: '잘못', hex: 'brown' },
+        { type: 'copy', title: '슬로건', text: '줄 서지 말고, 톡 주문', source: 'javascript:alert(1)' },
+        { type: 'fact', title: '', text: '' },
+        { type: 'video', title: '?', url: 'https://example.com/v.mp4' },
+      ],
+    }) + '\n```'
+    const r = parseCollect(text)
+    expect(r.summary).toBe('모션커피는 …')
+    expect(r.items.map((x) => x.type)).toEqual(['logo', 'color', 'copy'])
+    expect(r.items[1].hex).toBe('#6F4E37')
+    expect(r.items[2].source).toBeUndefined()
+    expect(() => parseCollect('no json here')).toThrow(/읽지 못했어요/)
   })
 })

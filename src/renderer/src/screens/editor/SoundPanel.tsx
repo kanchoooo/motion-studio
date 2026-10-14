@@ -6,6 +6,7 @@ import { Menu, NumberField, Toggle } from '../../components/ui'
 import { studio, useStore } from '../../store'
 import { useEditor } from './editorStore'
 import { useOverrides } from './overrides'
+import { blockedEdit } from './editLock'
 import { SoundFinder } from './SoundFinder'
 
 const fileName = (p: string) => p.split('/').pop() ?? p
@@ -63,6 +64,7 @@ export function SoundPanel() {
   const selTrack = ov.bgm.find((t) => t.id === selectedAudio)
 
   const addBgm = async () => {
+    if (blockedEdit()) return
     const files = await studio.app.pickFiles('assets')
     if (!files.length) return
     let added
@@ -177,6 +179,7 @@ function SfxGroup({ group, clips, lib }: { group: string; clips: AudioClipInfo[]
                 label: '내 파일로 바꾸기…',
                 icon: <FileAudio size={14} />,
                 onClick: async () => {
+                  if (blockedEdit()) return
                   const files = await studio.app.pickFiles('assets')
                   const a = (await studio.projects.importAssets(project!.meta.id, files.slice(0, 1)))[0]
                   if (a) await replaceWith(a.file, a.originalName)
@@ -188,6 +191,7 @@ function SfxGroup({ group, clips, lib }: { group: string; clips: AudioClipInfo[]
                   label: `기본 효과음: ${l.label}`,
                   icon: <Wand2 size={14} />,
                   onClick: async () => {
+                    if (blockedEdit()) return
                     const p = await studio.projects.useSfx(project!.meta.id, l.id)
                     if (p) await replaceWith(p, l.label)
                   },
@@ -254,6 +258,7 @@ function ClipEditor({ clip, lib, count }: { clip: AudioClipInfo; lib: SfxInfo[];
                   label: '내 파일로 바꾸기…',
                   icon: <FileAudio size={14} />,
                   onClick: async () => {
+                    if (blockedEdit()) return
                     const files = await studio.app.pickFiles('assets')
                     const a = (await studio.projects.importAssets(pid, files.slice(0, 1)))[0]
                     if (a) await replace(a.file, a.originalName)
@@ -263,6 +268,7 @@ function ClipEditor({ clip, lib, count }: { clip: AudioClipInfo; lib: SfxInfo[];
                   label: `기본 효과음: ${l.label}`,
                   icon: <Wand2 size={14} />,
                   onClick: async () => {
+                    if (blockedEdit()) return
                     const p = await studio.projects.useSfx(pid, l.id)
                     if (p) await replace(p, l.label)
                   },
@@ -345,6 +351,7 @@ function BgmEditor({ track }: { track: BgmTrack }) {
         <button
           className="btn sm"
           onClick={async () => {
+            if (blockedEdit()) return
             const files = await studio.app.pickFiles('assets')
             const a = (await studio.projects.importAssets(pid, files.slice(0, 1)))[0]
             if (a) update({ src: a.file, label: a.originalName.replace(/\.[^.]+$/, '') }, '파일 바꾸기')

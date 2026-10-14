@@ -3,6 +3,7 @@
 import { create } from 'zustand'
 import { normalizeOverrides, type AudioEdit, type BgmTrack, type ElementOverride, type MotionOverride, type Overrides, type TimeRemapSection } from '@shared/overrides'
 import { onLeaveProject, studio, useStore } from '../../store'
+import { blockedEdit } from './editLock'
 import { useEditor } from './editorStore'
 import { ask } from './player'
 
@@ -136,6 +137,7 @@ export const useOverrides = create<OverrideState>((set, get) => ({
   reload: false,
   load: (o) => set({ value: normalizeOverrides(structuredClone(o)), past: [], future: [] }),
   undo: () => {
+    if (blockedEdit()) return
     const { past, value, future } = get()
     if (!past.length || !value) return
     const prev = past[past.length - 1]
@@ -143,6 +145,7 @@ export const useOverrides = create<OverrideState>((set, get) => ({
     schedule(['text'], '실행 취소')
   },
   redo: () => {
+    if (blockedEdit()) return
     const { past, value, future } = get()
     if (!future.length || !value) return
     const next = future[0]
@@ -151,6 +154,7 @@ export const useOverrides = create<OverrideState>((set, get) => ({
   },
   patchElement: (id, label, patch, keys) => get().patchElements([{ id, label, patch }], keys),
   patchElements: (items, keys) => {
+    if (blockedEdit()) return
     const cur = get().value
     if (!cur || !items.length) return
     const elements = { ...cur.elements }
@@ -162,6 +166,7 @@ export const useOverrides = create<OverrideState>((set, get) => ({
     schedule(keys, items.length === 1 ? `${items[0].label}: ${what}` : `요소 ${items.length}개: ${what}`)
   },
   resetElement: (id, label) => {
+    if (blockedEdit()) return
     const cur = get().value
     if (!cur || !cur.elements[id]) return
     const elements = { ...cur.elements }
@@ -171,6 +176,7 @@ export const useOverrides = create<OverrideState>((set, get) => ({
     schedule(['text'], `${label}: 직접 수정 되돌리기`)
   },
   patchAudio: (id, patch, summary) => {
+    if (blockedEdit()) return
     const cur = get().value
     if (!cur) return
     const audio = { ...cur.audio }
@@ -180,6 +186,7 @@ export const useOverrides = create<OverrideState>((set, get) => ({
     schedule(['audio'], summary)
   },
   setSfxGroup: (group, value, summary) => {
+    if (blockedEdit()) return
     const cur = get().value
     if (!cur) return
     const sfxGroups = { ...cur.sfxGroups }
@@ -189,12 +196,14 @@ export const useOverrides = create<OverrideState>((set, get) => ({
     schedule(['audio'], summary)
   },
   setBgm: (tracks, summary) => {
+    if (blockedEdit()) return
     const cur = get().value
     if (!cur) return
     set({ value: { ...cur, bgm: tracks }, ...pushUndo(cur) })
     schedule(['audio'], summary)
   },
   patchMotion: (key, sig, patch, summary) => {
+    if (blockedEdit()) return
     const cur = get().value
     if (!cur) return
     const motions = { ...cur.motions }
@@ -208,6 +217,7 @@ export const useOverrides = create<OverrideState>((set, get) => ({
     schedule(['motion'], summary)
   },
   setRemap: (sections, keepTotal, summary) => {
+    if (blockedEdit()) return
     const cur = get().value
     if (!cur) return
     set({ value: { ...cur, timeRemap: sections, keepTotalDuration: keepTotal }, ...pushUndo(cur) })

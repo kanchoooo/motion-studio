@@ -1,9 +1,10 @@
 import { useEffect } from 'react'
-import { ChevronsLeft, History, MessageSquare } from 'lucide-react'
+import { ChevronsLeft, History, Loader2, MessageSquare } from 'lucide-react'
 import { Splitter } from '../../components/Splitter'
 import { useStore } from '../../store'
 import { HistoryPanel } from '../history/HistoryPanel'
 import { ChatPanel } from './ChatPanel'
+import { useEditLocked, useLockNotice } from './editLock'
 import { useEditor } from './editorStore'
 import { Inspector } from './Inspector'
 import { clampSize, fitLayout, LAYOUT_DEFAULTS, useLayout, useWindowSize } from './layout'
@@ -96,6 +97,7 @@ export function EditorTab({ active }: { active: boolean }) {
           <div style={{ flex: 1, minWidth: 0, background: 'var(--bg)', display: 'flex' }}>
             <div style={{ flex: 1, minHeight: 0, position: 'relative', margin: 12, background: 'var(--canvas)', borderRadius: 10, overflow: 'clip' }}>
               <Preview active={active} />
+              <EditLockBanner />
             </div>
           </div>
           <Splitter dir="x" invert value={L.inspectorW} onChange={(v) => L.set({ inspectorW: clampSize('inspectorW', v) })} onReset={() => L.set({ inspectorW: LAYOUT_DEFAULTS.inspectorW })} />
@@ -125,6 +127,22 @@ export function EditorTab({ active }: { active: boolean }) {
           <Timeline />
         </div>
       </div>
+    </div>
+  )
+}
+
+/** over the canvas while Claude works: look, play and listen, but no edits until the turn ends */
+function EditLockBanner() {
+  const locked = useEditLocked()
+  const at = useLockNotice((s) => s.at)
+  const hasVideo = useStore((s) => !!s.project?.hasVideo)
+  if (!locked || !hasVideo) return null
+  return (
+    <div key={at} className={`lock-banner${at && Date.now() - at < 1500 ? ' flash' : ''}`} data-testid="edit-lock">
+      <Loader2 size={13} className="spin" color="var(--accent)" />
+      <span>
+        <b>아직 Claude가 작업 중이에요.</b> 지금은 보기·재생만 되고, 작업이 끝나면 바로 편집할 수 있어요.
+      </span>
     </div>
   )
 }

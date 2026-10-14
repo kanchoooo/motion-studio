@@ -2,13 +2,16 @@
 // "flat character" style whose images become SVG characters that can act.
 // The style sentences come from ms-svg-character (STYLE_PROMPT.md v1).
 
+import { FRAMING_SIMPLE, KIND_TEXT, LOOK_LABELS, LOOK_NEGATIVE, LOOK_TEXT, type GenKind, type LookStyle } from './genStyles'
+
 export type PromptLang = 'en' | 'zh' | 'ko'
 export type Framing = 'auto' | 'bust' | 'upper' | 'full'
-export type GenStyle = 'none' | 'flat-character'
+export type GenStyle = 'none' | 'flat-character' | LookStyle
+export type { GenKind, LookStyle }
 
 export const PROMPT_LANG_LABELS: Record<PromptLang, string> = { en: '영어', zh: '중국어', ko: '한국어' }
 export const FRAMING_LABELS: Record<Framing, string> = { auto: '자동', bust: '흉상', upper: '상반신', full: '전신' }
-export const STYLE_LABELS: Record<GenStyle, string> = { none: '스타일 없음 (프롬프트 그대로)', 'flat-character': '플랫 무외곽선 캐릭터' }
+export const STYLE_LABELS: Record<GenStyle, string> = { none: '스타일 없음 (프롬프트 그대로)', 'flat-character': '플랫 캐릭터 · SVG로 연기', ...LOOK_LABELS }
 export const RATIOS = ['1:1', '3:4', '4:3', '9:16', '16:9'] as const
 export type Ratio = (typeof RATIOS)[number]
 /** the ratio each framing is made for */
@@ -130,16 +133,26 @@ export const MAX_SHAPES: Record<Framing, number> = { auto: 100, bust: 60, upper:
 export const MAX_DIFF_PCT = 1
 
 /**
- * The text sent to the model: style sentences (in the model's language), the
- * framing sentence (unless 자동), then the designer's prompt exactly as typed.
+ * The text sent to the model: style sentences (in the model's language), what kind of
+ * asset it is, the framing sentence (characters, unless 자동), then the designer's
+ * prompt exactly as typed.
  */
-export function buildPrompt(style: GenStyle, framing: Framing, lang: PromptLang, prompt: string): string {
+export function buildPrompt(style: GenStyle, framing: Framing, lang: PromptLang, prompt: string, kind: GenKind = 'free'): string {
   const parts: string[] = []
-  if (style === 'flat-character') parts.push(FLAT_STYLE[lang])
-  if (style === 'flat-character' && framing !== 'auto') parts.push(FRAMING_TEXT[framing][lang])
+  if (style === 'flat-character') {
+    parts.push(FLAT_STYLE[lang])
+    if (framing !== 'auto') parts.push(FRAMING_TEXT[framing][lang])
+  } else {
+    if (style !== 'none') parts.push(LOOK_TEXT[style][lang])
+    if (kind !== 'free') parts.push(KIND_TEXT[kind][lang])
+    if (kind === 'character' && framing !== 'auto') parts.push(FRAMING_SIMPLE[framing][lang])
+  }
   parts.push(prompt)
   return parts.filter((p) => p.trim()).join('\n\n')
 }
+
+/** what to keep out, for services with a negative prompt */
+export const negativeFor = (style: GenStyle): string | undefined => (style === 'flat-character' ? FLAT_NEGATIVE : style === 'none' ? undefined : LOOK_NEGATIVE[style])
 
 /** the language a model reads best, guessed from its name (the designer can change it per model) */
 export function defaultPromptLang(model: string): PromptLang {
@@ -155,6 +168,8 @@ export interface GenRequest {
   model: string
   modelLabel?: string
   style: GenStyle
+  /** what kind of asset (older candidates have none: 자유) */
+  kind?: GenKind
   framing: Framing
   ratio: Ratio
   lang: PromptLang
@@ -183,7 +198,27 @@ export interface CharacterInfo {
   message?: string
 }
 
-/** a generated image waiting for the designer to keep or discard it */
+export const VIDEO_RATIOS = ['16:9', '9:16', '1:1'] as const
+export const VIDEO_DURATIONS = [5, 8, 10] as const
+
+/** 소재 > AI로 만들기 > 영상: a clip from a video model, optionally between two images */
+export interface VideoGenRequest {
+  provider: 'higgsfield' | 'magnific'
+  /** service model id ('' = the service's own default) */
+  model: string
+  modelLabel?: string
+  lang: PromptLang
+  /** how it moves, exactly as typed */
+  prompt: string
+  ratio: (typeof VIDEO_RATIOS)[number]
+  /** seconds */
+  duration: number
+  /** first / last frame: project-relative images (composition/assets/… or .studio/generations/<id>/source.png) */
+  start?: string
+  end?: string
+}
+
+/** a generated image or clip waiting for the designer to keep or discard it */
 export interface GenCandidate {
   id: string
   at: string
@@ -193,4 +228,6 @@ export interface GenCandidate {
   /** the full prompt that was sent */
   sent: string
   character?: CharacterInfo
+  /** a video clip: file is the .mp4, poster a still for the card */
+  video?: { request: VideoGenRequest; poster: string; duration?: number }
 }

@@ -121,8 +121,13 @@ poc/               Phase 0 기술 검증 기록 (RESULTS.md)
   - `--tools Read,Write,Edit,Glob,Grep,Skill,Agent,Bash,WebFetch,WebSearch` (Bash·웹은 위 질문을 거친다. Agent = 공식 흐름의 하위 에이전트)
   - PATH 맨 앞에 `userData/cli/`: `hyperframes`·`npx hyperframes`가 앱 안 HyperFrames CLI(앱의 노드)로 간다(`agent/cliShims.ts`). 이 명령들은 미리 허용.
   - 하위 에이전트는 덧붙인 시스템 프롬프트를 못 받으므로 `.studio/motion-studio-rules.md`(컴포지션 규칙)를 읽게 한다.
+  - `PreToolUse` **HTTP 훅**(`/hook/<토큰>/pretool`): 대화에서 처음 영상 파일(composition/의 .html·.css·.js)을 쓰기 전에 대화 기록에 HyperFrames 라우터나 작업 흐름 스킬(`hyperframes`, `motion-graphics`, `product-launch-video` …)을 읽은 흔적이 있는지 확인하고, 없으면 돌려보내요(이유는 한국어로).
+  - `PermissionRequest` 훅은 사람에게 묻기 전에 두 가지를 돌려보내요: 영상 파일을 고치는 셸 스크립트(python·node·sed -i·perl -i·리다이렉션·tee → Edit/Write로만), 설명(description)이 한국어가 아닌 명령.
+  - 설정 `language: "Korean"`(Claude Code 응답 언어). 중간 메모까지 한국어로 쓰도록 프롬프트에 예시 문장도 있어요.
   - `--setting-sources ""` (개인 설정, 훅, 플러그인 제외)
   - `--strict-mcp-config` + 앱 MCP 서버만 연결
+- **이어갈 대화**: 대화 기록 파일이 있을 때만 `--resume`, 없으면(첫 요청 전에 모델을 바꾼 새 프로젝트) 같은 id로 `--session-id`. `--resume`이 "No conversation found"로 끝나면 바로 새 대화로 다시 시작한다.
+- **편집 잠금**: 세션이 `busy`인 동안 편집 탭은 보기·재생·선택만 된다. 모든 수정은 `editor/editLock.ts`의 `blockedEdit()`를 거친다(overrides 저장소의 모든 변경, 사운드 패널의 파일 교체). 캔버스 위 안내가 뜨고, 수정을 시도하면 깜빡인다.
 - **메시지 입력**: 텍스트를 쓰고 0.8초 뒤 Enter를 따로 보낸다. 한 번에 보내면 붙여넣기로 인식된다.
 - **폴더 신뢰 확인은 자동으로 답하지 않는다.** 터미널을 열고 안내만 한다.
 - 개발 중 Claude Code 터미널 안에서 `npm run dev`를 실행하면 부모 세션의 `CLAUDE*` 환경변수가 이어진다. 그러면 대화 기록 저장이 꺼지므로, PTY를 띄울 때 이 변수들을 제거한다(`cleanEnv`).
@@ -146,6 +151,12 @@ poc/               Phase 0 기술 검증 기록 (RESULTS.md)
 - **소재 생성**(`ai/generate.ts`): 앱이 서비스 생성 도구를 직접 불러요.
   - 도구 입력 스키마로 프롬프트·모델·비율·개수·네거티브·참고 이미지 키를 찾아요.
   - 결과는 `.studio/generations/<id>/source.png` 후보로 저장하고, "소재에 추가"를 누르면 `composition/assets/gen-<id>/`로 옮겨요.
+  - 스타일(룩) 13가지와 종류 6가지 문장은 `src/shared/genStyles.ts`(영어·중국어·한국어). 순서: 스타일 → 종류 → 구도(인물) → 디자이너 프롬프트 그대로. 바꾸면 `tests/e2e/style-samples.mjs`(Codex로 실제 샘플, `ONLY=clay,3d`로 일부만)로 확인해요.
+- **영상 생성**(`ai/generateVideo.ts`): 영상 도구(힉스필드 `generate_video`, 매그니픽 `video_generate`) 스키마에서 프롬프트·모델(slug)·비율·길이와 시작·끝 프레임 자리를 찾아요.
+  - 힉스필드: `start_image`/`end_image`, 또는 `medias: [{role, value}]`. 매그니픽: `keyframes: {start, end}`, 각각 `{type: "image", url}`(카탈로그 안내문 기준).
+  - 이미지는 base64(설명에 있을 때) 또는 서비스의 업로드 도구로 올린 주소·id를 넣어요. 서명된 업로드 주소를 주면 PUT으로 올려요.
+  - 결과는 `.studio/generations/<id>/video.mp4` + `poster.jpg` 후보예요. ⚠ 실제 계정으로는 아직 확인 전(이 개발 맥에 연결된 계정 없음).
+- **AI 웹 수집**(`ai/webCollect.ts`): `claude -p --model sonnet --tools WebSearch,WebFetch --output-format stream-json --no-session-persistence`. 도구 사용(검색어·읽은 사이트)을 진행 줄로 보여주고, 결과 JSON(로고·이미지·색·사실·카피 + 출처)에서 이미지는 앱이 직접 받아요(https, 이미지 형식, 15MB 이하, 120px 이상). `.studio/collect/items.json`에 남고, 남은 것을 넣으면 이미지·로고 → 소재, 색 → 브랜드 색, 사실·카피 → 브랜드 메모.
 - **캐릭터 SVG**(`character/`, ms-svg-character)
   - `img2svg/*.cjs`는 원본 그대로의 CommonJS예요. 설치본에 파일로 들어가서(`electron-builder.yml`) `sharp`·`@visioncortex/vtracer`(WASM, 버전 고정)를 node_modules에서 불러요. 변환은 `worker.cjs` 워커 스레드에서 해요.
   - Claude 도구: `character_info`, `character_tag`(tag.js + 차이 검사), `character_embed`(index.html의 호스트 요소 안에 인라인). 스킬은 `resources/claude-plugin/skills/svg-character-motion/`, 런타임은 `ms/svgrig.js`예요.
