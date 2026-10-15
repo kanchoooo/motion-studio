@@ -1,0 +1,93 @@
+// 0.3.1 in the app as shipped (no Claude calls, no AI credits):
+//  - version, 브리프 › 톤앤매너·스타일 (tempo + styles saved and written into BRIEF.md)
+//  - the HyperFrames registry copy is inside the app; the `hyperframes` command Claude's
+//    session gets loads it and never copies to the clipboard
+//  - with the network shut off, the app's own CLI searches and installs from the copy
+// MS_APP_EXEC=release/mac/MotionStudio.app/Contents/MacOS/MotionStudio node tests/e2e/release-check.mjs
+// (without MS_APP_EXEC it checks the dev build)
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { grantAccess, launchApp, toHome } from './access.mjs'
+
+const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
+const exec = process.env.MS_APP_EXEC
+const resources = exec ? join(dirname(exec), '..', 'Resources') : null
+const sandbox = mkdtempSync(join(tmpdir(), 'ms-rel-'))
+const env = { ...process.env, MS_PROJECTS_DIR: join(sandbox, 'projects'), MS_USER_DATA: join(sandbox, 'userdata') }
+let failed = 0
+const check = (name, ok, detail = '') => {
+  console.log(`${ok ? '✓' : '✗'} ${name}${ok ? '' : `  ${detail}`}`)
+  if (!ok) failed++
+}
+
+grantAccess(join(sandbox, 'userdata'))
+const app = await launchApp({ env, cwd: root })
+const win = await app.firstWindow()
+try {
+  await toHome(win)
+  const info = await win.evaluate(() => window.studio.app.info())
+  check(`version ${info.version} (${exec ? 'the shipped app' : 'dev build'})`, info.version === '0.3.1')
+
+  // ---- 템포 · 스타일 ----
+  const p = await win.evaluate(() => window.studio.projects.create({ name: '배포 확인', presetId: 'shorts-9x16', duration: 10 }))
+  await win.reload()
+  await toHome(win)
+  await win.getByTestId('tree-root').click()
+  await win.getByTestId('project-card').filter({ hasText: '배포 확인' }).first().click()
+  await win.locator('.drag .seg').getByRole('button', { name: '브리프' }).click({ timeout: 30000 })
+  await win.getByRole('button', { name: '톤앤매너·스타일' }).click()
+  await win.getByTestId('brief-tempo').getByRole('button', { name: '매우 빠름' }).click()
+  await win.getByTestId('style-retro').click()
+  await win.getByTestId('style-pop').click()
+  let brief
+  for (let i = 0; i < 20; i++) {
+    brief = JSON.parse(readFileSync(join(p.path, 'brief.json'), 'utf8'))
+    if (brief.tempo && brief.styles?.length === 2) break
+    await win.waitForTimeout(250)
+  }
+  check('tempo and styles saved', brief.tempo === 'very-fast' && JSON.stringify(brief.styles) === '["retro","pop"]', JSON.stringify([brief.tempo, brief.styles]))
+  const md = readFileSync(join(p.path, 'composition', 'BRIEF.md'), 'utf8')
+  check('BRIEF.md carries them for Claude', /템포\(디자이너가 고름\): 매우 빠름/.test(md) && /MAIN 레트로·Y2K/.test(md) && /ACCENT 팝·컬러풀/.test(md))
+
+  // ---- the hyperframes command of a Claude session (opening the editor starts one; this folder is not trusted, so it waits at the trust question) ----
+  await win.locator('.drag .seg').getByRole('button', { name: '편집' }).click()
+  const shim = join(sandbox, 'userdata', 'cli', 'hyperframes')
+  for (let i = 0; i < 60 && !existsSync(shim); i++) await win.waitForTimeout(500)
+  const text = existsSync(shim) ? readFileSync(shim, 'utf8') : ''
+  const hook = resources ? join(resources, 'hf-registry', 'offline-fetch.mjs') : join(root, 'resources', 'hf-registry', 'offline-fetch.mjs')
+  check('the session command loads the registry copy', text.includes(pathToFileURL(hook).href), text.split('\n').slice(-3).join(' | '))
+  check('…and adds --no-clipboard to add', /if \[ "\$1" = add \]; then exec .* "\$@" --no-clipboard; fi/.test(text))
+  if (resources) {
+    const m = JSON.parse(readFileSync(join(resources, 'hf-registry', 'mirror.json'), 'utf8'))
+    check(`the registry copy ships with the app (${m.ref}: ${m.items} items, ${m.previews} previews)`, m.items > 400 && m.previews > 100)
+  }
+  const proj = mkdtempSync(join(tmpdir(), 'ms-rel-hf-'))
+  writeFileSync(join(proj, 'hyperframes.json'), JSON.stringify({ paths: { blocks: 'compositions', components: 'compositions/components', assets: 'assets' } }))
+  const home = mkdtempSync(join(tmpdir(), 'ms-rel-home-'))
+  const t0 = Date.now()
+  const added = JSON.parse(execFileSync(shim, ['add', 'light-leak', '--json'], { cwd: proj, env: { ...process.env, HOME: home }, encoding: 'utf8', timeout: 120000 }))
+  check(`the session command installs a block (${((Date.now() - t0) / 1000).toFixed(1)} s), clipboard untouched`, added.ok && added.clipboardCopied === false && existsSync(join(proj, 'compositions', 'light-leak.html')))
+
+  // ---- the app's own Node + CLI with the network shut off ----
+  if (exec) {
+    const offline = join(proj, 'offline.mjs')
+    writeFileSync(offline, `globalThis.fetch = async (u) => { throw new Error('network used: ' + (u?.url ?? u)) }\n`)
+    const cli = join(resources, 'app', 'node_modules', 'hyperframes', 'bin', 'hyperframes.mjs')
+    const run = (...args) => execFileSync(exec, ['--import', pathToFileURL(offline).href, '--import', pathToFileURL(hook).href, cli, ...args], { cwd: proj, env: { ...process.env, HOME: mkdtempSync(join(tmpdir(), 'ms-rel-home-')), ELECTRON_RUN_AS_NODE: '1', HYPERFRAMES_TELEMETRY: '0', DO_NOT_TRACK: '1', HYPERFRAMES_SKIP_SKILLS: '1' }, encoding: 'utf8', timeout: 120000 })
+    const found = JSON.parse(run('catalog', '--query', 'film grain', '--json'))
+    check('offline: catalog search answers from the copy', found.results.some((r) => r.name === 'grain-overlay'))
+    const inst = JSON.parse(run('add', 'carousel-path-1', '--no-clipboard', '--json'))
+    check('offline: a block with CDN pictures installs from the copy', inst.ok && inst.written.filter((f) => /\.jpg$/.test(f)).length > 10)
+  }
+} catch (e) {
+  failed++
+  console.log('✗', e.message)
+  await win.screenshot({ path: join(root, 'tests', 'e2e', 'shots', 'release-check-fail.png') }).catch(() => {})
+} finally {
+  await app.close().catch(() => {})
+}
+console.log(failed ? `${failed} failed` : 'all passed')
+process.exit(failed ? 1 : 0)

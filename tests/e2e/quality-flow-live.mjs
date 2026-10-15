@@ -9,13 +9,17 @@
 // The folder-trust question is never answered by a test, so the sandbox's trusted project
 // ("앱 주문 런칭") is used: it is backed up, emptied (a new conversation, a blank composition,
 // this test's brief) and put back afterwards; the result is copied next to the backup.
+// With MS_TEMPO (slow|medium|fast|very-fast) and MS_STYLES (comma-separated style ids) the brief
+// carries a tempo and styles: the storyboard, DESIGN.md and the exported video's cut rhythm are
+// checked against them. MS_APP_EXEC runs the packaged app instead of the dev build.
 // MS_SANDBOX=<sandbox whose "앱 주문 런칭" folder is trusted> node tests/e2e/quality-flow-live.mjs
-import { _electron as electron } from 'playwright-core'
-import { cpSync, existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { grantAccess, toHome } from './access.mjs'
+import { grantAccess, launchApp, toHome } from './access.mjs'
+import { STYLES, TEMPOS } from '../../src/shared/direction.ts'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const sandbox = process.env.MS_SANDBOX
@@ -35,7 +39,9 @@ const resultCopy = join(sandbox, `quality-result-${stamp}`)
 cpSync(trusted, backup, { recursive: true })
 
 grantAccess(join(sandbox, 'userdata'))
-const app = await electron.launch({ args: [join(root, 'out', 'main', 'index.js')], cwd: root, env: { ...process.env, MS_PROJECTS_DIR: join(sandbox, 'projects'), MS_USER_DATA: join(sandbox, 'userdata') } })
+const app = await launchApp({ cwd: root, env: { ...process.env, MS_PROJECTS_DIR: join(sandbox, 'projects'), MS_USER_DATA: join(sandbox, 'userdata') } })
+const tempo = TEMPOS.find((t) => t.id === process.env.MS_TEMPO)
+const styles = (process.env.MS_STYLES ?? '').split(',').filter(Boolean).map((id) => STYLES.find((x) => x.id === id)).filter(Boolean)
 const win = await app.firstWindow()
 win.on('dialog', (d) => void d.accept())
 await win.setViewportSize({ width: 1500, height: 950 }).catch(() => {})
@@ -86,6 +92,8 @@ try {
       { id: 't2', text: '3월 한정 · 앱 주문 시 1+1', locked: true, timing: { mode: 'section', section: 'end' }, minDuration: 1.5, position: 'any', style: { mode: 'auto' }, note: '' },
     ],
   }
+  if (tempo) brief.tempo = tempo.id
+  if (styles.length) brief.styles = styles.map((x) => x.id)
   await win.evaluate(([id, b]) => window.studio.projects.saveBrief(id, b), [pid, brief])
   await win.reload()
   await toHome(win)
@@ -104,6 +112,13 @@ try {
   const gotStoryboard = await waitFor('storyboard', async () => (await win.locator('.card').filter({ hasText: '이대로 만들기' }).count()) > 0, 40)
   check(`storyboard card shown (${Math.round((Date.now() - sbAt) / 60000)} min)`, gotStoryboard)
   check('DESIGN.md and STORYBOARD.md were written first', existsSync(join(dir, 'composition', 'DESIGN.md')) && existsSync(join(dir, 'composition', 'STORYBOARD.md')))
+  if (tempo || styles.length) {
+    const plan = ['DESIGN.md', 'STORYBOARD.md'].map((f) => readFileSync(join(dir, 'composition', f), 'utf8')).join('\n')
+    const bpms = [...plan.matchAll(/(\d{2,3})\s*BPM/gi)].map((m) => +m[1])
+    if (tempo) check(`the plan uses the tempo's beat grid (${tempo.bpm.join('–')} BPM; plan says ${bpms.join(', ') || 'none'})`, bpms.some((b) => b >= tempo.bpm[0] - 5 && b <= tempo.bpm[1] + 10))
+    for (const [i, x] of styles.entries()) check(`the plan names the ${i ? 'accent' : 'main'} style ${x.label}`, plan.includes(x.label) || plan.toLowerCase().includes(x.id) || (x.base && plan.includes(x.base)))
+    log('plan excerpt:\n' + plan.split('\n').filter((l) => /BPM|템포|tempo|스타일|style|레트로|retro|팝|pop/i.test(l)).slice(0, 12).join('\n'))
+  }
   await win.getByTestId('chat-list').screenshot({ path: join(shots, 'p11-quality-storyboard.png') }).catch(() => {})
   await waitFor('turn end', async () => /대기 중/.test(await badge()), 5)
 
@@ -188,6 +203,42 @@ try {
     await ruler.click({ position: { x: box.width * k, y: 12 } })
     await win.waitForTimeout(900)
     await win.locator('[data-capture-frame]').screenshot({ path: join(shots, `p11-quality-${Math.round(k * 100)}.png`) })
+  }
+  // the cut rhythm of the exported video (scene changes), against the tempo
+  if (tempo) {
+    await win.evaluate((id) => window.studio.renders.start(id, { format: 'mp4-h264', quality: 'draft', fileName: 'tempo-check' }), pid)
+    let rec
+    for (let i = 0; i < 600 && !rec; i++) {
+      await win.waitForTimeout(1000)
+      rec = (await win.evaluate((id) => window.studio.renders.list(id), pid)).find((r) => r.fileName.startsWith('tempo-check'))
+    }
+    if (rec) {
+      const ffmpeg = join(root, 'resources', 'bin', `${process.platform}-${process.arch}`, 'ffmpeg')
+      // beat hits: frames where the picture changes more than the frames around it (a word lands,
+      // a cut, an impact), at least 0.25 s apart. A 12 s ad Claude set to 120 BPM shows ~15 hits,
+      // 0.5 s apart where the beats are.
+      mkdirSync(join(dir, '.cache'), { recursive: true })
+      const scores = join(dir, '.cache', 'scene-scores.txt')
+      spawnSync(ffmpeg, ['-hide_banner', '-i', join(dir, rec.file), '-vf', `scale=270:-2,select='gte(scene,0)',metadata=print:key=lavfi.scene_score:file=${scores.replace(/([\\:'])/g, '\\$1')}`, '-f', 'null', '-'])
+      const pts = []
+      let at = null
+      for (const line of readFileSync(scores, 'utf8').split('\n')) {
+        const t = line.match(/pts_time:([\d.]+)/)
+        if (t) at = +t[1]
+        const v = line.match(/scene_score=([\d.]+)/)
+        if (v && at != null) pts.push([at, +v[1]])
+      }
+      const hits = []
+      for (let i = 1; i < pts.length - 1; i++) {
+        const [t, v] = pts[i]
+        if (v >= 0.004 && v >= pts[i - 1][1] && v >= pts[i + 1][1] && (!hits.length || t - hits.at(-1) >= 0.25)) hits.push(t)
+      }
+      const gaps = hits.slice(1).map((t, i) => t - hits[i]).sort((x, y) => x - y)
+      const median = gaps.length ? gaps[Math.floor(gaps.length / 2)] : brief.output.duration
+      log(`video: ${hits.length} beat hits in ${brief.output.duration} s (${(hits.length / brief.output.duration).toFixed(2)}/s), median ${median.toFixed(2)} s apart: ${hits.map((t) => t.toFixed(2)).join(' ')} (tempo ${tempo.label}: beat ${(60 / tempo.bpm[1]).toFixed(2)}–${(60 / tempo.bpm[0]).toFixed(2)} s, shots ${tempo.shot.join('–')} s)`)
+      check(`the video's rhythm fits ${tempo.label}`, median <= tempo.shot[1] && median >= Math.min(0.25, tempo.shot[0] / 2))
+      cpSync(join(dir, rec.file), join(shots, `p12-tempo-${tempo.id}.mp4`))
+    } else check('tempo check export', false, 'no export')
   }
   log('permissions asked:', asked.length ? asked.join(' | ') : '(none)')
 } catch (e) {

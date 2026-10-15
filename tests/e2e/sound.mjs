@@ -3,7 +3,8 @@
 // Run: MS_SANDBOX=<dir> node tests/e2e/sound.mjs
 import { grantAccess, toHome } from './access.mjs'
 import { _electron as electron } from 'playwright-core'
-import { mkdirSync, readFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -14,6 +15,9 @@ const sandbox = process.env.MS_SANDBOX
 const t0 = Date.now()
 const log = (...a) => console.log(`[${((Date.now() - t0) / 1000).toFixed(0)}s]`, ...a)
 grantAccess(join(sandbox, 'userdata'))
+// a music file for the BGM tracks (a 20 s chord, made once per sandbox)
+const bgm = join(sandbox, 'test-bgm.mp3')
+if (!existsSync(bgm)) execFileSync(join(root, 'resources', 'bin', `${process.platform}-${process.arch}`, 'ffmpeg'), ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=220:duration=20', '-f', 'lavfi', '-i', 'sine=frequency=330:duration=20', '-filter_complex', 'amix=inputs=2', bgm])
 const app = await electron.launch({ args: [join(root, 'out', 'main', 'index.js')], cwd: root, env: { ...process.env, MS_PROJECTS_DIR: join(sandbox, 'projects'), MS_USER_DATA: join(sandbox, 'userdata') } })
 const win = await app.firstWindow()
 const shot = async (n) => {
@@ -24,7 +28,10 @@ const shot = async (n) => {
 const badge = () => win.evaluate(() => [...document.querySelectorAll('.badge')].map((b) => b.textContent).find((t) => t?.startsWith('Claude')) ?? '')
 try {
   await toHome(win)
-  await win.locator('.card').first().click()
+  // the original project (other tests may have added variations next to it)
+  const proj = (await win.evaluate(() => window.studio.projects.list())).find((p) => p.name === '앱 주문 런칭') ?? (await win.evaluate(() => window.studio.projects.list()))[0]
+  await win.getByTestId('tree-root').click()
+  await win.getByTestId('project-card').filter({ has: win.locator('.ellipsis', { hasText: new RegExp(`^${proj.name}$`) }) }).first().click()
   await win.getByText('Claude와 대화').waitFor({ timeout: 20000 })
   for (let i = 0; i < 40 && !/대기 중/.test(await badge()); i++) await win.waitForTimeout(1000)
   log('session', await badge())
@@ -41,7 +48,6 @@ try {
   }
   await win.getByRole('button', { name: '사운드', exact: true }).click()
   await shot('01-sound-panel')
-  const proj = (await win.evaluate(() => window.studio.projects.list()))[0]
   const html = readFileSync(join(proj.path, 'composition', 'index.html'), 'utf8')
   log('sfx in html:', (html.match(/data-ms-type="sfx"/g) || []).length, 'groups:', [...new Set([...html.matchAll(/data-ms-sfx="([^"]+)"/g)].map((m) => m[1]))].join(','))
 
