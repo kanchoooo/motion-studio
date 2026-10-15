@@ -145,3 +145,29 @@ export function setAttr(html: string, at: [number, number], name: string, value:
   const next = span ? tag.slice(0, span[0]) + piece + tag.slice(span[1]) : value == null ? tag : tag.replace(/\s*(\/?)>$/, `${piece}$1>`)
   return html.slice(0, at[0]) + next + html.slice(at[1])
 }
+
+/** where the element whose opening tag starts at `open` ends: the index of its closing tag (or the end) */
+export function closingTagAt(html: string, open: number): number {
+  TAG.lastIndex = open
+  const first = TAG.exec(html)
+  if (!first || first.index !== open || first[1] === '/') return -1
+  const name = first[2].toLowerCase()
+  if (VOID.has(name) || first[4] === '/') return first.index + first[0].length
+  let depth = 1
+  let m: RegExpExecArray | null
+  while ((m = TAG.exec(html))) {
+    if (m[0].startsWith('<!--')) continue
+    const tag = m[2].toLowerCase()
+    if (tag === 'script' || tag === 'style') {
+      if (m[1] !== '/') {
+        const close = html.toLowerCase().indexOf(`</${tag}`, m.index + m[0].length)
+        TAG.lastIndex = close < 0 ? html.length : close
+      }
+      continue
+    }
+    if (tag !== name || VOID.has(tag) || m[4] === '/') continue
+    depth += m[1] === '/' ? -1 : 1
+    if (depth === 0) return m.index
+  }
+  return html.length
+}

@@ -268,6 +268,7 @@ try {
 }
 
 if (process.argv.includes('--release')) publishRelease()
+pruneOldBuilds()
 if (local && !process.argv.includes('--no-install')) installLocal()
 else if (local) console.log(`\n▶ 빌드만 했어요(설치 안 함): ${arches[0] === 'arm64' ? 'release/mac-arm64' : 'release/mac'}/MotionStudio.app`)
 
@@ -313,7 +314,10 @@ function installLocal() {
 function mergeUpdateInfo() {
   const parts = ['arm64', 'x64'].map((a) => `release/latest-mac-${a}.yml`).filter((f) => existsSync(f))
   if (!parts.length) return
-  const docs = parts.map((f) => yaml.load(readFileSync(f, 'utf8')))
+  // only this version's builds: a CPU not built this time (left over from an earlier version) is not offered
+  const version = JSON.parse(readFileSync('package.json', 'utf8')).version
+  const docs = parts.map((f) => yaml.load(readFileSync(f, 'utf8'))).filter((d) => String(d.version) === version)
+  if (!docs.length) return
   const files = docs.flatMap((d) => d.files ?? [])
   const main = docs.find((d) => !String(d.path).includes('arm64')) ?? docs[0]
   writeFileSync('release/latest-mac.yml', yaml.dump({ ...main, files }, { lineWidth: -1 }))
@@ -341,4 +345,32 @@ function publishRelease() {
   if (exists) execFileSync('gh', ['release', 'upload', tag, ...assets, '--repo', repo, '--clobber'], { stdio: 'inherit' })
   else execFileSync('gh', ['release', 'create', tag, ...assets, '--repo', repo, '--title', `모션스튜디오 ${version}`, '--notes', notes, '--latest'], { stdio: 'inherit' })
   console.log(`\n▶ 배포 완료: https://github.com/${repo}/releases/tag/${tag}`)
+}
+
+/**
+ * Installers of earlier versions pile up in release/ (about 1.4 GB a version): those GitHub
+ * already has (same name and size on its release) go; one GitHub does not have stays.
+ */
+function pruneOldBuilds() {
+  const version = JSON.parse(readFileSync('package.json', 'utf8')).version
+  const repo = 'kanchoooo/motion-studio'
+  const byVersion = new Map()
+  for (const f of readdirSync('release')) {
+    const m = f.match(/^MotionStudio-(?:Setup-)?(\d+\.\d+\.\d+)-/)
+    if (!m || m[1] === version) continue
+    if (!byVersion.has(m[1])) byVersion.set(m[1], [])
+    byVersion.get(m[1]).push(f)
+  }
+  for (const [v, files] of byVersion) {
+    let uploaded
+    try {
+      uploaded = JSON.parse(execFileSync('gh', ['release', 'view', `v${v}`, '--repo', repo, '--json', 'assets'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })).assets
+    } catch {
+      console.log(`▶ 이전 빌드 ${v}: GitHub 릴리스가 없어서 남겨 둬요`)
+      continue
+    }
+    const gone = files.filter((f) => uploaded.some((a) => a.name === f && a.size === statSync(join('release', f)).size))
+    for (const f of gone) unlinkSync(join('release', f))
+    if (gone.length) console.log(`▶ 이전 빌드 ${v}: GitHub에 있는 ${gone.length}개 파일을 정리했어요`)
+  }
 }

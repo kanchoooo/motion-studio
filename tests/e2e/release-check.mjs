@@ -10,12 +10,12 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { grantAccess, launchApp, toHome } from './access.mjs'
+import { grantAccess, launchApp, toHome, cleanupOnExit } from './access.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const exec = process.env.MS_APP_EXEC
 const resources = exec ? join(dirname(exec), '..', 'Resources') : null
-const sandbox = mkdtempSync(join(tmpdir(), 'ms-rel-'))
+const sandbox = cleanupOnExit(mkdtempSync(join(tmpdir(), 'ms-rel-')))
 const env = { ...process.env, MS_PROJECTS_DIR: join(sandbox, 'projects'), MS_USER_DATA: join(sandbox, 'userdata') }
 let failed = 0
 const check = (name, ok, detail = '') => {

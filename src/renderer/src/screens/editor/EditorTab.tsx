@@ -9,7 +9,10 @@ import { useEditor } from './editorStore'
 import { Inspector } from './Inspector'
 import { clampSize, fitLayout, LAYOUT_DEFAULTS, useLayout, useWindowSize } from './layout'
 import { Preview } from './Preview'
+import { EASY_EASE } from '@shared/overrides'
+import { copySelection, deleteSelection, duplicateSelection, isLocked, jumpKey, labelOf, nudge, paste, reorder, splitAtPlayhead, toggleLockSelection, trimToPlayhead } from './edit'
 import { useOverrides } from './overrides'
+import { canvasView } from './Preview'
 import { Timeline } from './Timeline'
 
 export function EditorTab({ active }: { active: boolean }) {
@@ -31,32 +34,107 @@ export function EditorTab({ active }: { active: boolean }) {
       if (t.tagName === 'INPUT') (t as HTMLInputElement).blur()
       const ed = useEditor.getState()
       const fps = project?.brief.output.fps ?? 30
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
-        e.preventDefault()
+      const cmd = e.metaKey || e.ctrlKey
+      const key = e.key.toLowerCase()
+      const go = (t: number) => {
+        ed.player?.pause()
+        const at = Math.max(0, Math.min(ed.duration || t, t))
+        ed.player?.seek(at)
+        useEditor.setState({ time: at })
+      }
+      const done = () => e.preventDefault()
+      // ---- history ----
+      if (cmd && key === 'z') {
+        done()
         if (e.shiftKey) useOverrides.getState().redo()
         else useOverrides.getState().undo()
         return
       }
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'y') {
-        e.preventDefault()
-        useOverrides.getState().redo()
+      if (cmd && key === 'y') return done(), useOverrides.getState().redo()
+      // ---- layers (After Effects shortcuts) ----
+      if (cmd && e.shiftKey && key === 'd') return done(), splitAtPlayhead()
+      if (cmd && key === 'd') return done(), duplicateSelection()
+      if (cmd && key === 'c') return void copySelection()
+      if (cmd && key === 'x') return copySelection() && deleteSelection()
+      if (cmd && key === 'v') return done(), paste()
+      if (cmd && key === 'a') {
+        done()
+        const all = ed.elements.filter((x) => !['sfx', 'bgm', 'voice'].includes(x.type) && x.visible && !isLocked(x.id)).map((x) => x.id)
+        return useEditor.setState({ selection: all, selected: all[0] ?? null })
+      }
+      if (cmd && key === 'l') return done(), toggleLockSelection()
+      if (cmd && (e.code === 'BracketRight' || e.code === 'BracketLeft')) {
+        done()
+        return reorder(ed.selection, e.code === 'BracketRight' ? (e.shiftKey ? 'front' : 'up') : e.shiftKey ? 'back' : 'down')
+      }
+      if (e.altKey && (e.code === 'BracketLeft' || e.code === 'BracketRight')) return done(), trimToPlayhead(e.code === 'BracketLeft' ? 'in' : 'out')
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        done()
+        if (ed.selectedKeys.length) {
+          const st = useOverrides.getState()
+          for (const id of [...new Set(ed.selectedKeys.map((k) => k.id))]) st.removeKeys(id, labelOf(id), ed.selectedKeys.filter((k) => k.id === id))
+          return useEditor.setState({ selectedKeys: [] })
+        }
+        return deleteSelection()
+      }
+      // ---- keyframes ----
+      if (e.key === 'F9' && ed.selectedKeys.length) {
+        done()
+        const st = useOverrides.getState()
+        for (const id of [...new Set(ed.selectedKeys.map((k) => k.id))]) st.setKeyEase(id, labelOf(id), ed.selectedKeys.filter((k) => k.id === id), EASY_EASE)
         return
       }
+      if (!cmd && key === 'j') return done(), jumpKey(-1)
+      if (!cmd && key === 'k') return done(), jumpKey(1)
+      if (!cmd && key === 'u' && ed.selection.length) {
+        done()
+        const open = ed.selection.every((id) => ed.openLayers.includes(id))
+        return useEditor.setState({ openLayers: open ? ed.openLayers.filter((id) => !ed.selection.includes(id)) : [...new Set([...ed.openLayers, ...ed.selection])] })
+      }
+      // ---- time ----
       if (e.code === 'Space') {
-        e.preventDefault()
+        done()
         if (ed.playing) ed.player?.pause()
         else ed.player?.play()
-      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-        e.preventDefault()
-        ed.player?.pause()
-        ed.player?.seek(Math.max(0, ed.time + (e.key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 1 : 1 / fps)))
-      } else if (e.key === 'Escape') {
-        // Esc leaves the markup tool first, then clears the selection
-        if (ed.tool !== 'select') useEditor.setState({ tool: 'select' })
-        else ed.select(null)
-      } else if (e.key === 'v' || e.key === 'V') useEditor.setState({ tool: 'select' })
-      else if (e.key === 'm' || e.key === 'M') useEditor.setState({ tool: 'box' })
-      else if (e.key === 'p' || e.key === 'P') useEditor.setState({ tool: 'pin' })
+        return
+      }
+      if (e.key === 'Home') return done(), go(0)
+      if (e.key === 'End') return done(), go(ed.duration)
+      if (e.key === 'PageUp' || e.key === 'PageDown' || (cmd && (e.key === 'ArrowLeft' || e.key === 'ArrowRight'))) {
+        done()
+        const dir = e.key === 'PageUp' || e.key === 'ArrowLeft' ? -1 : 1
+        return go(ed.time + (dir * (e.shiftKey ? 10 : 1)) / fps)
+      }
+      if (!cmd && key === 'b') return done(), useEditor.setState({ workArea: { a: ed.time, b: Math.max(ed.time + 0.1, ed.workArea?.b ?? ed.duration) } })
+      if (!cmd && key === 'n') return done(), useEditor.setState({ workArea: { a: Math.min(ed.workArea?.a ?? 0, ed.time - 0.1), b: ed.time } })
+      if (e.key === '*') return done(), useOverrides.getState().addMarker(ed.time)
+      if (e.key.startsWith('Arrow')) {
+        done()
+        const dx = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0
+        const dy = e.key === 'ArrowUp' ? -1 : e.key === 'ArrowDown' ? 1 : 0
+        // a selected layer moves by whole pixels; with nothing selected ← → step frames
+        if (ed.selection.length && ed.tool === 'select') return nudge(dx * (e.shiftKey ? 10 : 1), dy * (e.shiftKey ? 10 : 1))
+        if (dx) go(ed.time + dx * (e.shiftKey ? 1 : 1 / fps))
+        return
+      }
+      // ---- canvas view ----
+      if (cmd && (e.key === '=' || e.key === '+')) return done(), canvasView.zoomBy(1.25)
+      if (cmd && e.key === '-') return done(), canvasView.zoomBy(0.8)
+      if (cmd && e.key === '0') return done(), canvasView.fit()
+      if (cmd && e.key === '1') return done(), canvasView.actual()
+      if (cmd && key === 'r') return done(), useLayout.getState().set({ rulers: !useLayout.getState().rulers })
+      // ---- tools ----
+      if (e.key === 'Escape') {
+        // Esc leaves mask drawing and the markup tools first, then clears the selection
+        if (ed.maskDraw) return useEditor.setState({ maskDraw: null })
+        if (ed.tool !== 'select') return useEditor.setState({ tool: 'select' })
+        useEditor.setState({ selectedKeys: [] })
+        return ed.select(null)
+      }
+      if (cmd || e.altKey) return
+      if (key === 'v') useEditor.setState({ tool: 'select' })
+      else if (key === 'm') useEditor.setState({ tool: 'box' })
+      else if (key === 'p') useEditor.setState({ tool: 'pin' })
     }
     // clicking the canvas or timeline while a text field still has focus: commit the text first
     // (the field's editor goes away with the new selection before its blur would run)

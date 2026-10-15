@@ -1,6 +1,6 @@
 // Test runs skip the first-launch password by marking the sandbox profile as
 // already unlocked (the password itself is not stored in the repository).
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 
 export function grantAccess(userDataDir) {
@@ -56,4 +56,17 @@ export async function launchApp({ env, cwd }) {
       await new Promise((r) => setTimeout(r, 3000))
     },
   }
+}
+
+/** a temporary folder a test made (a sandbox copy, a home…) goes when the test ends, unless MS_KEEP_SANDBOX=1 */
+export function cleanupOnExit(dir) {
+  if (!dir || process.env.MS_KEEP_SANDBOX) return dir
+  process.on('exit', () => {
+    try {
+      rmSync(dir, { recursive: true, force: true })
+    } catch {
+      /* already gone */
+    }
+  })
+  return dir
 }

@@ -16,10 +16,10 @@ import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { grantAccess, toHome } from './access.mjs'
+import { grantAccess, toHome, cleanupOnExit } from './access.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
-const sandbox = mkdtempSync(join(tmpdir(), 'ms-p11-'))
+const sandbox = cleanupOnExit(mkdtempSync(join(tmpdir(), 'ms-p11-')))
 cpSync(process.env.MS_SANDBOX, sandbox, { recursive: true })
 const shots = join(root, 'tests', 'e2e', 'shots')
 const projects = join(sandbox, 'projects')
@@ -39,8 +39,10 @@ execFileSync(ffmpeg, ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=
 const compFile = join(proj, 'composition', 'index.html')
 const comp = readFileSync(compFile, 'utf8')
 if (!comp.includes('data-ms-id="test-photo"')) {
-  const at = comp.indexOf('<audio')
-  writeFileSync(compFile, `${comp.slice(0, at)}<img id="test-photo" data-ms-id="test-photo" data-ms-label="테스트 사진" data-ms-type="image" src="assets/photo.png" style="position:absolute;left:60px;top:60px;width:200px;height:200px" />\n${comp.slice(at)}`)
+  // right inside the root: not in a block the app manages (the BGM block is rewritten on open)
+  const rootTag = comp.match(/<[a-z]+\b[^>]*data-composition-id="[^"]*"[^>]*>/i)
+  const at = rootTag.index + rootTag[0].length
+  writeFileSync(compFile, `${comp.slice(0, at)}\n      <img id="test-photo" data-ms-id="test-photo" data-ms-label="테스트 사진" data-ms-type="image" src="assets/photo.png" style="position:absolute;left:60px;top:60px;width:200px;height:200px" />${comp.slice(at)}`)
 }
 
 grantAccess(join(sandbox, 'userdata'))

@@ -8,10 +8,10 @@ import { cpSync, mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { grantAccess, toHome } from './access.mjs'
+import { grantAccess, toHome, cleanupOnExit } from './access.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
-const sandbox = mkdtempSync(join(tmpdir(), 'ms-p12-'))
+const sandbox = cleanupOnExit(mkdtempSync(join(tmpdir(), 'ms-p12-')))
 cpSync(process.env.MS_SANDBOX, sandbox, { recursive: true })
 const shots = join(root, 'tests', 'e2e', 'shots')
 const proj = join(sandbox, 'projects', '앱 주문 런칭.msproj')

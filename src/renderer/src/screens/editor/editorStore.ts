@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { AudioClipInfo } from '@shared/api'
+import type { Track } from './tracks'
 import type { FeedbackMark } from '@shared/project'
 import { onLeaveProject } from '../../store'
 import type { ElementTiming, MsPlayer, RuntimeElement, RuntimeMotion } from './player'
@@ -21,6 +22,8 @@ interface EditorState {
   selection: string[]
   /** audio clips parsed from the composition (Claude's + designer BGM) */
   audio: AudioClipInfo[]
+  /** URL of the composition folder the preview is served from ('' until it loads): files for the waveforms */
+  compBase: string
   timing: ElementTiming[]
   motions: RuntimeMotion[]
   /** motion edits Claude's latest code no longer matches */
@@ -35,6 +38,16 @@ interface EditorState {
   markTime: number | null
   /** composition size the overlay maps onto */
   comp: { w: number; h: number }
+  /** keyframes picked in the timeline */
+  selectedKeys: { id: string; prop: Track; t: number }[]
+  /** solo: only these layers show in the preview (editor only, nothing is saved) */
+  solo: string[]
+  /** work area (B / N): playback loops inside it */
+  workArea: { a: number; b: number } | null
+  /** canvas zoom (null = fit the window) and pan, composition px */
+  view: { zoom: number | null; panX: number; panY: number }
+  /** draw a mask on the canvas for this layer */
+  maskDraw: string | null
   set(p: Partial<EditorState>): void
   /** pick one element (null clears); add: Shift/⌘ adds it to the selection, or takes it out again */
   select(id: string | null, add?: boolean): void
@@ -55,6 +68,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   selected: null,
   selection: [],
   audio: [],
+  compBase: '',
   timing: [],
   motions: [],
   staleMotions: [],
@@ -66,6 +80,11 @@ export const useEditor = create<EditorState>((set, get) => ({
   marks: [],
   markTime: null,
   comp: { w: 1920, h: 1080 },
+  selectedKeys: [],
+  solo: [],
+  workArea: null,
+  view: { zoom: null, panX: 0, panY: 0 },
+  maskDraw: null,
   set: (p) => set(p),
   select: (id, add = false) => {
     const { selection: picked, selected } = get()
@@ -95,7 +114,7 @@ export function elementsForMark(els: RuntimeElement[], r: { x: number; y: number
   const markArea = Math.max(1, r.w * r.h)
   const canvas = comp.w * comp.h
   const scored = els
-    .filter((e) => e.visible && e.rect.w > 0 && e.rect.h > 0)
+    .filter((e) => e.visible && e.type !== 'camera' && e.rect.w > 0 && e.rect.h > 0)
     .map((e) => {
       const iw = Math.min(r.x + r.w, e.rect.x + e.rect.w) - Math.max(r.x, e.rect.x)
       const ih = Math.min(r.y + r.h, e.rect.y + e.rect.h) - Math.max(r.y, e.rect.y)
@@ -112,7 +131,7 @@ export function elementsForMark(els: RuntimeElement[], r: { x: number; y: number
 /** elements whose box intersects a composition-space rect (or contains a point) */
 export function elementsUnder(els: RuntimeElement[], r: { x: number; y: number; w: number; h: number }) {
   return els
-    .filter((e) => e.visible && e.rect.w > 0 && e.rect.h > 0)
+    .filter((e) => e.visible && e.type !== 'camera' && e.rect.w > 0 && e.rect.h > 0)
     .filter((e) => e.rect.x < r.x + Math.max(r.w, 1) && e.rect.x + e.rect.w > r.x && e.rect.y < r.y + Math.max(r.h, 1) && e.rect.y + e.rect.h > r.y)
     .sort((a, b) => a.rect.w * a.rect.h - b.rect.w * b.rect.h)
     .map((e) => ({ id: e.id, label: e.label }))
@@ -131,6 +150,7 @@ onLeaveProject(() => {
     selected: null,
     selection: [],
     audio: [],
+    compBase: '',
     timing: [],
     motions: [],
     staleMotions: [],
@@ -140,5 +160,10 @@ onLeaveProject(() => {
     tool: 'select',
     marks: [],
     markTime: null,
+    selectedKeys: [],
+    solo: [],
+    workArea: null,
+    view: { zoom: null, panX: 0, panY: 0 },
+    maskDraw: null,
   })
 })

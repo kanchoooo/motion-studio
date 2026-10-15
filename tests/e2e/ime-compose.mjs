@@ -2,6 +2,7 @@
 // field it treats as a password (type=password or -webkit-text-security) to
 // Roman input sources, so Korean could not be typed (0.2.0). The field must stay
 // a plain text input; dots are drawn over transparent text.
+import { cleanupOnExit } from './access.mjs'
 import { _electron as electron } from 'playwright-core'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -9,7 +10,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
-const sb = mkdtempSync(join(tmpdir(), 'ms-ime-'))
+const sb = cleanupOnExit(mkdtempSync(join(tmpdir(), 'ms-ime-')))
 const app = await electron.launch({ args: [join(root, 'out', 'main', 'index.js')], cwd: root, env: { ...process.env, MS_USER_DATA: join(sb, 'ud'), MS_PROJECTS_DIR: join(sb, 'pj') } })
 const win = await app.firstWindow()
 await win.getByTestId('lock-screen').waitFor()

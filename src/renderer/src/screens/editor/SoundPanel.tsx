@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ChevronDown, FileAudio, Music, Plus, RotateCcw, Trash2, Volume2, VolumeX, Wand2 } from 'lucide-react'
 import type { AudioClipInfo, SfxInfo } from '@shared/api'
-import type { BgmTrack } from '@shared/overrides'
+import { keysAt, type BgmTrack, type Keyframe } from '@shared/overrides'
 import { Menu, NumberField, Toggle } from '../../components/ui'
 import { studio, useStore } from '../../store'
 import { useEditor } from './editorStore'
@@ -291,6 +291,7 @@ function ClipEditor({ clip, lib, count }: { clip: AudioClipInfo; lib: SfxInfo[];
         </div>
         <VolumeSlider value={e.volume ?? clip.volume} onCommit={(volume) => patchAudio(clip.id, { volume, muted: false }, `${clip.label}: 볼륨`)} />
       </div>
+      <VolumeKeys keys={e.volumeKeys ?? []} base={e.volume ?? clip.volume} onChange={(volumeKeys) => patchAudio(clip.id, { volumeKeys: volumeKeys.length ? volumeKeys : undefined }, `${clip.label}: 볼륨 키프레임`)} />
       <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 6 }}>
         <NumberField title="이 소리가 나오는 시점" label="시점" unit="초" value={e.start ?? clip.start} step={0.05} precision={2} min={0} onChange={(start) => patchAudio(clip.id, { start }, `${clip.label}: 시점`)} />
       </div>
@@ -374,6 +375,7 @@ function BgmEditor({ track }: { track: BgmTrack }) {
         </div>
         <VolumeSlider value={track.volume} onCommit={(volume) => update({ volume }, '볼륨')} />
       </div>
+      <VolumeKeys keys={track.volumeKeys ?? []} base={track.volume} onChange={(volumeKeys) => update({ volumeKeys: volumeKeys.length ? volumeKeys : undefined }, '볼륨 키프레임')} />
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
         <NumberField title="서서히 커지는 시간" label="페이드 인" unit="초" value={track.fadeIn} min={0} max={10} step={0.1} precision={1} onChange={(fadeIn) => update({ fadeIn }, '페이드 인')} />
         <NumberField title="서서히 작아지는 시간" label="페이드 아웃" unit="초" value={track.fadeOut} min={0} max={10} step={0.1} precision={1} onChange={(fadeOut) => update({ fadeOut }, '페이드 아웃')} />
@@ -393,6 +395,40 @@ function BgmEditor({ track }: { track: BgmTrack }) {
         <Trash2 size={13} />
         이 배경음악 빼기
       </button>
+    </div>
+  )
+}
+
+/**
+ * Volume over time (keyframes, output seconds): music that goes down under a voice and up again.
+ * The app writes the sound with this curve, so the preview and the export sound the same.
+ */
+function VolumeKeys({ keys, base, onChange }: { keys: Keyframe[]; base: number; onChange: (keys: Keyframe[]) => void }) {
+  const time = useEditor((s) => s.time)
+  const sorted = [...keys].sort((a, b) => a.t - b.t)
+  const add = () => {
+    const t = +time.toFixed(3)
+    if (sorted.some((k) => Math.abs(k.t - t) < 1e-3)) return
+    onChange([...sorted, { t, v: +Number(keysAt(sorted, t) ?? base).toFixed(3), e: 'linear' }].sort((a, b) => a.t - b.t))
+  }
+  return (
+    <div className="col" style={{ gap: 4 }} data-testid="volume-keys">
+      <div className="row tiny muted">
+        <span className="grow">볼륨 키프레임 (시간에 따라 크게·작게)</span>
+        <button className="btn ghost sm" style={{ height: 22 }} onClick={add} data-testid="volume-key-add">
+          <Plus size={11} />
+          지금 시점
+        </button>
+      </div>
+      {sorted.map((k, i) => (
+        <div key={i} className="row small" style={{ gap: 4 }}>
+          <NumberField label="◆" unit="초" min={0} step={0.1} precision={2} value={k.t} onChange={(t) => onChange(sorted.map((x, j) => (j === i ? { ...x, t } : x)).sort((a, b) => a.t - b.t))} />
+          <NumberField label="볼륨" unit="%" min={0} max={200} value={Math.round(Number(k.v) * 100)} onChange={(p) => onChange(sorted.map((x, j) => (j === i ? { ...x, v: p / 100 } : x)))} data-testid={`volume-key-${i}`} />
+          <button className="icon-btn" title="키 지우기" onClick={() => onChange(sorted.filter((_, j) => j !== i))}>
+            <Trash2 size={12} />
+          </button>
+        </div>
+      ))}
     </div>
   )
 }

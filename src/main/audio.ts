@@ -2,11 +2,13 @@
 // applies the designer's audio edits (replacements, group replacements, timing,
 // volume, extra BGM tracks) directly to index.html, so preview AND render
 // (which reads the HTML) hear the same mix. Re-applied after every Claude turn.
+import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
-import type { BgmTrack, Overrides } from '@shared/overrides'
+import { dirname, join } from 'node:path'
+import type { BgmTrack, Keyframe, Overrides } from '@shared/overrides'
 import { makeTimeMap } from '@shared/timeRemap'
-import { isDev, appRoot } from './paths'
+import { bin, isDev, appRoot } from './paths'
 
 export interface AudioClip {
   id: string
@@ -18,6 +20,8 @@ export interface AudioClip {
   originalSrc: string
   start: number
   duration?: number
+  /** where in the file playback starts (seconds) */
+  mediaStart?: number
   volume: number
   managed: boolean
 }
@@ -55,6 +59,7 @@ export function parseAudio(html: string): AudioClip[] {
       originalSrc: attr(tag, 'data-ms-original-src') ?? attr(tag, 'src') ?? '',
       start: parseFloat(attr(tag, 'data-start') ?? '0') || 0,
       duration: attr(tag, 'data-duration') ? parseFloat(attr(tag, 'data-duration')!) : undefined,
+      mediaStart: parseFloat(attr(tag, 'data-media-start') ?? '0') || 0,
       volume: attr(tag, 'data-volume') ? parseFloat(attr(tag, 'data-volume')!) : 1,
       managed: attr(tag, 'data-ms-managed') === 'true',
     })
@@ -124,6 +129,8 @@ export function applyMediaTiming(html: string, o: Overrides, authoredD = authore
   const finalLen = M ? (o.keepTotalDuration ? Math.max(authoredD, M.length) : M.length) : authoredD
   return html.replace(/<(audio|video)\b[^>]*>/gi, (tag, kind: string) => {
     if (attr(tag, 'data-start') == null) return tag
+    // the designer's own clips are placed in output time already
+    if (/\sdata-ms-designer="/.test(tag)) return tag
     if (kind.toLowerCase() === 'audio' && !['sfx', 'voice'].includes(attr(tag, 'data-ms-type') ?? '')) return tag
     const s0 = parseFloat(attr(tag, 'data-ms-authored-start') ?? attr(tag, 'data-start') ?? '0') || 0
     const dRaw = attr(tag, 'data-ms-authored-dur') ?? attr(tag, 'data-duration')
@@ -171,8 +178,70 @@ function setRootAttr(tag: string, name: string, value: string | null): string {
   return re.test(tag) ? tag.replace(re, ` ${name}="${esc(value)}"`) : tag.replace(/\s*>$/, ` ${name}="${esc(value)}">`)
 }
 
+// ---- volume over time (keyframes): the app writes the sound with its volume curve ----
+
+/** the ffmpeg volume expression of keyframes (clip-local seconds; linear between keys, hold where asked) */
+export function volumeExpr(keys: { t: number; v: number | string; e?: string }[]): string {
+  const ks = keys.filter((k) => Number.isFinite(k.t) && Number.isFinite(Number(k.v))).sort((a, b) => a.t - b.t)
+  if (!ks.length) return '1'
+  const f = (n: number) => String(+n.toFixed(4))
+  let expr = f(Number(ks[ks.length - 1].v))
+  for (let i = ks.length - 2; i >= 0; i--) {
+    const a = ks[i]
+    const b = ks[i + 1]
+    const va = Number(a.v)
+    const vb = Number(b.v)
+    const seg = a.e === 'hold' || b.t - a.t < 1e-4 ? f(va) : `${f(va)}+(${f(vb - va)})*(t-${f(a.t)})/${f(b.t - a.t)}`
+    expr = `if(lt(t,${f(b.t)}),${seg},${expr})`
+  }
+  return `if(lt(t,${f(ks[0].t)}),${f(Number(ks[0].v))},${expr})`
+}
+
+/**
+ * Clips with a volume curve: the sound from where the clip starts, for as long as it plays,
+ * with the curve applied (assets/.ms-audio/<id>-<hash>.wav, made once per change). The page
+ * and the export both play that file, at full volume.
+ */
+export function audioEnvelopes(dir: string, html: string, o: Overrides): Record<string, string> {
+  const out: Record<string, string> = {}
+  const make = (id: string, src: string, mediaStart: number, start: number, duration: number, keys: Keyframe[]) => {
+    if (!src || !(duration > 0) || /^[a-z]+:/i.test(src)) return
+    const local = keys.map((k) => ({ ...k, t: k.t - start }))
+    const hash = createHash('sha1').update(JSON.stringify([src, mediaStart, duration, local])).digest('hex').slice(0, 10)
+    const rel = `assets/.ms-audio/${id.replace(/[^\w-]/g, '_')}-${hash}.wav`
+    const abs = join(dir, 'composition', rel)
+    if (!existsSync(abs)) {
+      const input = join(dir, 'composition', src)
+      if (!existsSync(input)) return
+      mkdirSync(dirname(abs), { recursive: true })
+      try {
+        execFileSync(bin.ffmpeg(), ['-y', '-loglevel', 'error', '-ss', String(Math.max(0, mediaStart)), '-t', String(duration), '-i', input, '-af', `volume='${volumeExpr(local)}':eval=frame`, '-ar', '48000', '-ac', '2', '-c:a', 'pcm_s16le', abs], { timeout: 60_000 })
+      } catch {
+        return
+      }
+    }
+    out[id] = rel
+  }
+  const D = parseFloat(html.match(/<[a-z]+\b[^>]*data-composition-id="[^"]*"[^>]*>/i)?.[0].match(/\sdata-duration="([^"]*)"/)?.[1] ?? '0') || 0
+  for (const m of html.matchAll(/<audio\b[^>]*>/gi)) {
+    const tag = m[0]
+    const id = attr(tag, 'data-ms-id')
+    const e = id ? o.audio?.[id] : undefined
+    if (!id || !e?.volumeKeys?.length || attr(tag, 'data-ms-managed') === 'true') continue
+    const group = attr(tag, 'data-ms-sfx')
+    const g = group ? o.sfxGroups?.[group] : undefined
+    const src = e.src ?? g?.src ?? attr(tag, 'data-ms-original-src') ?? attr(tag, 'src') ?? ''
+    const start = e.start ?? (parseFloat(attr(tag, 'data-start') ?? '0') || 0)
+    const duration = e.duration ?? (parseFloat(attr(tag, 'data-duration') ?? '') || Math.max(0, D - start))
+    const mediaStart = parseFloat(attr(tag, 'data-ms-original-media-start') ?? attr(tag, 'data-media-start') ?? '0') || 0
+    make(id, src, mediaStart, start, duration, e.volumeKeys)
+  }
+  for (const t of o.bgm ?? []) if (t.volumeKeys?.length) make(t.id, t.src, t.mediaStart, t.start, t.end - t.start, t.volumeKeys)
+  return out
+}
+
 /** returns the HTML with every designer audio edit applied (idempotent) */
-export function applyAudio(html: string, o: Overrides): string {
+export function applyAudio(html: string, o: Overrides, env: Record<string, string> = {}): string {
   // 1. edits to Claude-placed audio (group replacement first, then per-element edits)
   let out = html.replace(/<audio\b[^>]*>/gi, (tag) => {
     const id = attr(tag, 'data-ms-id')
@@ -186,12 +255,24 @@ export function applyAudio(html: string, o: Overrides): string {
     let volume = e?.volume ?? g?.volume ?? parseFloat(originalVolume)
     if (e?.muted) volume = 0
     let next = tag
-    const changedSrc = src !== original
+    // a volume curve: the app's file has it (from the clip's start, at full volume)
+    const curve = env[id]
+    const originalMs = attr(tag, 'data-ms-original-media-start') ?? attr(tag, 'data-media-start')
+    if (curve) volume = e?.muted ? 0 : 1
+    const playSrc = curve ?? src
+    const changedSrc = playSrc !== original
     const changedVol = Math.abs(volume - parseFloat(originalVolume)) > 1e-6
-    next = setAttr(next, 'src', src)
+    next = setAttr(next, 'src', playSrc)
     next = setAttr(next, 'data-ms-original-src', changedSrc ? original : null)
     next = setAttr(next, 'data-volume', changedVol || attr(tag, 'data-volume') ? String(+volume.toFixed(3)) : null)
     next = setAttr(next, 'data-ms-original-volume', changedVol ? originalVolume : null)
+    if (curve) {
+      next = setAttr(next, 'data-ms-original-media-start', originalMs ?? '0')
+      next = setAttr(next, 'data-media-start', '0')
+    } else if (attr(tag, 'data-ms-original-media-start') != null) {
+      next = setAttr(next, 'data-media-start', attr(tag, 'data-ms-original-media-start')!)
+      next = setAttr(next, 'data-ms-original-media-start', null)
+    }
     // the renderer only discovers (and mixes) media elements that have an id
     if (!attr(next, 'id')) next = setAttr(next, 'id', id)
     if (e?.start != null) next = setAttr(next, 'data-start', e.start.toFixed(3))
@@ -202,7 +283,7 @@ export function applyAudio(html: string, o: Overrides): string {
   out = out.replace(BLOCK_RE, '')
   const tracks = (o.bgm ?? []).filter((t) => t.src && t.end > t.start)
   if (tracks.length) {
-    const block = `\n      ${BLOCK_START}\n${tracks.map((t) => `      ${bgmTag(t)}`).join('\n')}\n      ${BLOCK_END}`
+    const block = `\n      ${BLOCK_START}\n${tracks.map((t) => `      ${bgmTag(env[t.id] ? { ...t, src: env[t.id], mediaStart: 0, volume: 1, loop: false } : t)}`).join('\n')}\n      ${BLOCK_END}`
     out = out.replace(/(<[a-z]+\b[^>]*data-composition-id="[^"]*"[^>]*>)/i, `$1${block}`)
   }
   return out

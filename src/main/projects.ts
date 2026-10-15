@@ -3,7 +3,9 @@ import { basename, extname, join } from 'node:path'
 import { app, shell } from 'electron'
 import { emptyBrief, normalizeBrief, OUTPUT_PRESETS, type Asset, type AssetKind, type Brief, type OutputPresetId } from '@shared/brief'
 import { emptyOverrides, normalizeOverrides, overridesToScript, type Overrides } from '@shared/overrides'
-import { applyAudio, applyLength } from './audio'
+import { applyAudio, audioEnvelopes, applyLength } from './audio'
+import { videoEffects, withProcessedClips } from './videoFx'
+import { applyLayers } from './designerLayers'
 import type { ProjectMeta, ProjectState, ProjectSummary } from '@shared/project'
 import { fontCss } from './fontcss'
 import { importPsd } from './psd'
@@ -115,17 +117,18 @@ function syncManagedFiles(dir: string, overrides: Overrides): void {
   copyIfChanged(runtimeFiles.msRuntime(), join(comp, 'ms', 'runtime.js'))
   copyIfChanged(runtimeFiles.svgrig(), join(comp, 'ms', 'svgrig.js'))
   copyIfChanged(runtimeFiles.gsap(), join(comp, 'vendor', 'gsap.min.js'))
-  writeText(join(comp, 'ms', 'overrides.js'), overridesToScript(overrides))
+  const html = existsSync(f.index(dir)) ? readFileSync(f.index(dir), 'utf8') : ''
+  writeText(join(comp, 'ms', 'overrides.js'), overridesToScript(withProcessedClips(overrides, videoEffects(dir, overrides, html))))
   refreshFontCss(dir, overrides)
   applyAudioEdits(dir, overrides)
 }
 
-/** writes the designer's audio edits into composition/index.html (idempotent) */
+/** writes the designer's audio edits and added layers into composition/index.html (idempotent) */
 export function applyAudioEdits(dir: string, overrides?: Overrides): boolean {
   if (!existsSync(f.index(dir))) return false
   const html = readFileSync(f.index(dir), 'utf8')
   const o = overrides ?? normalizeOverrides(readJson<Overrides | null>(f.overrides(dir), null))
-  const next = applyLength(applyAudio(html, o), o)
+  const next = applyLayers(applyLength(applyAudio(html, o, audioEnvelopes(dir, html, o)), o), o, videoEffects(dir, o, html))
   if (next === html) return false
   writeText(f.index(dir), next)
   return true
@@ -262,14 +265,17 @@ export async function saveBrief(projectId: string, brief: Brief): Promise<Projec
   return state(projectId)
 }
 
-export async function saveOverrides(projectId: string, overrides: Overrides, summary: string): Promise<ProjectState> {
+export async function saveOverrides(projectId: string, overrides: Overrides, summary: string, actor: 'designer' | 'claude' = 'designer'): Promise<ProjectState> {
   const dir = pathOf(projectId)
+  overrides = normalizeOverrides(overrides)
   writeJson(f.overrides(dir), overrides)
-  writeText(join(f.comp(dir), 'ms', 'overrides.js'), overridesToScript(overrides))
+  // Claude's clips with a speed change show the processed file (videoFx.ts)
+  const html = existsSync(f.index(dir)) ? readFileSync(f.index(dir), 'utf8') : ''
+  writeText(join(f.comp(dir), 'ms', 'overrides.js'), overridesToScript(withProcessedClips(overrides, videoEffects(dir, overrides, html))))
   refreshFontCss(dir, overrides)
   applyAudioEdits(dir, overrides)
   touch(projectId)
-  await history.record(dir, { actor: 'designer', summary })
+  await history.record(dir, { actor, summary })
   return state(projectId)
 }
 

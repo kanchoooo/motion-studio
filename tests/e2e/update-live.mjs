@@ -1,6 +1,7 @@
 // Real auto-update: runs an older packaged app (e.g. 0.2.3) and checks that it
 // downloads the latest GitHub release, installs it and restarts as the new version.
 // UPDATE_APP=<path to older MotionStudio.app> node tests/e2e/update-live.mjs
+import { cleanupOnExit } from './access.mjs'
 import { chromium } from 'playwright-core'
 import { execFileSync, spawn } from 'node:child_process'
 import { mkdirSync, mkdtempSync } from 'node:fs'
@@ -12,7 +13,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const appPath = process.env.UPDATE_APP
 const shots = join(root, 'tests', 'e2e', 'shots-update')
 mkdirSync(shots, { recursive: true })
-const sandbox = mkdtempSync(join(tmpdir(), 'ms-upd-'))
+const sandbox = cleanupOnExit(mkdtempSync(join(tmpdir(), 'ms-upd-')))
 const version = () => execFileSync('/usr/libexec/PlistBuddy', ['-c', 'Print CFBundleShortVersionString', join(appPath, 'Contents', 'Info.plist')]).toString().trim()
 const t0 = Date.now()
 const log = (...a) => console.log(`[${((Date.now() - t0) / 1000).toFixed(0)}s]`, ...a)

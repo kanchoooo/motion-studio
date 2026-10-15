@@ -19,6 +19,8 @@ import { keptArgs, recordGenerated } from '../ai/generated'
 import { sfxLibrary, useBuiltinSfx } from '../audio'
 import { listReferences, nearDuplicates, referenceFramesAt } from '../references'
 import { auditComposition } from '../audit'
+import { isKeyProp, PROPS, unsetStatic } from '@shared/overrides'
+import { mergeDesignerPatch } from '../designerEdits'
 import { fullCheck, lastElements } from '../checks'
 import { listFonts } from '../fonts'
 import * as history from '../history'
@@ -153,21 +155,128 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
 
   server.registerTool(
     'get_designer_edits',
-    { description: "Read the designer's manual edits (they always win over your code) and the editable elements currently detected in the preview." },
+    {
+      description:
+        "Read what the designer did by hand, After Effects style, on top of your composition: locked layers (never change them), edits to your layers (fixed values and keyframes of any property, effects, masks, in-out, text, font, wiggle, counters…), properties of your motion they took over (own), character parts they posed (\"<layer>::<part>\"), the camera (\"__camera\"), layers they added (the ms:layers block), copies, deleted layers, stacking order, groups set free, section speed — and the editable elements detected in the preview.",
+    },
     async () => {
       const { overrides } = st()
+      const keyed = (e: (typeof overrides.elements)[string]) => Object.entries(e.keys ?? {}).filter(([, k]) => k?.length).map(([p, k]) => `${p}: ${k!.length} keys`)
+      const owned = (e: (typeof overrides.elements)[string]) => Object.entries(e.own ?? {}).filter(([, k]) => k?.length).map(([p, k]) => `${p}: ${k!.length} keys`)
       return text(
         JSON.stringify(
           {
-            note: 'Values below are applied on top of your composition and must not be fought or duplicated. Keep the same data-ms-id.',
-            elements: overrides.elements,
+            rules: [
+              'LOCKED layers (locked list) are final: never change, move, retime, restyle, remove or re-create them, in code or CSS, and do not touch what is inside them (their parts and children too). If the designer asks for a change to a locked layer, say it is locked and ask them to unlock it in the timeline.',
+              "The designer's edits sit on top of your code (the app wraps each data-ms-id element). Keep each data-ms-id so they keep applying.",
+              "Never throw the designer's work away to make your change. When what you must change is a value the designer set (it is in edits: a fixed value, keyframes, an own property, a wiggle, a counter, a mask…), change THAT value with update_designer_edits; change your code for everything else. clear_designer_edits is only for when the designer asks you to redo a layer from scratch or to hand it (or some of its properties) back to your code.",
+              "own: properties of YOUR motion the designer took over (GSAP property names on the element itself). They play from the designer's absolute keyframes; your tweens of those properties are ignored. Adjust them with update_designer_edits (own), or hand them back (clear_designer_edits with props) only when asked.",
+              "Character parts are layers \"<character layer>::<part id>\" (x, y in drawing units, rotate about the part's data-pivot, scale): added on top of your acting. A character's acting parameters (--lid, --look-x…) can be owned too.",
+              'The camera ("__camera") moves, zooms (scaleX/scaleY), turns and shakes (wiggle) the whole picture.',
+              'Layers the designer added live in the <!-- ms:layers --> block of index.html, which the app rewrites: never edit that block. Change them with update_designer_edits (layer: text, box, src…; patch: style, keys, effects…).',
+              'freeze: groups the designer set free — their children are placed absolutely by the app at the listed boxes; do not rely on flex/grid flow for them.',
+              'Copies of your layers (duplicates) are made by the app at run time with the original\'s motion; deleted layers are hidden by the app.',
+              'Keyframes: { t: output seconds, v: number or colour, e: ease of the segment that starts here ("linear", "hold", a GSAP ease name, "cubic-bezier(…)") }. Designer properties: see propertyCatalog (x/y are px offsets from where your code places the layer).',
+            ],
+            propertyCatalog: PROPS.map((p) => ({ id: p.id, label: p.label, unit: p.shownUnit ?? p.unit, default: p.def })),
+            locked: Object.entries(overrides.elements).filter(([, e]) => e.locked).map(([id, e]) => ({ id, label: e.label })),
+            edits: Object.fromEntries(
+              Object.entries(overrides.elements).map(([id, e]) => [
+                id,
+                { ...e, keys: undefined, own: undefined, keyframes: keyed(e).length ? keyed(e) : undefined, ownedFromYourCode: owned(e).length ? owned(e) : undefined },
+              ]),
+            ),
+            designerLayers: overrides.layers.map((l) => ({ id: l.id, kind: l.kind, label: l.label, box: [l.x, l.y, l.w, l.h], text: l.text, src: l.src })),
+            duplicates: overrides.duplicates,
+            deleted: Object.entries(overrides.elements).filter(([, e]) => e.deleted).map(([id]) => id),
+            stackingOrder: overrides.order,
+            freeze: overrides.freeze ?? {},
             sectionSpeed: overrides.timeRemap,
             keepTotalDuration: overrides.keepTotalDuration,
+            markers: overrides.markers,
             editableElementsInPreview: lastElements.get(projectId) ?? 'not reported yet',
           },
           null,
           1,
-        ),
+        ).slice(0, 60_000),
+      )
+    },
+  )
+
+  server.registerTool(
+    'update_designer_edits',
+    {
+      description:
+        "Change the designer's own edits of one layer instead of throwing them away: fixed values (transform, style, effects, mask…), keyframes (keys: designer properties; own: properties of your motion they took over), loops, wiggle, a number counter, in/out, text… The patch is merged (a property's keyframe list is replaced as a whole; null removes a field). For a layer the designer added, `layer` changes its text, box or file. Locked layers are refused. Use it to adjust what the designer set, or to animate a layer the designer added.",
+      inputSchema: {
+        id: z.string().describe('data-ms-id, "<layer>::<part>" for a character part, or "__camera"'),
+        patch: z.record(z.string(), z.unknown()).default({}).describe('ElementOverride fields: transform, style, effects, mask, keys, own, loops, wiggle, counter, trim, textAnim, inPoint, outPoint, hidden, label, text, src'),
+        layer: z.record(z.string(), z.unknown()).optional().describe('for a layer the designer added: text, x, y, w, h, src, fit, shape, mediaStart, muted'),
+        reason: z.string().describe('one short Korean line for the history, e.g. "디자이너가 넣은 문구에 등장 모션 추가"'),
+      },
+    },
+    async ({ id, patch, layer, reason }) => {
+      const cur = st().overrides
+      if (cur.elements[id]?.locked) return text(`Refused: "${id}" is locked by the designer. Ask them to unlock it in the timeline.`)
+      const next = structuredClone(cur)
+      const { merged, problems } = mergeDesignerPatch(next.elements[id] ?? {}, patch)
+      next.elements[id] = merged
+      if (layer) {
+        const at = next.layers.findIndex((l) => l.id === id)
+        if (at < 0) problems.push(`"${id}" is not a layer the designer added: layer fields ignored`)
+        else {
+          const allowed = ['text', 'x', 'y', 'w', 'h', 'src', 'fit', 'shape', 'mediaStart', 'muted', 'label']
+          next.layers[at] = { ...next.layers[at], ...Object.fromEntries(Object.entries(layer).filter(([k]) => allowed.includes(k))) }
+        }
+      }
+      await projects.saveOverrides(projectId, next, `Claude가 직접 수정 값을 고쳤어요: ${reason}`, 'claude')
+      return text([`Updated the designer's edits of ${id}.`, ...problems].join('\n'))
+    },
+  )
+
+  server.registerTool(
+    'clear_designer_edits',
+    {
+      description:
+        "Hand a layer (or some of its properties) back to your code: removes the designer's manual edits on these layers (and removes layers / copies the designer added), or with `props` only those properties (designer properties like x, color, blur, or properties of your motion they took over like y, rotation, --mouth-open). Use it only when the designer asks for it. Locked layers are refused.",
+      inputSchema: {
+        ids: z.array(z.string()).min(1).max(100),
+        props: z.array(z.string()).optional().describe('only these properties (otherwise every edit of the layer)'),
+        reason: z.string().describe('one short Korean line for the history, e.g. "로고 위치를 다시 잡으려고"'),
+      },
+    },
+    async ({ ids, props, reason }) => {
+      const cur = st().overrides
+      const refused = ids.filter((id) => cur.elements[id]?.locked)
+      const take = new Set(ids.filter((id) => !refused.includes(id)))
+      const next = structuredClone(cur)
+      if (props?.length) {
+        for (const id of take) {
+          const e = next.elements[id]
+          if (!e) continue
+          const out = unsetStatic(e, props.filter(isKeyProp))
+          for (const p of props) {
+            if (out.own) delete out.own[p]
+            if (out.loops) delete out.loops[`own:${p}` as keyof NonNullable<typeof out.loops>]
+            if (out.wiggle) delete (out.wiggle as Record<string, unknown>)[p]
+          }
+          next.elements[id] = out
+        }
+      } else {
+        for (const id of take) delete next.elements[id]
+        next.layers = next.layers.filter((l) => !take.has(l.id))
+        next.duplicates = next.duplicates.filter((d) => !take.has(d.id))
+        for (const k of Object.keys(next.order)) next.order[k] = next.order[k].filter((id) => !take.has(id) || !cur.layers.some((l) => l.id === id))
+        for (const key of Object.keys(next.motions)) if (take.has(key.slice(0, key.lastIndexOf('#')))) delete next.motions[key]
+      }
+      if (take.size) await projects.saveOverrides(projectId, next, `Claude가 직접 수정을 넘겨받았어요: ${reason}`, 'claude')
+      return text(
+        [
+          take.size ? (props?.length ? `Cleared ${props.join(', ')} on ${[...take].join(', ')}. Your code decides these properties again.` : `Cleared: ${[...take].join(', ')}. Your code decides these layers again.`) : '',
+          refused.length ? `Refused (locked by the designer): ${refused.join(', ')}. Ask them to unlock in the timeline if this is really what they want.` : '',
+        ]
+          .filter(Boolean)
+          .join('\n'),
       )
     },
   )
@@ -745,6 +854,8 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
 export const STUDIO_TOOL_LABELS: Record<string, string> = {
   mcp__studio__get_brief: '브리프를 확인하고 있어요',
   mcp__studio__get_designer_edits: '직접 수정한 내용을 확인하고 있어요',
+  mcp__studio__clear_designer_edits: '직접 수정한 레이어를 넘겨받고 있어요',
+  mcp__studio__update_designer_edits: '직접 수정한 값을 고치고 있어요',
   mcp__studio__get_fonts: '사용할 수 있는 폰트를 살펴보고 있어요',
   mcp__studio__propose_storyboard: '콘티를 정리하고 있어요',
   mcp__studio__check_video: '결과를 점검하고 있어요',

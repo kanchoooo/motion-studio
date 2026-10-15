@@ -1,5 +1,6 @@
 // Motion Studio rules on top of HyperFrames' own checks. Messages are written
 // for Claude (fixable) but phrased so they can also be shown to the designer.
+import { CAMERA_ID, isPartId, PART_SEP } from '@shared/overrides'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { CheckFinding } from '@shared/api'
@@ -92,8 +93,16 @@ export function staticFindings(html: string, brief: Brief, overrides: Overrides,
   if (!html.includes('data-ms-empty') && ids.length === 0) {
     out.push({ severity: 'error', code: 'ms_no_editables', message: '디자이너가 수정할 수 있는 요소(data-ms-id)가 하나도 없어요. 텍스트, 이미지, 도형마다 data-ms-id와 data-ms-label을 붙여 주세요.' })
   }
-  for (const id of Object.keys(overrides.elements)) {
-    if (!seen.has(id)) out.push({ severity: 'warning', code: 'ms_override_orphan', message: `디자이너가 직접 수정한 요소 "${id}"가 영상에서 사라졌어요. 같은 data-ms-id로 다시 만들어 주세요.`, elementId: id })
+  // copies of a layer exist only at run time (ms-runtime.js), with what is inside them ("child@copy")
+  const copies = new Set((overrides.duplicates ?? []).map((d) => d.id))
+  for (const [id, e] of Object.entries(overrides.elements)) {
+    if (seen.has(id) || copies.has(id) || copies.has(id.split('@').pop() ?? '')) continue
+    // the camera and a character's parts ("<layer>::<part>") are not elements of the file
+    if (id === CAMERA_ID || (isPartId(id) && seen.has(id.split(PART_SEP)[0]))) continue
+    // a layer the app named inside a group ("<group>~<path>"): it lives as long as the group does
+    if (id.includes('~') && seen.has(id.split('~')[0])) continue
+    if (e.locked) out.push({ severity: 'error', code: 'ms_locked_removed', message: `디자이너가 잠근 레이어 "${e.label ?? id}"(${id})가 영상에서 사라졌어요. 잠긴 레이어는 지우거나 바꾸면 안 돼요. 같은 data-ms-id로 원래대로 되돌려 주세요.`, elementId: id })
+    else out.push({ severity: 'warning', code: 'ms_override_orphan', message: `디자이너가 직접 수정한 요소 "${id}"가 영상에서 사라졌어요. 같은 data-ms-id로 다시 만들어 주세요.`, elementId: id })
   }
   for (const e of elements ?? []) {
     if (!e.movable) out.push({ severity: 'warning', code: 'ms_not_absolute', message: `"${e.label}"(${e.id})가 position:absolute가 아니라서 디자이너가 위치를 옮길 수 없어요. 절대 위치로 배치해 주세요.`, elementId: e.id })
@@ -110,9 +119,9 @@ export function staticFindings(html: string, brief: Brief, overrides: Overrides,
   for (const l of audit?.loose ?? []) {
     const what = [l.text && `글자("${l.text}")`, l.images && `이미지 ${l.images}개`].filter(Boolean).join('와 ')
     out.push({
-      severity: 'error',
+      severity: 'warning',
       code: 'ms_group_inner_not_editable',
-      message: `"${l.label || l.id}"(${l.id}) 안의 ${what}를 디자이너가 따로 고칠 수 없어요. 그룹 안의 문구·이미지·버튼마다 data-ms-id·data-ms-label·data-ms-type을 붙이고, 그룹 안에서 position:absolute로 배치해 주세요.`,
+      message: `"${l.label || l.id}"(${l.id}) 안의 ${what}에 data-ms-id가 없어요. 앱이 임시 이름("${l.id}~…")을 붙여 디자이너가 고칠 수는 있지만, 코드를 바꾸면 그 이름이 달라질 수 있어요. 그룹 안의 문구·이미지·버튼마다 data-ms-id·data-ms-label·data-ms-type을 붙이고, 그룹 안에서 position:absolute로 배치해 주세요.`,
       elementId: l.id,
     })
   }

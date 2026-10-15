@@ -38,7 +38,7 @@ export const PROP_LABEL: Record<string, string> = {
 
 export const propLabel = (p: string) => PROP_LABEL[p] ?? p
 
-const KIND: Record<RuntimeMotion['type'], string> = { from: '등장', to: '변화', fromTo: '변화' }
+const KIND: Record<RuntimeMotion['type'], string> = { from: '등장', to: '변화', fromTo: '변화', set: '순간 변경', keyframes: '여러 단계', css: 'CSS 애니메이션' }
 
 export function motionLabel(m: Pick<RuntimeMotion, 'type' | 'props'>): string {
   const names = [...new Set(m.props.map((p) => propLabel(p.name)))]
@@ -102,11 +102,12 @@ export function easePath(ease: string, w: number, h: number, pad = 0.2): string 
 }
 
 /** "120px" → { n: 120, unit: "px" }; non-numeric values are not editable */
-export function parseValue(v: number | string | undefined): { n: number; unit: string } | null {
+/** a number with its unit; relative values ("+=100", "-=20px") keep their sign word */
+export function parseValue(v: number | string | undefined): { n: number; unit: string; rel?: '+=' | '-=' } | null {
   if (typeof v === 'number') return { n: v, unit: '' }
   if (typeof v !== 'string') return null
-  const m = v.trim().match(/^(-?\d*\.?\d+)([a-z%]*)$/i)
-  return m ? { n: Number(m[1]), unit: m[2] } : null
+  const m = v.trim().match(/^([+-]=)?\s*(-?\d*\.?\d+)([a-z%]*)$/i)
+  return m ? { n: Number(m[2]), unit: m[3], ...(m[1] ? { rel: m[1] as '+=' | '-=' } : {}) } : null
 }
 
-export const formatValue = (n: number, unit: string): number | string => (unit ? `${n}${unit}` : n)
+export const formatValue = (n: number, unit: string, rel?: '+=' | '-='): number | string => (rel ? `${rel}${n}${unit}` : unit ? `${n}${unit}` : n)

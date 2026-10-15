@@ -1,7 +1,7 @@
 // End-to-end smoke test: launches the built app, walks the main designer flow
 // and saves screenshots to tests/e2e/shots/. Run: npm run build && node tests/e2e/smoke.mjs
 import { _electron as electron, chromium } from 'playwright-core'
-import { grantAccess } from './access.mjs'
+import { grantAccess, cleanupOnExit } from './access.mjs'
 import { spawn } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const shots = join(root, 'tests', 'e2e', 'shots')
 mkdirSync(shots, { recursive: true })
-const sandbox = mkdtempSync(join(tmpdir(), 'ms-e2e-'))
+const sandbox = cleanupOnExit(mkdtempSync(join(tmpdir(), 'ms-e2e-')))
 const keep = process.argv.includes('--keep')
 const only = process.argv.find((a) => a.startsWith('--until='))?.split('=')[1]
 

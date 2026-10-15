@@ -186,8 +186,9 @@ export function ColorField({ value, onChange }: { value: string; onChange: (v: s
     <div className="row" style={{ gap: 6 }}>
       <input
         type="color"
-        value={/^#[0-9a-f]{6}$/i.test(value) ? value : '#000000'}
-        onChange={(e) => onChange(e.target.value)}
+        value={/^#[0-9a-f]{6}([0-9a-f]{2})?$/i.test(value) ? value.slice(0, 7) : '#000000'}
+        // the picker has no transparency: keep the one the colour had
+        onChange={(e) => onChange(e.target.value + (/^#[0-9a-f]{8}$/i.test(value) ? value.slice(7) : ''))}
         style={{ width: 32, height: 30, padding: 0, border: '1px solid var(--border)', borderRadius: 6, background: 'none', cursor: 'pointer' }}
       />
       <input className="input mono" value={value} onChange={(e) => onChange(e.target.value)} style={{ height: 30 }} />

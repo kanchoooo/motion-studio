@@ -144,7 +144,7 @@ try {
   check('motions are listed', motions.length >= 3)
   const m = motions.find((x) => x.owners[0] === target.id) ?? motions[0]
   await win.locator(`[data-layer="${m.owners[0]}"]`).click()
-  await win.getByTestId('inspector').getByRole('button', { name: '모션', exact: true }).click()
+  await win.getByTestId('inspector').getByRole('button', { name: 'Claude 모션', exact: true }).click()
   await win.getByTestId('inspector').locator('button').filter({ hasText: /등장|변화/ }).first().click()
   await win.getByTestId('inspector').getByRole('button', { name: /탄성|통통 튀기/ }).first().click()
   const len = win.getByTestId('inspector').locator('.num').filter({ hasText: '길이' }).locator('input')

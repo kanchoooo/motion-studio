@@ -1,21 +1,49 @@
 // The preview is a plain iframe served by the local preview server with the
 // HyperFrames runtime injected; transport and element queries go through the
 // ms-runtime postMessage bridge, so it works across origins (dev and packaged).
+import { CAMERA_ID, type Keyframe } from '@shared/overrides'
+import { useStore } from '../../store'
 
 export interface RuntimeElement {
   id: string
   label: string
   type: string
+  /** html tag (img, video, div…) */
+  tag: string
+  /** a layer the designer added ('text', 'shape'…) or a copy of Claude's ('copy'); null for Claude's own */
+  designer: string | null
+  /** for a copy: the layer it copies */
+  copyOf: string | null
   /** enclosing editable element (group), null at the top level */
   parent: string | null
   depth: number
+  /** siblings that stack together share this key; rank 0 is the top of that stack */
+  stack: string
+  rank: number
   movable: boolean
   /** false for nested elements in normal flow: they move, but do not scale/rotate */
   transformable: boolean
   visible: boolean
+  /** on-screen box now (composition px) */
   rect: { x: number; y: number; w: number; h: number }
+  /** box at rest without the designer's transform (composition px) */
+  base: { x: number; y: number; w: number; h: number } | null
+  /** where it scales and rotates around (composition px) */
+  pivot: { x: number; y: number } | null
+  /** its own coordinates (where its mask is drawn) → composition px, now: CSS matrix [a, b, c, d, e, f] */
+  local?: Affine | null
+  /** composition px per px of the layer's own units (a character part's drawing units; 1 elsewhere) */
+  unit?: number
+  /** a character's acting parameters (SvgRig): CSS variables --<name> on the layer */
+  rig?: { name: string; def: number }[] | null
+  /** picture / clip it shows */
+  src?: string
   text?: string
-  style: { fontFamily: string; fontSize: number; fontWeight: number; letterSpacing: number; lineHeight: number; color: string; textAlign: string }
+  /** a styled line's parts in order (when it has a few) */
+  runs?: string[]
+  /** a layer the app named itself (text or a picture Claude left without an id) */
+  auto?: boolean
+  style: { fontFamily: string; fontSize: number; fontWeight: number; letterSpacing: number; lineHeight: number; color: string; textAlign: string; background: string; radius: number }
 }
 
 export interface PlayerState {
@@ -116,14 +144,25 @@ export async function queryTiming(p: MsPlayer | null): Promise<ElementTiming[]> 
 /** one authored motion (GSAP tween) as reported by the runtime */
 export interface RuntimeMotion {
   key: string
+  /** where the designer's edit of it is stored (its key when it was edited; Claude may have moved it since) */
+  editKey: string
   owners: string[]
-  type: 'to' | 'from' | 'fromTo'
+  /** the layer it moves itself (every target is that element), else null */
+  self: string | null
+  type: 'to' | 'from' | 'fromTo' | 'set' | 'keyframes' | 'css'
   sig: string
-  props: { name: string; from?: number | string; to?: number | string; editable: boolean }[]
+  /** owned = the designer took this property over (it plays from their keyframes); color = a colour value */
+  props: { name: string; from?: number | string; to?: number | string; editable: boolean; owned?: boolean; color?: boolean }[]
   /** authored easing ('' = GSAP default) and per-item length */
   ease: string
   duration: number
   stagger: boolean
+  staggerEach: number | null
+  staggerFrom: string
+  /** how many things it moves one after another */
+  staggerCount: number
+  repeat: number
+  yoyo: boolean
   shift: number
   edited: boolean
   disabled: boolean
@@ -139,7 +178,56 @@ export async function queryMotions(p: MsPlayer | null): Promise<{ items: Runtime
   return { items: r?.items ?? [], stale: r?.stale ?? [] }
 }
 
-export async function queryElements(p: MsPlayer | null): Promise<RuntimeElement[]> {
-  const r = await ask<{ items: RuntimeElement[] }>(p, { ms: 'elements' })
-  return r?.items ?? []
+/** the editable elements now; null when the preview did not answer (keep what you have) */
+export async function queryElements(p: MsPlayer | null): Promise<RuntimeElement[] | null> {
+  const r = await ask<{ items: RuntimeElement[] }>(p, { ms: 'elements' }, 3000)
+  return r ? [...r.items, cameraElement()] : null
+}
+
+/** the camera: a layer of the editor's own (its transform moves the whole picture) */
+export function cameraElement(): RuntimeElement {
+  const out = useStore.getState().project?.brief.output
+  const W = out?.width ?? 1920
+  const H = out?.height ?? 1080
+  return {
+    id: CAMERA_ID, label: '카메라', type: 'camera', tag: 'camera', designer: null, copyOf: null, parent: null, depth: 0,
+    stack: '__camera', rank: 0, movable: true, transformable: true, visible: true,
+    rect: { x: 0, y: 0, w: W, h: H }, base: { x: 0, y: 0, w: W, h: H }, pivot: { x: W / 2, y: H / 2 }, local: null,
+    style: { fontFamily: '', fontSize: 0, fontWeight: 400, letterSpacing: 0, lineHeight: 1.2, color: '', textAlign: '', background: '', radius: 0 },
+  }
+}
+
+/** Claude's motion of a layer as keyframes per GSAP property, read from the timeline (for taking it over) */
+export async function claudeTracks(p: MsPlayer | null, id: string, props?: string[]): Promise<Record<string, Keyframe[]>> {
+  const r = await ask<{ tracks: Record<string, Keyframe[]> }>(p, { ms: 'claude-tracks', id, props }, 4000)
+  return r?.tracks ?? {}
+}
+
+/** GSAP properties of a layer at this moment (the inspector's numbers for Claude's motion) */
+export async function propsNow(p: MsPlayer | null, id: string, props: string[]): Promise<Record<string, number | string>> {
+  if (!props.length) return {}
+  const r = await ask<{ values: Record<string, number | string> }>(p, { ms: 'props-now', id, props }, 800)
+  return r?.values ?? {}
+}
+
+/** the editor's solo switch: only these layers show in the preview (nothing is saved) */
+export function soloLayers(p: MsPlayer | null, ids: string[]) {
+  return ask(p, { ms: 'solo', ids })
+}
+
+/** editable layers painted at a composition point, top first */
+export async function hitTest(p: MsPlayer | null, x: number, y: number): Promise<string[]> {
+  const r = await ask<{ ids: string[] }>(p, { ms: 'hit', x, y }, 400)
+  return r?.ids ?? []
+}
+
+/** a 2D affine map in CSS matrix order: x' = a·x + c·y + e, y' = b·x + d·y + f */
+export type Affine = [number, number, number, number, number, number]
+export const applyAffine = (m: Affine, x: number, y: number) => ({ x: m[0] * x + m[2] * y + m[4], y: m[1] * x + m[3] * y + m[5] })
+export function invertAffine(m: Affine, x: number, y: number): { x: number; y: number } | null {
+  const det = m[0] * m[3] - m[1] * m[2]
+  if (Math.abs(det) < 1e-9) return null
+  const dx = x - m[4]
+  const dy = y - m[5]
+  return { x: (m[3] * dx - m[2] * dy) / det, y: (-m[1] * dx + m[0] * dy) / det }
 }

@@ -54,7 +54,8 @@ describe('staticFindings', () => {
       stale: ['title#2'],
     })
     const g = f.find((x) => x.code === 'ms_group_inner_not_editable')
-    expect(g?.severity).toBe('error')
+    // the app names them itself ("phone~…"), so the designer can edit them: a warning for Claude
+    expect(g?.severity).toBe('warning')
     expect(g?.message).toContain('폰 목업')
     expect(g?.message).toContain('이미지 1개')
     expect(f.find((x) => x.code === 'ms_motion_edit_stale')?.severity).toBe('info')

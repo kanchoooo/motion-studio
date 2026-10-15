@@ -9,10 +9,10 @@ import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import sharp from 'sharp'
-import { grantAccess, toHome } from './access.mjs'
+import { grantAccess, toHome, cleanupOnExit } from './access.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
-const sandbox = mkdtempSync(join(tmpdir(), 'ms-charpkg-'))
+const sandbox = cleanupOnExit(mkdtempSync(join(tmpdir(), 'ms-charpkg-')))
 const exec = process.env.MS_APP_EXEC
 const env = { ...process.env, MS_PROJECTS_DIR: join(sandbox, 'projects'), MS_USER_DATA: join(sandbox, 'userdata'), MS_NO_UPDATE: '1' }
 grantAccess(join(sandbox, 'userdata'))

@@ -1,10 +1,32 @@
 // Several elements picked at once (Shift/⌘ click): the first one picked is the
 // reference whose values are shown; a change goes to every picked element.
-import { AlignCenter, AlignLeft, AlignRight, Eye, EyeOff, RotateCcw, X } from 'lucide-react'
+import {
+  AlignCenter,
+  AlignCenterHorizontal,
+  AlignCenterVertical,
+  AlignEndHorizontal,
+  AlignEndVertical,
+  AlignHorizontalDistributeCenter,
+  AlignLeft,
+  AlignRight,
+  AlignStartHorizontal,
+  AlignStartVertical,
+  AlignVerticalDistributeCenter,
+  Copy,
+  Eye,
+  EyeOff,
+  Lock,
+  RotateCcw,
+  Trash2,
+  Unlock,
+  X,
+} from 'lucide-react'
+import { valueAt } from '@shared/overrides'
 import type { ElementOverride } from '@shared/overrides'
 import { FontSelect } from '../../components/FontSelect'
 import { ColorField, NumberField, Segmented } from '../../components/ui'
 import { useStore } from '../../store'
+import { align, deleteSelection, distribute, duplicateSelection, labelOf, setProps, toggleLockSelection } from './edit'
 import { useEditor } from './editorStore'
 import { rgbToHex, useOverrides } from './overrides'
 import type { RuntimeElement } from './player'
@@ -15,7 +37,7 @@ export function MultiEditor() {
   const { fonts } = useStore()
   const { elements, selection, select } = useEditor()
   const { value: ov, patchElements } = useOverrides()
-  const picked = selection.map((id) => elements.find((e) => e.id === id)).filter((e): e is RuntimeElement => !!e)
+  const picked = selection.map((id) => elements.find((e) => e.id === id)).filter((e): e is RuntimeElement => !!e).map((e) => ({ ...e, label: labelOf(e.id) }))
   const texts = picked.filter((e) => e.type === 'text')
   const scalable = picked.filter((e) => e.movable && e.transformable !== false)
   const o = (id: string) => ov?.elements[id] ?? {}
@@ -40,7 +62,7 @@ export function MultiEditor() {
   const applyText = (patch: NonNullable<ElementOverride['style']>, key: string) =>
     patchElements(texts.map((e) => ({ id: e.id, label: e.label, patch: { style: patch } })), [key])
 
-  const t0 = scalable[0] ? (o(scalable[0].id).transform ?? {}) : {}
+  const time = useEditor((s) => s.time)
   const allHidden = picked.every((e) => o(e.id).hidden)
   const fam = refStyle && fonts.find((f) => f.family === refStyle.fontFamily || f.familyKo === refStyle.fontFamily)
 
@@ -63,7 +85,52 @@ export function MultiEditor() {
           </span>
         ))}
       </div>
-      <div className="tiny muted">값을 바꾸면 고른 요소에 모두 같게 들어가요. 캔버스에서 끌면 함께 움직여요. (Shift/⌘ 클릭으로 더하거나 빼요)</div>
+      <div className="tiny muted">값을 바꾸면 고른 레이어에 모두 같게 들어가요. 캔버스에서 끌면 함께 움직여요. (Shift/⌘ 클릭으로 더하거나 빼요)</div>
+
+      <div className="col" style={{ gap: 6, paddingBottom: 12, borderBottom: '1px solid var(--border)' }} data-testid="align-tools">
+        <div className="section-label">정렬 · 분배</div>
+        <div className="row" style={{ gap: 2, flexWrap: 'wrap' }}>
+          <button className="icon-btn" title="왼쪽 맞춤" onClick={() => align('left')} data-testid="align-left">
+            <AlignStartVertical size={15} />
+          </button>
+          <button className="icon-btn" title="가로 가운데 맞춤" onClick={() => align('hcenter')}>
+            <AlignCenterVertical size={15} />
+          </button>
+          <button className="icon-btn" title="오른쪽 맞춤" onClick={() => align('right')}>
+            <AlignEndVertical size={15} />
+          </button>
+          <button className="icon-btn" title="위쪽 맞춤" onClick={() => align('top')} data-testid="align-top">
+            <AlignStartHorizontal size={15} />
+          </button>
+          <button className="icon-btn" title="세로 가운데 맞춤" onClick={() => align('vcenter')}>
+            <AlignCenterHorizontal size={15} />
+          </button>
+          <button className="icon-btn" title="아래쪽 맞춤" onClick={() => align('bottom')}>
+            <AlignEndHorizontal size={15} />
+          </button>
+          <span style={{ width: 8 }} />
+          <button className="icon-btn" title="가로 간격 똑같이 (3개 이상)" disabled={picked.length < 3} onClick={() => distribute('h')} data-testid="distribute-h">
+            <AlignHorizontalDistributeCenter size={15} />
+          </button>
+          <button className="icon-btn" title="세로 간격 똑같이 (3개 이상)" disabled={picked.length < 3} onClick={() => distribute('v')}>
+            <AlignVerticalDistributeCenter size={15} />
+          </button>
+        </div>
+        <div className="row" style={{ gap: 4 }}>
+          <button className="btn sm" onClick={duplicateSelection} title="복제 (⌘D)">
+            <Copy size={12} />
+            복제
+          </button>
+          <button className="btn sm" onClick={deleteSelection} title="삭제 (Delete)">
+            <Trash2 size={12} />
+            삭제
+          </button>
+          <button className="btn sm" onClick={toggleLockSelection} title="잠금 (⌘L)">
+            {picked.every((e) => o(e.id).locked) ? <Unlock size={12} /> : <Lock size={12} />}
+            {picked.every((e) => o(e.id).locked) ? '잠금 해제' : '잠그기'}
+          </button>
+        </div>
+      </div>
 
       {ref && refStyle && (
         <div className="col" style={{ gap: 8, paddingBottom: 14, borderBottom: '1px solid var(--border)' }}>
@@ -117,19 +184,28 @@ export function MultiEditor() {
               title="크기 배율"
               label="크기"
               unit="%"
-              value={Math.round((t0.scale ?? 1) * 100)}
-              min={5}
+              value={Math.round(valueAt(o(scalable[0].id), 'scaleX', time) * 100)}
+              min={1}
               max={1000}
-              onChange={(v) => patchElements(scalable.map((e) => ({ id: e.id, label: e.label, patch: { transform: { scale: v / 100 } } })), ['scale'])}
+              onChange={(v) => setProps(scalable.map((e) => ({ id: e.id, values: { scaleX: v / 100, scaleY: v / 100 } })), ['scaleX'])}
             />
             <NumberField
               title="회전"
               label="회전"
               unit="°"
-              value={t0.rotate ?? 0}
+              value={valueAt(o(scalable[0].id), 'rotate', time)}
               min={-360}
               max={360}
-              onChange={(rotate) => patchElements(scalable.map((e) => ({ id: e.id, label: e.label, patch: { transform: { rotate } } })), ['rotate'])}
+              onChange={(rotate) => setProps(scalable.map((e) => ({ id: e.id, values: { rotate } })), ['rotate'])}
+            />
+            <NumberField
+              title="불투명도"
+              label="불투명"
+              unit="%"
+              value={Math.round(valueAt(o(scalable[0].id), 'opacity', time) * 100)}
+              min={0}
+              max={100}
+              onChange={(p) => setProps(scalable.map((e) => ({ id: e.id, values: { opacity: p / 100 } })), ['opacity'])}
             />
           </div>
         </div>

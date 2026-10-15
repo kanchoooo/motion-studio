@@ -133,12 +133,15 @@
   /** put a part just above or below another one (moves the element only when the order changes). A part inside
    *  a group (a hand in its arm) moves with its whole branch, so it never leaves the group it turns with */
   function layer(root, id, refId, where) {
-    var el = byId(root, id), ref = byId(root, refId); if (!el || !ref || el === ref) return
+    var el = outer(byId(root, id)), ref = outer(byId(root, refId)); if (!el || !ref || el === ref) return
     while (el && el.parentNode !== ref.parentNode) el = el.parentNode
     if (!el || el === ref || !el.parentNode || el === root) return
     if (where === 'below') { if (el.nextElementSibling !== ref) ref.parentNode.insertBefore(el, ref) }
     else if (ref.nextElementSibling !== el) ref.parentNode.insertBefore(el, ref.nextSibling)
   }
+
+  /** Motion Studio wraps each tagged part in a <g> the designer poses: order by that wrapper */
+  function outer(n) { var p = n && n.parentNode; return p && p.getAttribute && p.hasAttribute('data-ms-part') ? p : n }
 
   var CHARS = []
   var SvgRig = {
@@ -149,6 +152,8 @@
       for (var k in defs) if (host.style.getPropertyValue('--' + k) === '') host.style.setProperty('--' + k, String(defs[k]))
       CHARS.push({ host: host, keys: Object.keys(defs), defs: defs, render: render })
     },
+    /** the registered characters and their acting parameters (Motion Studio's character controls) */
+    chars: function () { return CHARS.map(function (c) { return { host: c.host, defs: c.defs } }) },
     drawAll: function (t) {
       CHARS.forEach(function (c) {
         var P = {}

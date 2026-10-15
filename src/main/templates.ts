@@ -169,6 +169,11 @@ export async function applySlots(projectDir: string, slots: TemplateSlot[], valu
     copyFileSync(v.file, dst)
     const rel = `assets/${basename(dst)}`
     html = setAttr(html, media.at, 'src', rel)
+    // a layer the designer added keeps its file in overrides (the app rewrites its HTML from there),
+    // and a picture the designer swapped by hand would cover the new one
+    const own = overrides.layers.find((l) => l.id === slot.id)
+    if (own) own.src = rel
+    if (overrides.elements[slot.id]?.src) delete overrides.elements[slot.id].src
     const meta = await probeMedia(dst)
     if (slot.kind === 'voice' || slot.kind === 'video') {
       // the new file is the element's own now: an earlier audio edit of the designer must not put the old one back

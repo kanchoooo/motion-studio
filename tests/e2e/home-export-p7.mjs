@@ -9,7 +9,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { grantAccess, toHome } from './access.mjs'
+import { grantAccess, toHome, cleanupOnExit } from './access.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const sandbox = process.env.MS_SANDBOX
@@ -51,7 +51,7 @@ try {
   const gone = join(tmpdir(), `ms-missing-${Date.now()}`)
   const early = await win.evaluate(([id, dir]) => window.studio.renders.start(id, { format: 'mp4-h264', quality: 'draft', fileName: 'x', copyTo: dir }).then(() => 'started', (e) => e.message), [p.id, gone])
   check('a missing folder is reported before rendering', /저장 위치를 찾을 수 없어요/.test(early), early)
-  const out = mkdtempSync(join(tmpdir(), 'ms-out-'))
+  const out = cleanupOnExit(mkdtempSync(join(tmpdir(), 'ms-out-')))
   const name = `folder-check-${Date.now()}`
   writeFileSync(join(out, `${name}.mp4`), 'designer file')
   const done = await win.evaluate(

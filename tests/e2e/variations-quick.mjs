@@ -3,7 +3,7 @@
 import { grantAccess, toHome } from './access.mjs'
 import { _electron as electron } from 'playwright-core'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -22,13 +22,15 @@ const shot = async (n) => {
   await win.screenshot({ path: join(shots, `${n}.png`) })
   log('shot', n)
 }
+// the variations are made in the shared sandbox: they go again at the end so other tests see only the original
+let created = []
 const probe = (f) => execFileSync(ffprobe, ['-v', 'error', '-show_entries', 'stream=codec_type,width,height:format=duration', '-of', 'compact', f], { encoding: 'utf8' }).trim().replace(/\n/g, ' | ')
 try {
   await toHome(win)
   const list = await win.evaluate(() => window.studio.projects.list())
   const original = list.find((p) => !p.family)
   await win.evaluate((p) => window.studio.projects.open(p), original.path)
-  const created = await win.evaluate((id) => window.studio.variations.create(id, { base: { kind: 'current' }, targets: [
+  created = await win.evaluate((id) => window.studio.variations.create(id, { base: { kind: 'current' }, targets: [
     { preset: 'youtube-16x9', width: 1920, height: 1080, duration: 6, lengthMethod: 'retime' },
     { preset: 'custom', width: 1280, height: 720, duration: 8 },
   ] }), original.id)
@@ -56,4 +58,5 @@ try {
   process.exitCode = 1
 } finally {
   await app.close().catch(() => {})
+  for (const c of created) rmSync(c.path, { recursive: true, force: true })
 }

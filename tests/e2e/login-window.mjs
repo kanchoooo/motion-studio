@@ -7,10 +7,10 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { grantAccess, toHome } from './access.mjs'
+import { grantAccess, toHome, cleanupOnExit } from './access.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
-const sandbox = mkdtempSync(join(tmpdir(), 'ms-login-'))
+const sandbox = cleanupOnExit(mkdtempSync(join(tmpdir(), 'ms-login-')))
 const shots = join(root, 'tests', 'e2e', 'shots')
 let failed = 0
 const check = (name, ok, detail = '') => {

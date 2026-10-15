@@ -113,6 +113,8 @@ export interface AudioClipInfo {
   originalSrc: string
   start: number
   duration?: number
+  /** where in the file playback starts (seconds) */
+  mediaStart?: number
   volume: number
   /** added by the designer in Motion Studio (not by Claude) */
   managed: boolean

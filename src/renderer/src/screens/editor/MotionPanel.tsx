@@ -1,7 +1,9 @@
 // Motion tab: every authored motion of the selected element, and a detailed
 // editor for one motion (start, length, easing with curve preview, values, on/off).
-import { AlertTriangle, ArrowLeft, Lock, RotateCcw } from 'lucide-react'
-import { NumberField, Toggle } from '../../components/ui'
+import { useState } from 'react'
+import { AlertTriangle, ArrowLeft, Download, Lock, RotateCcw } from 'lucide-react'
+import { ColorField, NumberField, Segmented, Toggle } from '../../components/ui'
+import { takeOver } from './edit'
 import { useEditor } from './editorStore'
 import { DEFAULT_EASE, EASES, easeLabel, easePath, formatValue, motionLabel, parseValue, propLabel } from './motionInfo'
 import { useOverrides } from './overrides'
@@ -47,16 +49,17 @@ export function MotionPanel() {
             <button
               key={x.key}
               className="row"
+              data-testid={`motion-${x.key}`}
               onClick={() => useEditor.setState({ selectedMotion: x.key, openLayers: [...new Set([...useEditor.getState().openLayers, x.owners[0]])] })}
               style={{ border: '1px solid var(--border)', background: 'var(--surface-2)', borderRadius: 8, padding: '8px 10px', cursor: 'pointer', color: 'var(--text)', textAlign: 'left', opacity: x.disabled ? 0.55 : 1 }}
             >
               <svg width={34} height={22} viewBox="0 0 34 22" style={{ flex: 'none' }}>
-                <path d={easePath(ov?.motions[x.key]?.ease ?? x.ease, 34, 22)} fill="none" stroke="var(--warning)" strokeWidth={1.6} />
+                <path d={easePath(ov?.motions[x.editKey]?.ease ?? x.ease, 34, 22)} fill="none" stroke="var(--warning)" strokeWidth={1.6} />
               </svg>
               <div className="col grow" style={{ gap: 1, minWidth: 0 }}>
                 <span className="small ellipsis">{motionLabel(x)}</span>
                 <span className="tiny faint">
-                  {x.start.toFixed(2)}~{x.end.toFixed(2)}초 · {easeLabel(ov?.motions[x.key]?.ease ?? x.ease)}
+                  {x.start.toFixed(2)}~{x.end.toFixed(2)}초 · {easeLabel(ov?.motions[x.editKey]?.ease ?? x.ease)}
                 </span>
               </div>
               {x.edited && <Lock size={11} color="var(--accent)" />}
@@ -70,13 +73,13 @@ export function MotionPanel() {
 
 function MotionEditor({ m }: { m: RuntimeMotion }) {
   const { value: ov, patchMotion } = useOverrides()
-  const o = ov?.motions[m.key]?.sig === m.sig ? ov.motions[m.key] : undefined
+  const o = ov?.motions[m.editKey]?.sig === m.sig ? ov.motions[m.editKey] : undefined
   const label = motionLabel(m)
   const start = m.authoredStart + (o?.shift ?? 0)
   const duration = o?.duration ?? m.duration
   const ease = o?.ease ?? (m.ease || DEFAULT_EASE)
   const off = !!o?.disabled
-  const set = (patch: Parameters<typeof patchMotion>[2], what: string) => patchMotion(m.key, m.sig, patch, `${label}: ${what}`)
+  const set = (patch: Parameters<typeof patchMotion>[2], what: string) => patchMotion(m.editKey, m.sig, patch ? { ...patch, at: m.authoredStart } : patch, `${label}: ${what}`)
 
   return (
     <div className="col" style={{ gap: 10 }}>
@@ -86,14 +89,14 @@ function MotionEditor({ m }: { m: RuntimeMotion }) {
         </button>
         <span className="ellipsis grow" style={{ fontWeight: 650 }}>{label}</span>
         {o && (
-          <button className="btn ghost sm" title="이 모션의 조정을 모두 되돌려요" onClick={() => patchMotion(m.key, m.sig, null, `${label}: 조정 되돌리기`)}>
+          <button className="btn ghost sm" title="이 모션의 조정을 모두 되돌려요" onClick={() => patchMotion(m.editKey, m.sig, null, `${label}: 조정 되돌리기`)}>
             <RotateCcw size={11} />
             초기화
           </button>
         )}
       </div>
       {m.owners.length > 1 && <div className="tiny muted">요소 {m.owners.length}개가 함께 움직이는 모션이에요. 바꾸면 모두 같이 바뀌어요.</div>}
-      {m.stagger && <div className="tiny muted">글자·요소마다 차례로 시작하는 모션이에요. 길이는 하나하나의 길이예요.</div>}
+      {m.stagger && <StaggerEditor m={m} stagger={o?.stagger} onChange={(stagger, what) => set({ stagger }, what)} />}
 
       <div className="row small">
         <Toggle on={!off} onChange={(v) => set({ disabled: !v }, v ? '다시 켜기' : '끄기')} />
@@ -136,6 +139,9 @@ function MotionEditor({ m }: { m: RuntimeMotion }) {
         {m.props.map((p) => (
           <ValueRow key={p.name} m={m} p={p} values={o?.values ?? {}} onChange={(side, v) => set({ values: { [`${side}.${p.name}`]: v } }, `${propLabel(p.name)} ${side === 'from' ? '시작 값' : '끝 값'}`)} />
         ))}
+        {m.self && m.type !== 'css' && (
+          <div className="tiny muted">값을 시점마다 직접 다루려면 레이어 탭의 "Claude가 만든 움직임"에서 가져오기를 눌러요. 그러면 이 움직임이 키프레임(◆)이 돼요.</div>
+        )}
       </div>
     </div>
   )
@@ -153,21 +159,103 @@ function ValueRow({ m, p, values, onChange }: { m: RuntimeMotion; p: RuntimeMoti
       <div style={{ display: 'grid', gridTemplateColumns: `repeat(${sides.length}, 1fr)`, gap: 6 }}>
         {sides.map((side) => {
           const cur = values[`${side}.${p.name}`] ?? p[side]
-          const parsed = p.editable ? parseValue(cur) : null
-          if (!parsed) return <div key={side} className="small faint mono" title="코드로 계산되는 값이라 여기서 바꿀 수 없어요">{String(cur ?? '—')}</div>
+          const parsed = parseValue(cur)
+          if (typeof cur === 'string' && /^(#|rgb|hsl)/i.test(cur.trim())) return <ColorField key={side} value={cur} onChange={(c) => onChange(side, c)} />
+          if (!parsed) {
+            // computed in code (a function, random(), an object): fixed values once taken over as keyframes
+            if (cur === 'ƒ' || cur === '…' || cur == null) return <ComputedValue key={side} m={m} prop={p.name} shown={String(cur ?? '—')} />
+            return <TextValue key={side} value={String(cur)} onChange={(v) => onChange(side, v)} />
+          }
           return (
             <NumberField
               key={side}
               title={side === 'from' ? '시작 값' : '끝 값'}
-              label={sides.length > 1 ? (side === 'from' ? '시작' : '끝') : side === 'from' ? '시작' : '끝'}
+              label={`${side === 'from' ? '시작' : '끝'}${parsed.rel ? ` ${parsed.rel}` : ''}`}
               unit={parsed.unit || undefined}
               value={parsed.n}
               step={p.name === 'opacity' || p.name === 'autoAlpha' || p.name.startsWith('scale') ? 0.05 : 1}
               precision={p.name === 'opacity' || p.name === 'autoAlpha' || p.name.startsWith('scale') ? 2 : 1}
-              onChange={(n) => onChange(side, formatValue(n, parsed.unit))}
+              onChange={(n) => onChange(side, formatValue(n, parsed.unit, parsed.rel))}
             />
           )
         })}
+      </div>
+    </div>
+  )
+}
+
+/** a value written as text (a clip shape, a filter…): GSAP goes between two of the same form */
+function TextValue({ value, onChange }: { value: string; onChange(v: string): void }) {
+  const [draft, setDraft] = useState<string | null>(null)
+  return (
+    <input
+      className="input mono"
+      style={{ height: 28, fontSize: 11 }}
+      value={draft ?? value}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        if (draft != null && draft !== value) onChange(draft)
+        setDraft(null)
+      }}
+      onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+      title="같은 모양의 값으로 바꿔요 (예: inset(0 50% 0 0))"
+    />
+  )
+}
+
+/** a value Claude's code computes: taken over, it becomes keyframes with the numbers it really has */
+function ComputedValue({ m, prop, shown }: { m: RuntimeMotion; prop: string; shown: string }) {
+  const [busy, setBusy] = useState(false)
+  if (!m.self) return <div className="small faint mono" title="여러 레이어를 함께 움직이는 코드 값이라 여기서 바꿀 수 없어요">{shown}</div>
+  return (
+    <button
+      className="btn ghost sm"
+      style={{ height: 26 }}
+      disabled={busy}
+      title="코드로 계산되는 값이에요. 가져오면 실제 값이 키프레임이 되어 고칠 수 있어요"
+      onClick={() => {
+        setBusy(true)
+        void takeOver(m.self!, [prop]).finally(() => setBusy(false))
+      }}
+    >
+      <Download size={11} />
+      키프레임으로 가져와 고정하기
+    </button>
+  )
+}
+
+/** a staggered motion (letters, items one after another): spacing, where it starts, extra delay per item */
+function StaggerEditor({ m, stagger, onChange }: { m: RuntimeMotion; stagger: { each?: number; from?: 'start' | 'center' | 'end' | 'edges'; offsets?: Record<number, number> } | undefined; onChange(s: NonNullable<typeof stagger>, what: string): void }) {
+  const each = stagger?.each ?? m.staggerEach ?? 0.05
+  const from = stagger?.from ?? ((['start', 'center', 'end', 'edges'] as const).find((f) => f === m.staggerFrom) ?? 'start')
+  const offsets = stagger?.offsets ?? {}
+  const n = Math.min(60, Math.max(1, m.staggerCount))
+  const [item, setItem] = useState(0)
+  return (
+    <div className="col" style={{ gap: 6, padding: 8, borderRadius: 6, background: 'var(--surface-2)' }} data-testid="stagger">
+      <div className="tiny muted">글자·요소 {m.staggerCount}개가 차례로 움직여요. 길이는 하나하나의 길이예요.</div>
+      <NumberField title="하나와 다음 하나 사이" label="간격" unit="초" min={0} step={0.01} precision={3} value={each} onChange={(v) => onChange({ ...stagger, each: v }, `간격 ${v}초`)} />
+      <Segmented
+        full
+        value={from}
+        onChange={(v) => onChange({ ...stagger, each, from: v }, '시작 위치')}
+        options={[
+          { value: 'start', label: '앞부터' },
+          { value: 'center', label: '가운데부터' },
+          { value: 'end', label: '끝부터' },
+          { value: 'edges', label: '양끝부터' },
+        ]}
+      />
+      <div className="row small" style={{ gap: 6 }}>
+        <span>따로 늦추기</span>
+        <select className="select" style={{ height: 26, width: 80 }} value={item} onChange={(e) => setItem(Number(e.target.value))} data-testid="stagger-item">
+          {Array.from({ length: n }, (_, i) => (
+            <option key={i} value={i}>
+              {i + 1}번째
+            </option>
+          ))}
+        </select>
+        <NumberField title="이 하나만 더 늦게(+) / 빨리(−)" unit="초" step={0.05} precision={2} value={offsets[item] ?? 0} onChange={(v) => onChange({ ...stagger, each, from, offsets: { ...offsets, [item]: v } }, `${item + 1}번째 ${v}초`)} />
       </div>
     </div>
   )

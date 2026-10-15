@@ -590,7 +590,7 @@
 .tl-layer {
   position: sticky;
   left: 0;
-  z-index: 3;
+  z-index: 4;
   background: var(--surface);
   border-right: 1px solid var(--border);
 }
@@ -637,6 +637,10 @@
   height: 26px;
   border-bottom: 1px solid var(--border);
 }
+.tl-track.sub.graph,
+.tl-layer.sub.graph {
+  height: 116px;
+}
 .tl-track.sub {
   height: 22px;
   background: color-mix(in srgb, var(--surface-2) 55%, transparent);
@@ -660,6 +664,40 @@
 .tl-bar.sel {
   background: var(--accent);
   color: var(--accent-text);
+}
+/* audio: the waveform under the clip's name */
+.tl-wave {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.tl-bar-label {
+  position: relative;
+  color: var(--text);
+  font-weight: 600;
+  text-shadow: 0 0 3px var(--surface), 0 0 2px var(--surface);
+}
+.tl-vkey {
+  position: absolute;
+  top: 5px;
+  width: 7px;
+  height: 7px;
+  margin-left: -3.5px;
+  transform: rotate(45deg);
+  background: #fff;
+  border: 1px solid var(--success);
+  pointer-events: none;
+}
+.tl-sfx-wave {
+  position: absolute;
+  top: 4px;
+  height: 18px;
+  border-radius: 3px;
+  background: rgba(245, 165, 36, 0.1);
+  overflow: hidden;
+  pointer-events: none;
 }
 .tl-motion {
   position: absolute;
@@ -802,13 +840,15 @@
     border-color: var(--border);
   }
 }
-.lock-fieldset {
+.lock-fieldset,
+.layer-fieldset {
   border: 0;
   margin: 0;
   padding: 0;
   min-width: 0;
 }
-.lock-fieldset:disabled {
+.lock-fieldset:disabled,
+.layer-fieldset:disabled {
   opacity: 0.5;
 }
 
@@ -895,4 +935,331 @@
 .style-chip.on {
   border-color: var(--accent);
   background: var(--accent-soft);
+}
+
+/* layer properties (After Effects style): stopwatch · name · fields · keyframe navigation */
+.key-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 30px;
+}
+.key-row .key-label {
+  width: 52px;
+  flex: none;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.key-row .key-fields {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.key-row .key-fields > .num {
+  flex: 1;
+  min-width: 0;
+}
+.icon-btn.stopwatch {
+  width: 22px;
+  height: 22px;
+  color: var(--text-3);
+}
+.icon-btn.stopwatch.on {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.icon-btn.key-here {
+  color: var(--text-3);
+}
+.icon-btn.key-here.on {
+  color: var(--warning);
+}
+
+/* timeline: layer toggles, in/out, keyframes, markers, work area, reorder */
+.tl-toggle {
+  width: 18px !important;
+  height: 18px !important;
+  flex: none;
+}
+.tl-toggle.on {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.tl-layer.drop-above {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+.tl-layer.drop-below {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+.tl-bar.locked {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+.tl-io-off {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--text) 8%, transparent) 0 4px, transparent 4px 8px);
+  pointer-events: none;
+}
+.tl-io-grip {
+  position: absolute;
+  top: 3px;
+  width: 6px;
+  height: 20px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
+  cursor: ew-resize;
+  opacity: 0;
+  z-index: 3;
+}
+.tl-track:hover .tl-io-grip {
+  opacity: 1;
+}
+/* keyframes and in/out grips sit above the playhead line, so the ones at the playhead can be grabbed */
+.tl-key {
+  position: absolute;
+  top: 5px;
+  width: 11px;
+  height: 11px;
+  margin-left: -5.5px;
+  transform: rotate(45deg);
+  border-radius: 2px;
+  background: var(--text-2);
+  border: 1px solid var(--surface);
+  cursor: grab;
+  z-index: 3;
+}
+.tl-key.sel {
+  background: var(--warning);
+}
+.tl-key.linear {
+  border-radius: 0;
+}
+.tl-key.hold {
+  border-radius: 0 6px 0 6px;
+}
+.tl-key.mini {
+  top: 9px;
+  width: 7px;
+  height: 7px;
+  margin-left: -3.5px;
+  pointer-events: none;
+  opacity: 0.8;
+}
+/* a marker usually sits where the playhead was: it stays above the playhead's head so it can be grabbed */
+.tl-marker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  z-index: 4;
+  cursor: grab;
+}
+.tl-marker::before {
+  content: '';
+  position: absolute;
+  left: -1px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--success);
+}
+.tl-marker span {
+  position: absolute;
+  left: 3px;
+  top: 1px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--success);
+  color: #fff;
+  font-size: 9px;
+  line-height: 12px;
+  white-space: nowrap;
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tl-workarea {
+  position: absolute;
+  top: 0;
+  height: 4px;
+  background: var(--accent);
+  border-radius: 2px;
+  pointer-events: none;
+  opacity: 0.8;
+}
+.layer-item {
+  gap: 2px;
+  border-radius: 6px;
+}
+.layer-item:hover {
+  background: var(--surface-hover);
+}
+
+/* canvas: handles, rotation knob, anchor point, snap lines, marquee, guides, rulers, motion path */
+.sel-handle {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  margin: -4.5px 0 0 -4.5px;
+  background: #fff;
+  border: 1.5px solid var(--accent);
+  border-radius: 2px;
+  z-index: 4;
+  touch-action: none;
+}
+.rot-stem {
+  position: absolute;
+  width: 1px;
+  background: var(--accent);
+  pointer-events: none;
+  z-index: 3;
+}
+.rot-handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  border-radius: 50%;
+  background: #fff;
+  border: 1.5px solid var(--accent);
+  cursor: grab;
+  z-index: 4;
+  touch-action: none;
+}
+.anchor-handle {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  margin: -8px 0 0 -8px;
+  border-radius: 50%;
+  border: 1.5px solid var(--accent);
+  background:
+    linear-gradient(var(--accent), var(--accent)) center / 1.5px 100% no-repeat,
+    linear-gradient(var(--accent), var(--accent)) center / 100% 1.5px no-repeat;
+  cursor: move;
+  z-index: 4;
+  touch-action: none;
+}
+.snap-line {
+  position: absolute;
+  background: #ff3dbb;
+  pointer-events: none;
+  z-index: 3;
+}
+.snap-line.x {
+  top: -100000px;
+  bottom: -100000px;
+  width: 1px;
+}
+.snap-line.y {
+  left: -100000px;
+  right: -100000px;
+  height: 1px;
+}
+.marquee {
+  position: absolute;
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  pointer-events: none;
+  z-index: 3;
+}
+.marquee.mask {
+  border-style: dashed;
+  border-color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+}
+.canvas-guide {
+  position: absolute;
+  z-index: 3;
+  background: #20c9ff;
+}
+.canvas-guide.x {
+  top: -100000px;
+  bottom: -100000px;
+  width: 1px;
+  cursor: ew-resize;
+  box-shadow: 0 0 0 3px transparent;
+}
+.canvas-guide.y {
+  left: -100000px;
+  right: -100000px;
+  height: 1px;
+  cursor: ns-resize;
+}
+.canvas-guide.live {
+  pointer-events: none;
+}
+.canvas-ruler {
+  position: absolute;
+  z-index: 5;
+  background: var(--surface-2);
+  overflow: hidden;
+  user-select: none;
+  font-size: 9px;
+  color: var(--text-3);
+}
+.canvas-ruler.x {
+  border-bottom: 1px solid var(--border);
+  cursor: s-resize;
+}
+.canvas-ruler.y {
+  border-right: 1px solid var(--border);
+  cursor: e-resize;
+}
+.canvas-ruler span {
+  position: absolute;
+  pointer-events: none;
+}
+.canvas-ruler.x span {
+  top: 0;
+  bottom: 0;
+  padding-left: 2px;
+  border-left: 1px solid var(--border-strong);
+}
+.canvas-ruler.y span {
+  left: 0;
+  right: 0;
+  padding-top: 1px;
+  border-top: 1px solid var(--border-strong);
+  writing-mode: vertical-lr;
+}
+.path-handle {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  border-radius: 50%;
+  background: var(--warning);
+  border: 1px solid #fff;
+  cursor: grab;
+  z-index: 3;
+}
+.anchor-handle.part {
+  border-color: var(--warning);
+}
+.tl-key.claude {
+  background: transparent;
+  border: 1.5px solid var(--text-3);
+}
+.tl-layer.sub.claude {
+  color: var(--text-3);
+}
+.path-key {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
+  transform: rotate(45deg);
+  background: var(--warning);
+  border: 1px solid #fff;
+  cursor: move;
+  z-index: 4;
+  touch-action: none;
+}
+.canvas-tools .badge {
+  background: var(--surface);
 }
