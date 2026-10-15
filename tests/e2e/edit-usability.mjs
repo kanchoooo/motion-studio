@@ -11,7 +11,7 @@
 //  - editing checks: a click in and out of a number field saves nothing; ⇧⌘D's second half shows;
 //    ⌘A leaves the camera out; shortcuts work with the Korean keyboard on
 //  - the 영역 / 핀 tools are on the canvas; pins take images and videos (a video gets a still for
-//    Claude) and what they are for (참고만 / 이걸로 교체 / 이 스타일로)
+//    Claude); what they are for is written in the pin's comment, as before (no picker)
 // MS_SANDBOX=<sandbox with the "앱 주문 런칭" project> node tests/e2e/edit-usability.mjs
 // (the sandbox is copied; the copy is removed afterwards)
 import { _electron as electron } from 'playwright-core'
@@ -260,7 +260,7 @@ try {
     const q = await at(x, y)
     await win.mouse.click(q.x, q.y)
   }
-  check('two pins, each with its own row', (await win.locator('[data-mark-row]').count()) === 2)
+  check('two pins, each with its own row', await until(async () => (await win.locator('[data-mark-row]').count()) === 2))
   // the file dialog answers with a picture and a clip
   await app.evaluate(({ dialog }, files) => {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: files })
@@ -270,8 +270,10 @@ try {
   check('a pin takes a picture and a video', await until(async () => (await row1.locator('img').count()) + (await row1.locator('video').count()) === 2))
   const refs = readdirSync(join(proj, 'feedback', 'refs'))
   check('…copied into the project, the video with a still for Claude', refs.some((f) => f.endsWith('.png')) && refs.some((f) => f.endsWith('.mp4')) && refs.some((f) => f.endsWith('.mp4.jpg')), JSON.stringify(refs))
-  await win.getByTestId('mark-use-1').getByRole('button', { name: '이걸로 교체' }).click()
-  check('…and what they are for', (await win.getByTestId('mark-use-1').locator('button.on').innerText()) === '이걸로 교체')
+  // what they are for is written in the pin's comment, as before (no picker)
+  check('…no purpose picker; the comment asks what to do with them', (await row1.getByTestId('mark-use-1').count()) === 0 && /붙인 파일로/.test((await win.getByTestId('mark-note-1').getAttribute('placeholder')) ?? ''))
+  await win.getByTestId('mark-note-1').fill('이 사진으로 바꿔 줘')
+  check('…and the comment is kept with the files', (await win.getByTestId('mark-note-1').inputValue()) === '이 사진으로 바꿔 줘')
   check('the second pin has its own files (none yet)', (await win.locator('[data-mark-row="2"]').locator('img, video').count()) === 0)
   await win.keyboard.press('Escape')
   await win.screenshot({ path: join(shots, 'edit-usability.png') })

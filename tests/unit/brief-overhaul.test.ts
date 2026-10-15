@@ -269,8 +269,9 @@ describe('studio tools for planning', async () => {
 
   it('check_video: a video without named layers or brief texts is not an error', async () => {
     const index = join(p.path, 'composition', 'index.html')
-    writeFileSync(index, readFileSync(index, 'utf8').replace(/<div id="root"([^>]*)data-ms-empty="true"><\/div>/, '<div id="root"$1><h1 style="font-family:Pretendard">봄</h1><p style="font-family: sans-serif">x</p></div>'))
+    // generic families only: an installed font (Pretendard here) is missing on CI machines
+    writeFileSync(index, readFileSync(index, 'utf8').replace(/<div id="root"([^>]*)data-ms-empty="true"><\/div>/, '<div id="root"$1><h1 style="font-family: serif">봄</h1><p style="font-family: sans-serif">x</p></div>'))
     const t = await call('check_video')
     expect(t).not.toMatch(/\[error\] ms_/)
-  })
+  }, 60_000)
 })

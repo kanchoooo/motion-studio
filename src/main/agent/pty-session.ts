@@ -79,14 +79,25 @@ interface Live {
   compositionMtime: number
 }
 
-/** a mark's attached files, said by what they are for (a video: its middle still to look at, <file>.jpg) */
-function markRefs(refs: string[], use: FeedbackMark['refUse']): string {
+/**
+ * a mark's attached files (a video: its middle still to look at, <file>.jpg); what they are for is in
+ * the designer's comment — the ways it can go are spelled out so Claude knows how to do each
+ */
+function markRefs(refs: string[]): string {
   const list = refs.map((r) => (/\.(mp4|mov|m4v|webm)$/i.test(r) ? `${r} (영상 · 가운데 장면: ${r}.jpg)` : r)).join(', ')
-  if (use === 'replace')
-    return `첨부 파일로 교체: ${list} — 이 표시가 가리키는 그림·영상을 이 파일로 바꿔 주세요. use_as_material에 이 경로를 넘겨 소재함에 넣고 그 경로를 쓰세요(영상은 그 자리의 시작·길이에 맞춰). 크기·위치·움직임은 지금 것을 이어받아요.`
-  if (use === 'style')
-    return `이 스타일로 바꾸기: ${list} — Read로 열어 보고, 이 표시 부분의 모양(색·모서리·그림자·글꼴 느낌·아이콘 스타일 등 UI)을 이 이미지의 스타일로 다시 디자인해 주세요. 내용과 문구, 자리는 그대로예요.`
-  return `참고 자료(원하는 방향): ${list} — Read 도구로 열어 보세요.`
+  return `첨부 파일: ${list} — Read 도구로 열어 보고 코멘트(없으면 메시지)대로 쓰세요. 이 자리의 그림·영상을 이 파일로 바꾸라는 뜻이면 use_as_material에 이 경로를 넘겨 소재함에 넣고 그 경로를 쓰세요(영상은 그 자리의 시작·길이에 맞춰, 크기·위치·움직임은 지금 것을 이어받아요). 이 스타일로 바꾸라는 뜻이면 이 부분의 모양(색·모서리·그림자·글꼴 느낌·아이콘 스타일 등)을 이 파일의 스타일로 다시 디자인하고 내용·문구·자리는 그대로 둬요. 어느 쪽인지 분명하지 않으면 원하는 방향의 참고 자료로 보세요.`
+}
+
+/** a layer's data-ms-label in the composition (either attribute order) */
+export function labelInComposition(dir: string, id: string): string | null {
+  try {
+    const html = readFileSync(join(dir, 'composition', 'index.html'), 'utf8')
+    const safe = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const tag = html.match(new RegExp(`<[a-z][^>]*\\bdata-ms-id="${safe}"[^>]*>`, 'i'))?.[0]
+    return tag?.match(/\bdata-ms-label="([^"]*)"/)?.[1]?.trim() || null
+  } catch {
+    return null
+  }
 }
 
 export function markLines(marks: FeedbackMark[]): string {
@@ -95,7 +106,7 @@ export function markLines(marks: FeedbackMark[]): string {
       const where = m.kind === 'range' && m.range ? `${m.range.from.toFixed(1)}~${m.range.to.toFixed(1)}초 구간` : `${m.time.toFixed(2)}초`
       const box = m.rect ? ` 영역(x:${Math.round(m.rect.x)}, y:${Math.round(m.rect.y)}, w:${Math.round(m.rect.w)}, h:${Math.round(m.rect.h)})` : ''
       const els = m.elements.length ? ` 해당 요소: ${m.elements.map((e) => `${e.label}(data-ms-id="${e.id}")`).join(', ')}` : ' 해당 요소 없음(빈 영역)'
-      const refs = m.refs?.length ? `\n  ${markRefs(m.refs, m.refUse)}` : ''
+      const refs = m.refs?.length ? `\n  ${markRefs(m.refs)}` : ''
       return `- ${m.n}번 표시 [${where}${box}]${els}${m.note ? ` — 코멘트: "${m.note}"` : ''}${refs}`
     })
     .join('\n')
@@ -680,7 +691,8 @@ export class SessionManager {
     if (!/^[\w-]+$/.test(layerId)) throw new Error('이 레이어는 나눌 수 없어요.')
     const st = projects.state(projectId)
     const o = st.overrides.elements[layerId]
-    const label = o?.label ?? layerId
+    // the name the designer sees: their own, else Claude's data-ms-label (never the id)
+    const label = o?.label ?? labelInComposition(l.dir, layerId) ?? layerId
     const edited = !!o && Object.keys(o).some((k) => k !== 'label' && k !== 'locked')
     if (o?.locked) throw new Error('잠긴 레이어예요. 자물쇠를 먼저 풀어 주세요.')
     const asked = this.askedSplit.get(projectId) ?? new Set<string>()

@@ -2,8 +2,8 @@
 // the layer list and ⌘↑/⌘↓; after 편집 활성화 every turn is checked (names for new things, a text
 // split from its box, layers that went missing) — the verdict and the page-side audit.
 import { execFileSync } from 'node:child_process'
-import { existsSync, readdirSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { chromium } from 'playwright-core'
@@ -157,18 +157,34 @@ function chromePath() {
 }
 
 describe('marks with files', () => {
-  it('Claude is told what the files of a mark are for', async () => {
+  it('the files of a mark go with its comment, the ways to use them spelled out', async () => {
     vi.doMock('node-pty', () => ({ spawn: () => ({}) }))
     const { markLines } = await import('../../src/main/agent/pty-session')
     const base = { kind: 'pin' as const, time: 1, note: '', elements: [{ id: 'cta', label: '구매 버튼' }], resolved: false }
-    const lines = markLines([
-      { ...base, id: 'a', n: 1, refs: ['feedback/refs/1.png'] },
-      { ...base, id: 'b', n: 2, refs: ['feedback/refs/2.png'], refUse: 'replace' },
-      { ...base, id: 'c', n: 3, refs: ['feedback/refs/3.mp4'], refUse: 'style', note: '이런 느낌으로' },
-    ]).split('\n')
-    expect(lines.join('\n')).toMatch(/1번 표시[\s\S]*참고 자료\(원하는 방향\): feedback\/refs\/1\.png/)
-    expect(lines.join('\n')).toMatch(/2번 표시[\s\S]*첨부 파일로 교체: feedback\/refs\/2\.png[\s\S]*use_as_material/)
-    expect(lines.join('\n')).toMatch(/3번 표시[\s\S]*코멘트: "이런 느낌으로"[\s\S]*이 스타일로 바꾸기: feedback\/refs\/3\.mp4 \(영상 · 가운데 장면: feedback\/refs\/3\.mp4\.jpg\)/)
+    const text = markLines([
+      { ...base, id: 'a', n: 1, refs: ['feedback/refs/1.png'], note: '이 사진으로 바꿔 줘' },
+      { ...base, id: 'b', n: 2, refs: ['feedback/refs/2.mp4'] },
+      { ...base, id: 'c', n: 3 },
+    ])
+    const [one, two, three] = text.split(/\n(?=- )/)
+    expect(one).toMatch(/1번 표시[\s\S]*코멘트: "이 사진으로 바꿔 줘"[\s\S]*첨부 파일: feedback\/refs\/1\.png — Read[\s\S]*use_as_material[\s\S]*스타일[\s\S]*참고 자료/)
+    expect(two).toMatch(/첨부 파일: feedback\/refs\/2\.mp4 \(영상 · 가운데 장면: feedback\/refs\/2\.mp4\.jpg\)/)
+    expect(three).not.toMatch(/첨부/)
+  })
+})
+
+describe('the name a request uses', () => {
+  it('is the layer label in the composition, in either attribute order', async () => {
+    vi.doMock('node-pty', () => ({ spawn: () => ({}) }))
+    const { labelInComposition } = await import('../../src/main/agent/pty-session')
+    const dir = mkdtempSync(join(tmpdir(), 'ms-label-'))
+    mkdirSync(join(dir, 'composition'))
+    writeFileSync(join(dir, 'composition', 'index.html'), '<div id="menu-chip" data-ms-id="menu-chip" data-ms-label="베스트 칩" data-ms-type="text">BEST</div><p data-ms-label="가격" data-ms-id="price">1</p><i data-ms-id="menu-chip-bg"></i>')
+    expect(labelInComposition(dir, 'menu-chip')).toBe('베스트 칩')
+    expect(labelInComposition(dir, 'price')).toBe('가격')
+    expect(labelInComposition(dir, 'menu-chip-bg')).toBeNull()
+    expect(labelInComposition(dir, 'nope')).toBeNull()
+    rmSync(dir, { recursive: true, force: true })
   })
 })
 

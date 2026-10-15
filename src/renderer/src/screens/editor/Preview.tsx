@@ -434,7 +434,17 @@ export function Preview({ active }: { active: boolean }) {
     // feedback marks for Claude
     playerRef.current?.pause()
     if (ed.tool === 'pin') {
-      ed.addMark({ kind: 'pin', rect: { x: p.x, y: p.y, w: 0, h: 0 }, time: ed.time, note: '', elements: elementsUnder(ed.elements, { x: p.x, y: p.y, w: 1, h: 1 }).slice(0, 1) })
+      const time = ed.time
+      void (async () => {
+        // what is seen there now, top first (a layer that is invisible at this moment is not it): the
+        // layer and what holds it — locked ones too, the pin is for Claude
+        const known = new Map(ed.elements.filter((x) => x.type !== 'camera').map((x) => [x.id, x.label]))
+        const painted = await hitTest(playerRef.current, p.x, p.y)
+        const elements = painted
+          ? painted.filter((id) => known.has(id)).slice(0, 2).map((id) => ({ id, label: known.get(id)! }))
+          : elementsUnder(ed.elements, { x: p.x, y: p.y, w: 1, h: 1 }).slice(0, 1)
+        ed.addMark({ kind: 'pin', rect: { x: p.x, y: p.y, w: 0, h: 0 }, time, note: '', elements })
+      })()
       return
     }
     capture()

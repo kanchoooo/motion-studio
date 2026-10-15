@@ -373,7 +373,9 @@ export class TranscriptTail {
         const limit = /limit|usage|quota/i.test(said)
         this.emitItem({ id: `${r.uuid}-e`, at, role: 'error', text: limit ? 'Claude 사용량 한도에 도달했어요. 터미널에 표시된 시간 이후에 다시 보내 주세요.' : 'Claude가 응답하지 못했어요. 잠시 뒤 다시 보내 주세요.', detail: said.slice(0, 400) || undefined }, initial)
       }
-      if (!initial && !ended) this.setBusy(true)
+      // a synthetic line is no work: Claude Code writes "No response requested." when a session is resumed
+      // after a message that never got its answer (a helper's report at quit) — the editor would stay locked
+      if (!initial && !ended && !synthetic) this.setBusy(true)
       if (ended) {
         this.closeStatuses(initial)
         if (!initial) this.endSoon(failed ? 'failed' : 'done')

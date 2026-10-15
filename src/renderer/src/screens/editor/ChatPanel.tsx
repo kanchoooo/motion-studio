@@ -4,7 +4,7 @@ import type { ClaudeUsage } from '@shared/ai'
 import type { AgentEffort, AgentModel, AgentPermission, ChatItem, PermissionAsk, Storyboard } from '@shared/api'
 import type { ReferenceItem } from '@shared/brief'
 import { Markdown } from '../../components/Markdown'
-import { Modal, Segmented } from '../../components/ui'
+import { Modal } from '../../components/ui'
 import { studio, useStore } from '../../store'
 import { useBriefUi } from '../brief/briefUi'
 import { useEditor } from './editorStore'
@@ -277,7 +277,7 @@ export function ChatPanel({ onFold, mode = 'edit' }: { onFold?(): void; mode?: '
                   <button
                     className="btn sm"
                     style={{ height: 28, flex: 'none', gap: 4 }}
-                    title="이 표시에 이미지·영상 붙이기 (끌어 놓아도 돼요): 참고, 교체할 파일, 따라 할 스타일"
+                    title="이 표시에 이미지·영상 붙이기 (끌어 놓아도 돼요). 어떻게 쓸지는 코멘트에 적어 주세요: 이걸로 바꿔 줘, 이 스타일로, 참고해서…"
                     onClick={async () => {
                       const added = await addImages(await studio.app.pickFiles('media'))
                       if (added.length) updateMark(m.id, { refs: [...(m.refs ?? []), ...added] })
@@ -291,24 +291,12 @@ export function ChatPanel({ onFold, mode = 'edit' }: { onFold?(): void; mode?: '
                     <X size={14} />
                   </button>
                 </div>
-                <input className="input" style={{ height: 28, marginLeft: 28, width: 'calc(100% - 28px)' }} placeholder={`${m.n}번을 어떻게 바꿀까요? (선택)`} value={m.note} onChange={(e) => updateMark(m.id, { note: e.target.value })} data-testid={`mark-note-${m.n}`} />
+                <input className="input" style={{ height: 28, marginLeft: 28, width: 'calc(100% - 28px)' }} placeholder={m.refs?.length ? `${m.n}번을 붙인 파일로 어떻게 할까요? (예: 이 사진으로 바꿔 줘, 이 스타일로)` : `${m.n}번을 어떻게 바꿀까요? (선택)`} value={m.note} onChange={(e) => updateMark(m.id, { note: e.target.value })} data-testid={`mark-note-${m.n}`} />
                 {!!m.refs?.length && (
                   <div className="row" style={{ gap: 6, paddingLeft: 28, flexWrap: 'wrap', alignItems: 'center' }}>
                     {m.refs.map((r) => (
                       <Thumb key={r} rel={r} size={40} onRemove={() => updateMark(m.id, { refs: m.refs!.filter((x) => x !== r) })} />
                     ))}
-                    {/* what the files are for: Claude follows it */}
-                    <span className="tiny muted">붙인 파일로</span>
-                    <Segmented
-                      value={m.refUse ?? 'ref'}
-                      onChange={(v) => updateMark(m.id, { refUse: v as 'ref' | 'replace' | 'style' })}
-                      options={[
-                        { value: 'ref', label: '참고만' },
-                        { value: 'replace', label: '이걸로 교체' },
-                        { value: 'style', label: '이 스타일로' },
-                      ]}
-                      testId={`mark-use-${m.n}`}
-                    />
                   </div>
                 )}
               </div>
@@ -780,7 +768,6 @@ function ChatRow({ item, count = 1 }: { item: ChatItem; count?: number }) {
                   {m.refs?.map((r) => (
                     <Thumb key={r} rel={r} size={32} />
                   ))}
-                  {!!m.refs?.length && m.refUse && m.refUse !== 'ref' && <span className="badge">{m.refUse === 'replace' ? '이걸로 교체' : '이 스타일로'}</span>}
                 </div>
               ))}
             </div>

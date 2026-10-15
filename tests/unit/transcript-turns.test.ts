@@ -64,6 +64,15 @@ describe('turn ends', () => {
     expect(busy).toBe(false)
   }, 15000)
 
+  it('a synthetic line written on resume ("No response requested.") is no turn', async () => {
+    const before = { ends: ends.length, added: added.length }
+    line({ type: 'assistant', uuid: 'a65', timestamp: t(65), message: { model: '<synthetic>', content: [{ type: 'text', text: 'No response requested.' }], stop_reason: 'stop_sequence' } })
+    await wait(900)
+    expect(busy).toBe(false)
+    expect(ends).toHaveLength(before.ends)
+    expect(added).toHaveLength(before.added)
+  })
+
   it('a short note in English is shown as a progress line, not as a message', async () => {
     say(70, 'Now the ghost text, the big 1+1 and the sheen attributes.')
     await wait(900)
