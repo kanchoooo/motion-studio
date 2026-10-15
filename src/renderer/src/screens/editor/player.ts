@@ -166,8 +166,12 @@ export interface RuntimeMotion {
   shift: number
   edited: boolean
   disabled: boolean
-  /** authored-timeline start without the designer's shift */
+  /** authored-timeline start without the designer's shifts (the motion's own and its layer's) */
   authoredStart: number
+  /** the whole layer moved by the designer (timeline bar), seconds of the authored timeline */
+  layerShift?: number
+  /** one target's part of a staggered motion (GSAP's own): its times, but no block of its own */
+  nested?: boolean
   /** output-time position (after section speed) */
   start: number
   end: number
@@ -216,9 +220,10 @@ export function soloLayers(p: MsPlayer | null, ids: string[]) {
 }
 
 /** editable layers painted at a composition point, top first */
-export async function hitTest(p: MsPlayer | null, x: number, y: number): Promise<string[]> {
+/** the layers at a point as the designer sees them now, top first; null when the preview did not answer */
+export async function hitTest(p: MsPlayer | null, x: number, y: number): Promise<string[] | null> {
   const r = await ask<{ ids: string[] }>(p, { ms: 'hit', x, y }, 400)
-  return r?.ids ?? []
+  return r ? r.ids : null
 }
 
 /** a 2D affine map in CSS matrix order: x' = a·x + c·y + e, y' = b·x + d·y + f */

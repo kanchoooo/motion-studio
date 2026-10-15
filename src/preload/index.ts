@@ -92,6 +92,7 @@ const api: StudioApi & { internal: { previewBase: string } } = {
     assignFiles: (id, materialId, files) => invoke('agent:assignFiles', id, materialId, files),
     pickVoice: (id, itemId, voiceId) => invoke('agent:pickVoice', id, itemId, voiceId),
     activateEditing: (id) => invoke('agent:activateEditing', id),
+    splitLayer: (id, layerId) => invoke('agent:splitLayer', id, layerId),
     setModel: (id, opts) => invoke('agent:setModel', id, opts),
     setPermission: (id, mode) => invoke('agent:setPermission', id, mode),
     permissions: (id) => invoke('agent:permissions', id),

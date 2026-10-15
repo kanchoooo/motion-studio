@@ -133,29 +133,41 @@ export function applyMediaTiming(html: string, o: Overrides, authoredD = authore
     if (/\sdata-ms-designer="/.test(tag)) return tag
     if (kind.toLowerCase() === 'audio' && !['sfx', 'voice'].includes(attr(tag, 'data-ms-type') ?? '')) return tag
     const s0 = parseFloat(attr(tag, 'data-ms-authored-start') ?? attr(tag, 'data-start') ?? '0') || 0
+    // a video layer the designer moved in time (timeline bar): the renderer reads its start from here
+    const id = attr(tag, 'data-ms-id')
+    const ls = kind.toLowerCase() === 'video' && id ? +(o.elements?.[id]?.timing?.shift ?? 0) || 0 : 0
+    const sb = Math.max(0, s0 + ls)
     const dRaw = attr(tag, 'data-ms-authored-dur') ?? attr(tag, 'data-duration')
     const d0 = dRaw == null ? NaN : parseFloat(dRaw)
     // authored playback rate ("none" = the attribute was not there)
     const r0 = attr(tag, 'data-ms-authored-rate') ?? attr(tag, 'data-playback-rate') ?? 'none'
     let t = tag
     if (!M) {
+      if (ls) {
+        // moved, no section speed: the moved start, the authored one kept aside
+        t = setAttrAny(t, 'data-ms-authored-start', String(s0))
+        t = setAttrAny(t, 'data-start', sb.toFixed(4))
+        if (Number.isFinite(d0)) t = setAttrAny(setAttrAny(t, 'data-ms-authored-dur', String(d0)), 'data-duration', String(d0))
+        return setAttrAny(t, 'data-ms-shift-baked', String(ls))
+      }
       // no section speed: back to what Claude wrote
       if (attr(tag, 'data-ms-authored-start') == null) return tag
       t = setAttrAny(t, 'data-start', String(s0))
       if (Number.isFinite(d0)) t = setAttrAny(t, 'data-duration', String(d0))
       if (attr(tag, 'data-ms-authored-rate') != null) t = setAttrAny(t, 'data-playback-rate', r0 === 'none' ? null : r0)
-      for (const n of ['data-ms-authored-start', 'data-ms-authored-dur', 'data-ms-authored-rate']) t = setAttrAny(t, n, null)
+      for (const n of ['data-ms-authored-start', 'data-ms-authored-dur', 'data-ms-authored-rate', 'data-ms-shift-baked']) t = setAttrAny(t, n, null)
       return t
     }
-    const ns = M.toOutput(s0)
+    const ns = M.toOutput(sb)
     t = setAttrAny(t, 'data-ms-authored-start', String(s0))
     t = setAttrAny(t, 'data-start', ns.toFixed(4))
+    t = setAttrAny(t, 'data-ms-shift-baked', ls ? String(ls) : null)
     if (Number.isFinite(d0)) {
-      const end = s0 + d0 >= authoredD - 1e-3 ? finalLen : M.toOutput(s0 + d0)
+      const end = sb + d0 >= authoredD - 1e-3 ? finalLen : M.toOutput(sb + d0)
       t = setAttrAny(t, 'data-ms-authored-dur', String(d0))
       t = setAttrAny(t, 'data-duration', Math.max(0, end - ns).toFixed(4))
       if (kind.toLowerCase() === 'video') {
-        const seg = M.segs.find((g) => s0 >= g.a - 1e-6 && s0 + d0 <= g.b + 1e-6)
+        const seg = M.segs.find((g) => sb >= g.a - 1e-6 && sb + d0 <= g.b + 1e-6)
         t = setAttrAny(t, 'data-ms-authored-rate', r0)
         const rate = (r0 === 'none' ? 1 : parseFloat(r0) || 1) * (seg ? seg.k : 1)
         t = setAttrAny(t, 'data-playback-rate', Math.abs(rate - 1) < 1e-6 && r0 === 'none' ? null : String(+rate.toFixed(4)))

@@ -26,7 +26,7 @@ import type { ElementOverride } from '@shared/overrides'
 import { FontSelect } from '../../components/FontSelect'
 import { ColorField, NumberField, Segmented } from '../../components/ui'
 import { useStore } from '../../store'
-import { align, deleteSelection, distribute, duplicateSelection, labelOf, setProps, toggleLockSelection } from './edit'
+import { align, deleteSelection, distribute, duplicateSelection, isLocked, labelOf, setProps, toggleLockSelection } from './edit'
 import { useEditor } from './editorStore'
 import { rgbToHex, useOverrides } from './overrides'
 import type { RuntimeElement } from './player'
@@ -38,7 +38,8 @@ export function MultiEditor() {
   const { elements, selection, select } = useEditor()
   const { value: ov, patchElements } = useOverrides()
   const picked = selection.map((id) => elements.find((e) => e.id === id)).filter((e): e is RuntimeElement => !!e).map((e) => ({ ...e, label: labelOf(e.id) }))
-  const texts = picked.filter((e) => e.type === 'text')
+  // locked layers are shown but not changed (their text styles, 초기화)
+  const texts = picked.filter((e) => e.type === 'text' && !isLocked(e.id))
   const scalable = picked.filter((e) => e.movable && e.transformable !== false)
   const o = (id: string) => ov?.elements[id] ?? {}
 
@@ -222,7 +223,7 @@ export function MultiEditor() {
           title="고른 요소의 직접 수정을 모두 되돌려요"
           onClick={() => {
             const st = useOverrides.getState()
-            for (const e of picked) st.resetElement(e.id, e.label)
+            for (const e of picked) if (!isLocked(e.id)) st.resetElement(e.id, e.label)
           }}
         >
           <RotateCcw size={12} />

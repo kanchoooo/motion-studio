@@ -75,7 +75,9 @@ try {
   await win.locator('[data-layer="app-title"]').click()
   check('a layer click picks it', (await win.locator('.tl-layer.sel').count()) === 1)
   await win.locator('[data-layer="app-title"]').click()
-  check('clicking the picked layer again clears it', (await win.locator('.tl-layer.sel').count()) === 0)
+  check('clicking the picked layer again keeps it (After Effects)', (await win.locator('.tl-layer.sel').count()) === 1)
+  await win.locator('.tl-scroll').click({ position: { x: 20, y: (await win.locator('.tl-scroll').boundingBox()).height - 6 } })
+  check('the empty space below the layers clears it', (await win.locator('.tl-layer.sel').count()) === 0)
 
   // ---- playhead scrub ----
   const head = win.getByTestId('playhead').locator('span')

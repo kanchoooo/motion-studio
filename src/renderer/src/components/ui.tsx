@@ -19,14 +19,16 @@ export function Segmented<T extends string>({
   options,
   onChange,
   full,
+  testId,
 }: {
   value: T
   options: { value: T; label: ReactNode }[]
   onChange: (v: T) => void
   full?: boolean
+  testId?: string
 }) {
   return (
-    <div className={`seg${full ? ' full' : ''}`}>
+    <div className={`seg${full ? ' full' : ''}`} data-testid={testId}>
       {options.map((o) => (
         <button type="button" key={o.value} className={o.value === value ? 'on' : ''} onClick={() => onChange(o.value)}>
           {o.label}
@@ -61,10 +63,16 @@ export function NumberField({
   const [draft, setDraft] = useState<string | null>(null)
   const clamp = (v: number) => Math.min(max ?? Infinity, Math.max(min ?? -Infinity, v))
   const round = (v: number) => Number(v.toFixed(precision))
+  /** what was typed, once it is a change (a click in and out of the field changes nothing) */
   const commit = (s: string) => {
-    const v = parseFloat(s)
-    if (Number.isFinite(v)) onChange(round(clamp(v)))
+    const typed = draft !== null
     setDraft(null)
+    if (!typed) return
+    const v = parseFloat(s)
+    if (!Number.isFinite(v)) return
+    const next = round(clamp(v))
+    if (value != null && next === round(value)) return
+    onChange(next)
   }
   const startScrub = (e: React.PointerEvent) => {
     const startX = e.clientX
@@ -153,7 +161,20 @@ export function Modal({
   )
 }
 
-export function Menu({ items, onClose, style }: { items: { label: ReactNode; icon?: ReactNode; onClick: () => void; danger?: boolean }[]; onClose: () => void; style?: React.CSSProperties }) {
+export interface MenuItem {
+  label: ReactNode
+  icon?: ReactNode
+  onClick: () => void
+  danger?: boolean
+  /** a heading above a group of items (not clickable) */
+  heading?: boolean
+  /** shown as the current one */
+  active?: boolean
+  onHover?: (on: boolean) => void
+  testId?: string
+}
+
+export function Menu({ items, onClose, style }: { items: MenuItem[]; onClose: () => void; style?: React.CSSProperties }) {
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const h = (e: MouseEvent) => {
@@ -164,19 +185,29 @@ export function Menu({ items, onClose, style }: { items: { label: ReactNode; ico
   }, [onClose])
   return (
     <div className="menu fade-in" ref={ref} style={style}>
-      {items.map((it, i) => (
-        <button
-          key={i}
-          className={it.danger ? 'danger' : ''}
-          onClick={() => {
-            onClose()
-            it.onClick()
-          }}
-        >
-          {it.icon}
-          {it.label}
-        </button>
-      ))}
+      {items.map((it, i) =>
+        it.heading ? (
+          <div key={i} className="menu-heading">
+            {it.label}
+          </div>
+        ) : (
+          <button
+            key={i}
+            className={`${it.danger ? 'danger' : ''}${it.active ? ' active' : ''}`}
+            onMouseEnter={() => it.onHover?.(true)}
+            onMouseLeave={() => it.onHover?.(false)}
+            onClick={() => {
+              it.onHover?.(false)
+              onClose()
+              it.onClick()
+            }}
+            data-testid={it.testId}
+          >
+            {it.icon}
+            {it.label}
+          </button>
+        ),
+      )}
     </div>
   )
 }

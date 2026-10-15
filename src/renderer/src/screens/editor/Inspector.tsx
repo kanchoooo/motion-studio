@@ -1,17 +1,16 @@
 import { useEffect, useState } from 'react'
 import { CAMERA_ID } from '@shared/overrides'
-import { Box, Circle, Contrast, Film, Image as ImageIcon, Layers, Lock, Redo2, Square, SquareDashed, Type, Undo2, Unlock, Eye, EyeOff } from 'lucide-react'
+import { Circle, Contrast, Film, Image as ImageIcon, Lock, Redo2, Square, SquareDashed, Type, Undo2 } from 'lucide-react'
 import { useStore } from '../../store'
 import { addLayer, labelOf } from './edit'
 import { useEditor } from './editorStore'
 import { useEditLocked } from './editLock'
 import { LayerEditor } from './LayerEditor'
+import { LayerList } from './LayerList'
 import { MotionPanel } from './MotionPanel'
 import { MultiEditor } from './MultiEditor'
 import { lastSaved, useOverrides } from './overrides'
 import { SoundPanel } from './SoundPanel'
-
-const ICON: Record<string, typeof Type> = { text: Type, image: ImageIcon, shape: Box, video: Film, group: Layers, adjustment: Contrast }
 
 /** "+ 레이어": what the designer can add by hand (Claude makes everything else) */
 export const ADD_LAYER: { kind: Parameters<typeof addLayer>[0]; label: string; icon: typeof Type }[] = [
@@ -26,8 +25,8 @@ export const ADD_LAYER: { kind: Parameters<typeof addLayer>[0]; label: string; i
 
 export function Inspector() {
   const { project, loadFonts } = useStore()
-  const { elements, selected, selection, panel, select } = useEditor()
-  const { value: ov, load, past, future, undo, redo, setLocked, patchElement } = useOverrides()
+  const { elements, selected, selection, panel } = useEditor()
+  const { value: ov, load, past, future, undo, redo } = useOverrides()
   const sel = elements.find((e) => e.id === selected)
   const many = selection.length > 1
   const locked = useEditLocked()
@@ -77,6 +76,8 @@ export function Inspector() {
         {panel === 'sound' && project?.hasVideo && <SoundPanel />}
         {panel === 'motion' && project?.hasVideo && <MotionPanel />}
         {!project?.hasVideo && <div className="small muted">영상이 만들어지면 여기에서 레이어와 사운드를 에펙처럼 다듬을 수 있어요.</div>}
+        {/* picking from the list works while Claude works; what changes a layer waits */}
+        {panel === 'elements' && project?.hasVideo && <LayerList />}
         {panel === 'elements' && project?.hasVideo && !sel && (
           <fieldset className="lock-fieldset" disabled={locked} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
             <div className="section-label">레이어 추가</div>
@@ -88,32 +89,6 @@ export function Inspector() {
                 </button>
               ))}
             </div>
-            <div className="section-label">레이어 · 캔버스나 타임라인에서 골라도 돼요 (Shift/⌘: 여러 개)</div>
-            {elements.length === 0 && <div className="small muted">영상을 멈추면 레이어 목록이 보여요.</div>}
-            {elements.filter((e) => !['sfx', 'bgm', 'voice', 'part'].includes(e.type)).map((e) => {
-              const Icon = ICON[e.type] ?? Box
-              const o = ov?.elements[e.id]
-              const label = labelOf(e.id)
-              return (
-                <div key={e.id} className="row layer-item" style={{ paddingLeft: 6 + e.depth * 14, opacity: e.visible ? 1 : 0.45 }}>
-                  <button
-                    className="row grow"
-                    onClick={(ev) => select(e.id, ev.shiftKey || ev.metaKey || ev.ctrlKey)}
-                    title="Shift/⌘ 클릭으로 여러 개를 함께 골라요"
-                    style={{ height: 28, border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text)', minWidth: 0, gap: 6, padding: 0, textDecoration: o?.deleted ? 'line-through' : undefined }}
-                  >
-                    <Icon size={13} color={e.designer ? 'var(--accent)' : 'var(--text-3)'} />
-                    <span className="ellipsis grow" style={{ textAlign: 'left' }}>{label}</span>
-                  </button>
-                  <button className="icon-btn" style={{ width: 22, height: 22 }} title={o?.hidden ? '보이기' : '숨기기'} onClick={() => patchElement(e.id, label, { hidden: !o?.hidden }, ['hidden'])}>
-                    {o?.hidden ? <EyeOff size={12} /> : <Eye size={12} color="var(--text-3)" />}
-                  </button>
-                  <button className={`icon-btn${o?.locked ? ' active' : ''}`} style={{ width: 22, height: 22 }} title={o?.locked ? '잠금 해제' : '잠그기'} onClick={() => setLocked([{ id: e.id, label }], !o?.locked)}>
-                    {o?.locked ? <Lock size={12} /> : <Unlock size={12} color="var(--text-3)" />}
-                  </button>
-                </div>
-              )
-            })}
           </fieldset>
         )}
         {panel === 'elements' && (many || sel) && ov && (

@@ -80,7 +80,20 @@ export function setProps(items: { id: string; values: Partial<Record<KeyProp, nu
 }
 
 /** stopwatch on a group of properties (position = x+y, scale = scaleX+scaleY…) */
+/**
+ * Keyframing a move, size or turn of a layer the composition lays out (flex, grid, flow): its group
+ * is set free first (nothing moves on screen) — until then such keys could not play
+ */
+function needsFreeLayout(id: string, props: readonly string[]): boolean {
+  const e = el(id)
+  if (!e || e.transformable || !props.some((p) => (PROP as Record<string, { target?: string } | undefined>)[p]?.target === 'wrap')) return false
+  const { toast } = useStore.getState()
+  void freeLayout(id).then((ok) => toast(ok ? '줄지어 놓인 레이어라 묶음을 자유 배치로 바꿨어요(화면은 그대로예요). 다시 열리면 키프레임을 넣어 주세요.' : '이 레이어는 자유 배치로 바꿀 수 없어서 움직임 키프레임을 넣을 수 없어요.', ok ? 'success' : 'error'))
+  return true
+}
+
 export function toggleStopwatch(id: string, props: KeyProp[]) {
+  if (!props.some((p) => isKeyed(id, p)) && needsFreeLayout(id, props)) return
   const on = !props.some((p) => isKeyed(id, p))
   const t = snapT(useEditor.getState().time)
   useOverrides.getState().setStopwatch(id, labelOf(id), props, on, t, props.map((p) => anyNow(id, p, t)))
@@ -93,6 +106,7 @@ export function toggleKeyHere(id: string, props: Track[]) {
   if (here.length) return useOverrides.getState().removeKeys(id, labelOf(id), here.map((p) => ({ prop: p, t })))
   const own = props.filter(isOwn)
   const mine = props.filter((p): p is KeyProp => !isOwn(p))
+  if (mine.length && needsFreeLayout(id, mine)) return
   if (mine.length) useOverrides.getState().setKey(id, labelOf(id), mine, t, mine.map((p) => anyNow(id, p, t)))
   if (own.length) void ownValuesNow(id, own.map(ownProp)).then((vals) => useOverrides.getState().setKey(id, labelOf(id), own, t, own.map((p) => vals[ownProp(p)] ?? 0)))
 }
@@ -224,10 +238,12 @@ export function splitAtPlayhead() {
   const items = selectionItems().filter((i) => !isLocked(i.id))
   if (!items.length) return
   const st = useOverrides.getState()
+  // where each layer ended before the cut: the copy carries on to there
+  const ends = items.map((it) => ov(it.id)?.outPoint ?? null)
   const copies = st.duplicate(items)
   items.forEach((it, i) => {
     st.setInOut([{ id: it.id, label: it.label }], undefined, t)
-    st.setInOut([{ id: copies[i], label: `${it.label} 복사` }], t, ov(it.id)?.outPoint ?? null)
+    st.setInOut([{ id: copies[i], label: `${it.label} 복사` }], t, ends[i])
   })
   if (copies.length) useEditor.setState({ selected: copies[0], selection: copies })
 }
@@ -242,13 +258,26 @@ export function trimToPlayhead(which: 'in' | 'out') {
 
 // ---- arranging on the canvas ----
 
-/** arrow keys: move the selected layers by whole pixels */
+/**
+ * The layers that move when these are moved: a layer whose group is picked too goes along with
+ * the group (moving it as well would move it twice)
+ */
+export function outermost(ids: string[], elements: RuntimeElement[]): string[] {
+  const picked = new Set(ids)
+  const parentOf = (id: string) => elements.find((e) => e.id === id)?.parent ?? null
+  return ids.filter((id) => {
+    for (let p = parentOf(id); p; p = parentOf(p)) if (picked.has(p)) return false
+    return true
+  })
+}
+
+/** arrow keys: move the selected layers by whole pixels (a character part in pixels too, not drawing units) */
 export function nudge(dx: number, dy: number) {
   const { selection, elements } = useEditor.getState()
-  const items = selection
+  const items = outermost(selection, elements)
     .map((id) => elements.find((e) => e.id === id))
     .filter((e): e is RuntimeElement => !!e && e.movable && !isLocked(e.id))
-    .map((e) => ({ id: e.id, values: { x: valueNow(e.id, 'x') + dx, y: valueNow(e.id, 'y') + dy } }))
+    .map((e) => ({ id: e.id, values: { x: valueNow(e.id, 'x') + dx / (e.unit ?? 1), y: valueNow(e.id, 'y') + dy / (e.unit ?? 1) } }))
   if (items.length) setProps(items, ['x', 'y'])
 }
 
@@ -386,7 +415,8 @@ export function paste() {
       ids.push(id)
     } else if (c.of) {
       const orig = useEditor.getState().elements.find((e) => e.id === c.of)
-      const [id] = st.duplicate([{ id: c.of, label: c.label, copyOf: null, stack: orig?.stack ?? '' }])
+      // the edits as they were when copied (⌘X then ⌘V keeps them; later edits of the original do not come along)
+      const [id] = st.duplicate([{ id: c.of, label: c.label, copyOf: null, stack: orig?.stack ?? '', override: c.override }])
       if (id) ids.push(id)
     }
   }

@@ -44,21 +44,26 @@ try {
 
   // selecting still works
   await win.locator('[data-layer="app-title"]').click()
-  const editor = win.locator('fieldset.lock-fieldset')
+  // the layer's settings (the layer list above them stays usable)
+  const editor = win.locator('fieldset.lock-fieldset').last()
   await editor.waitFor({ timeout: 5000 })
   check('a layer can still be picked', (await editor.count()) === 1)
   check('its controls are disabled', await editor.evaluate((f) => f.disabled))
   check('the inspector says why', await win.getByTestId('inspector-locked').isVisible())
 
-  // dragging the element on the canvas moves nothing
+  // dragging the element on the canvas moves nothing (at 2 s the title is on screen: a click picks what is seen)
+  for (let i = 0; i < 6; i++) await win.keyboard.press('Shift+PageDown')
+  await win.waitForTimeout(800)
   const box = await win.locator('[data-capture-frame]').boundingBox()
   const el = await win.evaluate(() => {
     const f = [...document.querySelectorAll('iframe')].find((x) => x.src.includes('ms-preview'))
     const r = f?.contentDocument?.querySelector('[data-ms-id="app-title"]')?.getBoundingClientRect()
-    return r ? { x: r.x + r.width / 2, y: r.y + r.height / 2 } : null
+    const root = f?.contentDocument?.querySelector('[data-composition-id]')
+    return r ? { x: r.x + r.width / 2, y: r.y + r.height / 2, w: +root.getAttribute('data-width'), h: +root.getAttribute('data-height') } : null
   })
-  const cx = box.x + (el ? el.x * (box.width / 1080) : box.width / 2)
-  const cy = box.y + (el ? el.y * (box.height / 1920) : box.height / 2)
+  // composition px → screen (the composition's own size)
+  const cx = box.x + (el ? el.x * (box.width / el.w) : box.width / 2)
+  const cy = box.y + (el ? el.y * (box.height / el.h) : box.height / 2)
   await win.mouse.move(cx, cy)
   await win.mouse.down()
   await win.mouse.move(cx + 60, cy + 40, { steps: 6 })

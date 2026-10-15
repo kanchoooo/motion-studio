@@ -16,6 +16,7 @@ import * as pty from 'node-pty'
 import type { AgentEvent, ChatItem, CurrentStoryboard, SendMessageInput, SessionState, Storyboard } from '@shared/api'
 import type { FeedbackMark } from '@shared/project'
 import { AI_PROVIDERS } from '@shared/ai'
+import { CAMERA_ID } from '@shared/overrides'
 import { aiSettings } from '../ai/settings'
 import { claudeEnv } from '../claude-env'
 import { claudeBinary } from '../doctor'
@@ -29,11 +30,11 @@ import { refreshThumbnail } from '../thumbnail'
 import { mcpTokenFor, setToolHooks } from './mcp-http'
 import { endPermissions } from './permissions'
 import { sessionPath } from './cliShims'
-import { COMPOSITION_CONTRACT, STUDIO_PROMPT, TIDY_REQUEST } from './prompt'
+import { COMPOSITION_CONTRACT, NAME_NEW_REQUEST, splitRequest, STUDIO_PROMPT, TIDY_REQUEST } from './prompt'
 import { listReferences } from '../references'
 import { assignMaterial, carryAssignments, readStoryboard, withMaterialIds, writeStoryboard } from '../storyboard'
 import { repairCompositionHead } from '../headFix'
-import { tidyAfter, tidyBefore, unnamedContent } from '../tidy'
+import { auditLayers, auditVerdict, tidyAfter, tidyBefore, type LayerAudit } from '../tidy'
 import { compositionHasVideo } from '../template'
 import { findTranscript, TranscriptTail } from './transcript'
 
@@ -78,13 +79,23 @@ interface Live {
   compositionMtime: number
 }
 
-function markLines(marks: FeedbackMark[]): string {
+/** a mark's attached files, said by what they are for (a video: its middle still to look at, <file>.jpg) */
+function markRefs(refs: string[], use: FeedbackMark['refUse']): string {
+  const list = refs.map((r) => (/\.(mp4|mov|m4v|webm)$/i.test(r) ? `${r} (영상 · 가운데 장면: ${r}.jpg)` : r)).join(', ')
+  if (use === 'replace')
+    return `첨부 파일로 교체: ${list} — 이 표시가 가리키는 그림·영상을 이 파일로 바꿔 주세요. use_as_material에 이 경로를 넘겨 소재함에 넣고 그 경로를 쓰세요(영상은 그 자리의 시작·길이에 맞춰). 크기·위치·움직임은 지금 것을 이어받아요.`
+  if (use === 'style')
+    return `이 스타일로 바꾸기: ${list} — Read로 열어 보고, 이 표시 부분의 모양(색·모서리·그림자·글꼴 느낌·아이콘 스타일 등 UI)을 이 이미지의 스타일로 다시 디자인해 주세요. 내용과 문구, 자리는 그대로예요.`
+  return `참고 자료(원하는 방향): ${list} — Read 도구로 열어 보세요.`
+}
+
+export function markLines(marks: FeedbackMark[]): string {
   return marks
     .map((m) => {
       const where = m.kind === 'range' && m.range ? `${m.range.from.toFixed(1)}~${m.range.to.toFixed(1)}초 구간` : `${m.time.toFixed(2)}초`
       const box = m.rect ? ` 영역(x:${Math.round(m.rect.x)}, y:${Math.round(m.rect.y)}, w:${Math.round(m.rect.w)}, h:${Math.round(m.rect.h)})` : ''
       const els = m.elements.length ? ` 해당 요소: ${m.elements.map((e) => `${e.label}(data-ms-id="${e.id}")`).join(', ')}` : ' 해당 요소 없음(빈 영역)'
-      const refs = m.refs?.length ? `\n  참고 이미지(원하는 방향): ${m.refs.join(', ')} — Read 도구로 열어 보세요.` : ''
+      const refs = m.refs?.length ? `\n  ${markRefs(m.refs, m.refUse)}` : ''
       return `- ${m.n}번 표시 [${where}${box}]${els}${m.note ? ` — 코멘트: "${m.note}"` : ''}${refs}`
     })
     .join('\n')
@@ -113,6 +124,10 @@ export class SessionManager {
   private sent = new Map<string, number>()
   /** the message count when 편집 활성화 asked Claude */
   private tidyAt = new Map<string, number>()
+  /** after which designer message the app last asked Claude to name new things (asked once per request) */
+  private naming = new Map<string, number>()
+  /** text layers already asked to be split from their box (not asked again every turn) */
+  private askedSplit = new Map<string, Set<string>>()
 
   constructor(private emit: Emit) {
     setToolHooks({
@@ -589,6 +604,7 @@ export class SessionManager {
     projects.refreshFontCss(l.dir)
     const summary = lastText.split('\n').map((s) => s.replace(/^[-*•\s]+/, '').trim()).find((s) => s.length > 3) ?? 'Claude가 영상을 수정했어요'
     const entry = await history.record(l.dir, { actor: 'claude', summary: summary.slice(0, 120) }).catch(() => null)
+    const changed = !!entry || m !== l.compositionMtime
     if (entry || m !== l.compositionMtime) {
       l.compositionMtime = m
       projects.touch(l.projectId)
@@ -606,7 +622,71 @@ export class SessionManager {
         },
       })
     }
+    const tidying = this.tidy.has(l.projectId)
     await this.tidyStep(l, how)
+    if (!tidying && changed && how === 'done') await this.editAudit(l).catch(() => {})
+  }
+
+  /** what activation and every later turn send Claude: the content without names, the texts to split */
+  private namingDetail(a: LayerAudit, split: { id: string; label: string }[]) {
+    return [
+      a.unnamed.count ? `이름이 없는 내용 ${a.unnamed.count}개 (예: ${a.unnamed.samples.map((x) => `"${x}"`).join(', ')})` : '',
+      split.length ? `배경이 붙은 글자 ${split.length}개: ${split.map((x) => `${x.id} (「${x.label}」)`).join(', ')}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n')
+  }
+
+  /**
+   * After a turn that changed a video the designer edits by hand: is everything still editable?
+   * New content without names → Claude is asked once (per designer request) to name it; a video that
+   * lost its layers goes back to view-only (편집 활성화 again); locked or edited layers that are gone
+   * are said in the chat. Turns of 편집 활성화 itself are checked by tidyStep.
+   */
+  private async editAudit(l: Live) {
+    const id = l.projectId
+    const st = projects.state(id)
+    if (st.meta.editable !== true || !st.hasVideo || this.live.get(id) !== l) return
+    const out = st.brief.output
+    // the designer's request this turn answered (read before the page is opened: they may send another meanwhile)
+    const at = this.sent.get(id) ?? 0
+    const a = await auditLayers(l.dir, { width: out.width, height: out.height })
+    // the designer went on (a new request, Claude busy again) while the page was checked: the next turn is checked instead
+    if ((this.sent.get(id) ?? 0) !== at || l.state.status !== 'ready' || this.live.get(id) !== l) return
+    const notice = (text: string) => this.addApp(l, { id: newId(), at: nowIso(), role: 'notice', text })
+    const asked = this.askedSplit.get(id) ?? new Set<string>()
+    const v = auditVerdict(a, st.overrides, { askedSplit: asked, askedThisRequest: this.naming.get(id) === at, camera: CAMERA_ID })
+    if (v.lost) {
+      projects.touch(id, { editable: false })
+      projects.notifyChanged(id)
+      notice('이번 수정으로 편집할 수 있는 레이어 정보가 사라졌어요. 「편집 활성화」를 다시 누르거나, 작업 이력에서 이전 버전으로 되돌릴 수 있어요.')
+      return
+    }
+    if (v.lockedGone.length) notice(`잠근 레이어 ${v.lockedGone.map((x) => `「${x}」`).join(', ')}가 이번 수정에서 사라졌어요. 작업 이력에서 이전 버전으로 되돌리거나, 편집 화면의 노란 안내에서 다른 레이어에 붙일 수 있어요.`)
+    else if (v.gone.length) notice(`직접 수정한 레이어 ${v.gone.length}개가 이번 수정에서 사라졌어요. 편집 화면의 노란 안내에서 다른 레이어에 붙이거나 버릴 수 있어요.`)
+    if (v.stillUnnamed) notice(`아직 이름이 없어 손으로 고를 수 없는 요소가 ${v.stillUnnamed}개 있어요. 대화에서 "편집할 수 있게 레이어 이름 붙여 줘"라고 요청할 수 있어요.`)
+    if (!v.ask) return
+    const split = v.split
+    this.naming.set(id, at)
+    split.forEach((x) => asked.add(x.id))
+    this.askedSplit.set(id, asked)
+    await this.deliver({ projectId: id, fromApp: true, text: '새로 만든 부분도 편집할 수 있게 레이어 이름을 붙여 주세요.', detail: `${NAME_NEW_REQUEST}\n\n${this.namingDetail(a, split)}` })
+  }
+
+  /** 배경 따로 떼기: Claude splits one text layer from its coloured box (the text keeps its id) */
+  async splitLayer(projectId: string, layerId: string): Promise<void> {
+    const l = this.live.get(projectId)
+    if (!l || l.state.status !== 'ready') throw new Error('Claude가 작업을 마치고 대기 중일 때 눌러 주세요.')
+    if (!/^[\w-]+$/.test(layerId)) throw new Error('이 레이어는 나눌 수 없어요.')
+    const st = projects.state(projectId)
+    const o = st.overrides.elements[layerId]
+    const label = o?.label ?? layerId
+    const edited = !!o && Object.keys(o).some((k) => k !== 'label' && k !== 'locked')
+    if (o?.locked) throw new Error('잠긴 레이어예요. 자물쇠를 먼저 풀어 주세요.')
+    const asked = this.askedSplit.get(projectId) ?? new Set<string>()
+    asked.add(layerId)
+    this.askedSplit.set(projectId, asked)
+    await this.deliver({ projectId, fromApp: true, text: `「${label}」의 글자와 배경을 따로 편집할 수 있게 나눠 주세요.`, detail: splitRequest(layerId, label, edited) })
   }
 
   /**
@@ -624,18 +704,20 @@ export class SessionManager {
     const out = projects.state(projectId).brief.output
     const size = { width: out.width, height: out.height, duration: out.duration }
     const at = this.sent.get(projectId) ?? 0
-    const unnamed = await unnamedContent(dir, size)
-    if (!unnamed.count) {
+    const audit = await auditLayers(dir, size)
+    const unnamed = audit.unnamed
+    if (!unnamed.count && !audit.boxedTexts.length) {
       this.markEditable(l)
       return 'ready'
     }
+    this.askedSplit.set(projectId, new Set(audit.boxedTexts.map((x) => x.id)))
     await tidyBefore(dir, size)
     // the designer went on talking meanwhile: their request first
     if ((this.sent.get(projectId) ?? 0) !== at || l.state.status !== 'ready' || this.live.get(projectId) !== l) throw new Error('그사이 Claude가 다른 작업을 시작했어요. 끝나면 다시 눌러 주세요.')
     this.tidy.set(projectId, 'asked')
     this.tidyAt.set(projectId, at)
     try {
-      await this.deliver({ projectId, fromApp: true, text: '편집할 수 있게 레이어 이름을 정리해 주세요.', detail: `${TIDY_REQUEST}\n\n이름이 없는 내용 ${unnamed.count}개 (예: ${unnamed.samples.map((x) => `"${x}"`).join(', ')})` })
+      await this.deliver({ projectId, fromApp: true, text: '편집할 수 있게 레이어 이름을 정리해 주세요.', detail: `${TIDY_REQUEST}\n\n${this.namingDetail(audit, audit.boxedTexts)}` })
     } catch (e) {
       this.tidy.delete(projectId)
       throw e

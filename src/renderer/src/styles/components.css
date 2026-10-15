@@ -411,6 +411,20 @@
 .menu button.danger {
   color: var(--danger);
 }
+.menu button.active {
+  color: var(--accent);
+  font-weight: 600;
+}
+.menu-heading {
+  padding: 6px 10px 2px;
+  font-size: 11px;
+  color: var(--text-3);
+}
+.menu-heading:not(:first-child) {
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
 
 /* progress */
 .progress {
@@ -1099,6 +1113,86 @@
   pointer-events: none;
   opacity: 0.8;
 }
+/* marking what to change (영역 / 핀): labelled, in the marks' colour */
+.mark-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 14px;
+  border: 1.5px solid var(--mark);
+  background: color-mix(in srgb, var(--mark) 10%, transparent);
+  color: var(--mark);
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.mark-tool:hover {
+  background: color-mix(in srgb, var(--mark) 18%, transparent);
+}
+.mark-tool.on {
+  background: var(--mark);
+  color: #fff;
+}
+.canvas-mark-tools {
+  position: absolute;
+  left: 8px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+}
+/* small toggle chips (layer kinds) */
+.chip {
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-2);
+  font-size: 11px;
+  cursor: pointer;
+}
+.chip:hover {
+  background: var(--surface-hover);
+}
+.chip.on {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.tl-bar.ghost {
+  background: repeating-linear-gradient(90deg, color-mix(in srgb, var(--text-3) 9%, transparent) 0 6px, transparent 6px 12px);
+  border: none;
+  pointer-events: none;
+}
+.tl-drag-tip {
+  position: absolute;
+  top: 5px;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--text);
+  color: var(--surface);
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 5;
+}
+.tl-snap-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: #ff3dbb;
+  pointer-events: none;
+  z-index: 6;
+}
 .layer-item {
   gap: 2px;
   border-radius: 6px;
@@ -1200,6 +1294,49 @@
 }
 .canvas-guide.live {
   pointer-events: none;
+}
+/* a 1px line is hard to catch: grab it a few pixels either side */
+.canvas-guide::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+}
+.canvas-guide.x::before {
+  left: -4px;
+  right: -4px;
+}
+.canvas-guide.y::before {
+  top: -4px;
+  bottom: -4px;
+}
+.canvas-guide.snapped {
+  background: #ff3dbb;
+}
+.guide-value {
+  position: absolute;
+  z-index: 6;
+  pointer-events: none;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #20c9ff;
+  color: #001018;
+  white-space: nowrap;
+}
+.el-box.hover {
+  outline: 1px dashed color-mix(in srgb, var(--accent) 80%, transparent) !important;
+}
+.hover-label {
+  position: absolute;
+  z-index: 3;
+  pointer-events: none;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  white-space: nowrap;
 }
 .canvas-ruler {
   position: absolute;

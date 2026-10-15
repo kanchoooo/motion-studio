@@ -176,8 +176,14 @@ try {
   await posX2.press('Enter')
   const k2 = await waitOv((o) => o.elements[textId]?.keys?.x?.length === 2)
   check(`changing a keyframed value adds a key at the playhead (${JSON.stringify(k2?.elements[textId]?.keys?.x)})`, !!k2 && near(k2.elements[textId].keys.x[1].t, 2, 0.02) && k2.elements[textId].keys.x[1].v === 500)
-  await ready()
-  const mid = await inPreview((id) => { window.__player.seek(1); return parseFloat(getComputedStyle(document.querySelector(`[data-ms-wrap-for="${id}"]`)).getPropertyValue('--ms-x')) }, textId)
+  // the preview opens again with the new key a moment after it is saved: read until it has
+  let mid = NaN
+  for (let i = 0; i < 30; i++) {
+    await ready()
+    mid = await inPreview((id) => { window.__player.seek(1); return parseFloat(getComputedStyle(document.querySelector(`[data-ms-wrap-for="${id}"]`)).getPropertyValue('--ms-x')) }, textId).catch(() => NaN)
+    if (mid > 150 && mid < 450) break
+    await win.waitForTimeout(300)
+  }
   check(`the layer animates between its keys (x at 1 s = ${mid})`, mid > 150 && mid < 450)
 
   // ---- timeline keyframes: expand (U), drag, ease, J/K, delete ----

@@ -166,7 +166,10 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
         if (width % 2 || height % 2) return text('Width and height must be even numbers (video encoders need it).')
         patch.width = width
         patch.height = height
-        patch.preset = OUTPUT_PRESETS.find((p) => p.width === width && p.height === height)?.id ?? 'custom'
+        const preset = OUTPUT_PRESETS.find((p) => p.width === width && p.height === height)
+        patch.preset = preset?.id ?? 'custom'
+        // another shape of video: the platform guide that goes with it (vertical → Shorts' safe zone)
+        if (preset && (width >= height) !== (before.width >= before.height)) patch.safeZone = preset.safeZone
       }
       if (!Object.keys(patch).length) return text('Nothing to change: give duration, fps or width + height.')
       projects.saveOutput(projectId, patch)
@@ -490,11 +493,13 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
   server.registerTool(
     'use_as_material',
     {
-      description: "Copy an attachment (an image or video the designer attached in the chat) into the material library (composition/assets) to use it in the video. Returns its composition path. YouTube videos are reference-only.",
-      inputSchema: { id: z.string(), name: z.string().optional().describe('a short Korean name for the library') },
+      description: "Copy an attachment (an image or video the designer attached in the chat, by its id — or a file attached to a mark, by its path feedback/refs/…) into the material library (composition/assets) to use it in the video. Returns its composition path. YouTube videos are reference-only.",
+      inputSchema: { id: z.string().describe('attachment id, or a mark file path (feedback/refs/…)'), name: z.string().optional().describe('a short Korean name for the library') },
     },
     async ({ id, name }) => {
-      const { path, item } = referenceSource(dir(), id)
+      // a file attached to a mark (feedback/refs/…), inside this project
+      const markFile = /^feedback\/refs\/[\w.-]+$/.test(id) && existsSync(join(dir(), id)) ? join(dir(), id) : null
+      const { path, item } = markFile ? { path: markFile, item: { title: '' } as { title?: string } } : referenceSource(dir(), id)
       const { added } = await projects.addToLibrary(projectId, [path])
       if (!added.length) return text('이 파일은 소재로 넣을 수 없는 형식이에요.')
       const a = { ...added[0], originalName: name || item.title || added[0].originalName }

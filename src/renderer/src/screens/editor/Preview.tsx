@@ -1,16 +1,20 @@
 // The canvas (After Effects' composition panel): the preview, selection with handles
 // (scale, rotate, anchor point), moving with smart-guide snapping, marquee selection,
 // zoom and pan, rulers with guides, the motion path of keyframed position, mask drawing
-// and the feedback marks for Claude. Locked layers let clicks through.
+// and the feedback marks for Claude. Locked layers let clicks through. A click picks the top
+// layer the designer sees at this moment (⌥-click: the one under it); right-click lists every
+// layer at that spot and adds guides; a click on the grey area around the frame deselects.
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
-import { Clapperboard, Loader2, Magnet, Maximize, Ruler, Smartphone } from 'lucide-react'
+import { Clapperboard, Hash, Loader2, Magnet, Maximize, Ruler, Smartphone } from 'lucide-react'
 import { isSpatial, sortedKeys, valueAt, type LayerMask } from '@shared/overrides'
+import { Menu, type MenuItem } from '../../components/ui'
+import { ToolButtons } from './MarkTools'
 import { studio, useStore } from '../../store'
-import { freeLayout, isKeyed, isLocked, labelOf, ov, setProps, valueNow } from './edit'
+import { freeLayout, isKeyed, isLocked, labelOf, outermost, ov, setProps, valueNow } from './edit'
 import { elementsForMark, elementsUnder, useEditor } from './editorStore'
 import { useLayout } from './layout'
 import { useOverrides } from './overrides'
-import { hitTest, invertAffine, MsPlayer, queryElements, queryMotions, queryTiming, soloLayers, type Affine, type RuntimeElement } from './player'
+import { ask, hitTest, invertAffine, MsPlayer, queryElements, queryMotions, queryTiming, soloLayers, type Affine, type RuntimeElement } from './player'
 
 const SAFE: Record<string, { top: number; right: number; bottom: number; left: number } | null> = {
   none: null,
@@ -67,14 +71,14 @@ type Box = { x: number; y: number; w: number; h: number }
 
 type Gesture =
   | { kind: 'move'; items: { id: string; x: number; y: number; keyed: boolean; rect: Box; unit: number }[]; p0: Pt; moved: boolean; dx: number; dy: number }
-  | { kind: 'scale'; id: string; handle: string; p0: Pt; pivot: Pt; sx: number; sy: number; r: number; keyed: boolean; nsx: number; nsy: number }
+  | { kind: 'scale'; id: string; handle: string; p0: Pt; pivot: Pt; sx: number; sy: number; r: number; keyed: boolean; nsx: number; nsy: number; rect0?: Box }
   | { kind: 'rotate'; id: string; p0: Pt; pivot: Pt; r0: number; keyed: boolean; nr: number }
   | { kind: 'anchor'; id: string; p0: Pt; ax: number; ay: number; x: number; y: number; sx: number; sy: number; r: number; keyedPos: boolean; d: Pt }
   | { kind: 'marquee'; p0: Pt; p1: Pt; add: boolean; click?: string }
   | { kind: 'pan'; c0: Pt; panX: number; panY: number }
   | { kind: 'guide'; axis: 'x' | 'y'; index: number; value: number }
   | { kind: 'pathkey'; id: string; t: number; x: number; y: number; p0: Pt; dx: number; dy: number }
-  | { kind: 'pathhandle'; id: string; t: number; side: 'o' | 'i'; c: { ox: number; oy: number; ix: number; iy: number }; key: Pt }
+  | { kind: 'pathhandle'; id: string; t: number; side: 'o' | 'i'; c: { ox: number; oy: number; ix: number; iy: number }; c0?: { ox: number; oy: number; ix: number; iy: number }; key: Pt }
   | { kind: 'mask'; id: string; p0: Pt; p1: Pt }
 
 export function Preview({ active }: { active: boolean }) {
@@ -89,7 +93,11 @@ export function Preview({ active }: { active: boolean }) {
   const gRef = useRef<Gesture | null>(null)
   const [snapLines, setSnapLines] = useState<{ x: number[]; y: number[] }>({ x: [], y: [] })
   const [hand, setHand] = useState(false)
-  const { guides: safeOn, rulers, snap, set: setLayout } = useLayout()
+  const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null)
+  /** the layer under the pointer (outlined, named) and one a menu item points at */
+  const [hover, setHover] = useState<string | null>(null)
+  const hovering = useRef<{ busy: boolean; next: Pt | null; over: boolean }>({ busy: false, next: null, over: false })
+  const { guides: safeOn, rulers, showGuides, snap, set: setLayout } = useLayout()
   const overrides = useOverrides((s) => s.value)
   const pid = project!.meta.id
   const out = project!.brief.output
@@ -119,6 +127,9 @@ export function Preview({ active }: { active: boolean }) {
           if (keepTime > 0) player!.seek(Math.min(keepTime, duration || keepTime))
           const solo = useEditor.getState().solo
           if (solo.length) void soloLayers(player, solo)
+          // edits made while it was opening (not saved yet) reach the new page too
+          const pending = useOverrides.getState()
+          if (pending.dirty && pending.value) void ask(player, { ms: 'apply-styles', overrides: pending.value })
           setTimeout(refreshElements, 150)
           setError(null)
         },
@@ -169,10 +180,11 @@ export function Preview({ active }: { active: boolean }) {
     const down = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement
       if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable) return
-      if (e.key === 'h' || e.key === 'H') setHand(true)
+      // the H key (also with the Korean keyboard on: "ㅗ")
+      if (e.code === 'KeyH') setHand(true)
     }
     const up = (e: KeyboardEvent) => {
-      if (e.key === 'h' || e.key === 'H') setHand(false)
+      if (e.code === 'KeyH') setHand(false)
     }
     window.addEventListener('keydown', down)
     window.addEventListener('keyup', up)
@@ -219,16 +231,22 @@ export function Preview({ active }: { active: boolean }) {
 
   // ---- snapping: canvas edges / centre, guides, other layers' edges and centres ----
   const guides = overrides?.guides ?? { x: [], y: [] }
-  const snapMove = (boxes: Box[], dx: number, dy: number, skip: Set<string>, off: boolean) => {
-    if (!snap || off || !boxes.length) return { dx, dy, lines: { x: [] as number[], y: [] as number[] } }
-    const u = { x: Math.min(...boxes.map((b) => b.x)) + dx, y: Math.min(...boxes.map((b) => b.y)) + dy, r: Math.max(...boxes.map((b) => b.x + b.w)) + dx, b: Math.max(...boxes.map((b) => b.y + b.h)) + dy }
-    const xs = [0, W / 2, W, ...guides.x]
-    const ys = [0, H / 2, H, ...guides.y]
+  const guidesOn = showGuides
+  /** lines a moving edge snaps to: the canvas edges and centre, the guides, other layers' edges and centres */
+  const snapLinesFor = (skip: Set<string>) => {
+    const xs = [0, W / 2, W, ...(guidesOn ? guides.x : [])]
+    const ys = [0, H / 2, H, ...(guidesOn ? guides.y : [])]
     for (const e of visibleEls) {
       if (skip.has(e.id) || e.rect.w * e.rect.h > W * H * 0.9) continue
       xs.push(e.rect.x, e.rect.x + e.rect.w / 2, e.rect.x + e.rect.w)
       ys.push(e.rect.y, e.rect.y + e.rect.h / 2, e.rect.y + e.rect.h)
     }
+    return { xs, ys }
+  }
+  const snapMove = (boxes: Box[], dx: number, dy: number, skip: Set<string>, off: boolean) => {
+    if (!snap || off || !boxes.length) return { dx, dy, lines: { x: [] as number[], y: [] as number[] } }
+    const u = { x: Math.min(...boxes.map((b) => b.x)) + dx, y: Math.min(...boxes.map((b) => b.y)) + dy, r: Math.max(...boxes.map((b) => b.x + b.w)) + dx, b: Math.max(...boxes.map((b) => b.y + b.h)) + dy }
+    const { xs, ys } = snapLinesFor(skip)
     const tol = 6 / scale
     const best = (edges: number[], cands: number[]) => {
       let b: { d: number; at: number } | null = null
@@ -238,6 +256,97 @@ export function Preview({ active }: { active: boolean }) {
     const bx = best([u.x, (u.x + u.r) / 2, u.r], xs)
     const by = best([u.y, (u.y + u.b) / 2, u.b], ys)
     return { dx: dx + (bx?.d ?? 0), dy: dy + (by?.d ?? 0), lines: { x: bx ? [bx.at] : [], y: by ? [by.at] : [] } }
+  }
+  /**
+   * Scaling an upright layer by a handle: the edges the handle moves snap like a moved layer's do
+   * (a corner keeps the proportions: the nearer of its two edges decides).
+   */
+  const snapScale = (cur: Extract<Gesture, { kind: 'scale' }>, fx: number, fy: number, off: boolean) => {
+    const none = { fx, fy, lines: { x: [] as number[], y: [] as number[] } }
+    const r0 = cur.rect0
+    if (!snap || off || !r0 || Math.abs(cur.r % 360) > 0.5) return none
+    const { xs, ys } = snapLinesFor(new Set([cur.id]))
+    const tol = 6 / scale
+    const near = (edge0: number, pivot: number, f: number, cands: number[]) => {
+      if (Math.abs(edge0 - pivot) < 1) return null
+      const at = pivot + (edge0 - pivot) * f
+      let b: { d: number; line: number } | null = null
+      for (const c of cands) if (Math.abs(c - at) <= tol && (!b || Math.abs(c - at) < Math.abs(b.d))) b = { d: c - at, line: c }
+      return b ? { ...b, f: (b.line - pivot) / (edge0 - pivot) } : null
+    }
+    const h = cur.handle
+    const ex = h.includes('e') ? near(r0.x + r0.w, cur.pivot.x, fx, xs) : h.includes('w') ? near(r0.x, cur.pivot.x, fx, xs) : null
+    const ey = h.includes('s') ? near(r0.y + r0.h, cur.pivot.y, fy, ys) : h.includes('n') ? near(r0.y, cur.pivot.y, fy, ys) : null
+    if (h.length === 2 && Math.abs(fx) === Math.abs(fy)) {
+      // proportional corner: one factor for both
+      const pick = ex && (!ey || Math.abs(ex.d) <= Math.abs(ey.d)) ? ex : ey
+      if (!pick) return none
+      const f = Math.abs(pick.f)
+      return { fx: f * Math.sign(fx || 1), fy: f * Math.sign(fy || 1), lines: { x: pick === ex ? [ex!.line] : [], y: pick === ey ? [ey!.line] : [] } }
+    }
+    return { fx: ex ? ex.f : fx, fy: ey ? ey.f : fy, lines: { x: ex ? [ex.line] : [], y: ey ? [ey.line] : [] } }
+  }
+
+  /** the layers at a point as seen now, pickable ones only (null: the preview did not answer) */
+  const layersAt = async (p: Pt): Promise<string[] | null> => {
+    const ok = new Set(pickable(visibleEls).map((x) => x.id))
+    const painted = await hitTest(playerRef.current, p.x, p.y)
+    return painted === null ? null : painted.filter((id) => ok.has(id))
+  }
+  /** right-click: every layer at that spot (pick one), and guides */
+  const canvasMenu = async (e: React.MouseEvent) => {
+    e.preventDefault()
+    if (!frame) return
+    const p = toComp(e.clientX, e.clientY)
+    const at = { x: e.clientX, y: e.clientY }
+    const ids = (await layersAt(p)) ?? elementsUnder(pickable(visibleEls), { x: p.x, y: p.y, w: 1, h: 1 }).map((h) => h.id)
+    const st = useOverrides.getState()
+    const gx = Math.round(p.x)
+    const gy = Math.round(p.y)
+    const items: MenuItem[] = []
+    if (ids.length) {
+      items.push({ heading: true, label: `여기 있는 레이어 ${ids.length}개 · 위에서부터`, onClick: () => {} })
+      for (const id of ids.slice(0, 12))
+        items.push({ label: labelOf(id), active: ed.selection.includes(id), onClick: () => ed.select(id), onHover: (on) => useEditor.setState({ peek: on ? id : null }), testId: 'here-layer' })
+    }
+    items.push({ heading: true, label: '가이드', onClick: () => {} })
+    items.push({ label: `여기에 가로 가이드 (y ${gy})`, onClick: () => st.setGuides({ ...guides, y: [...guides.y, gy] }), testId: 'add-guide-y' })
+    items.push({ label: `여기에 세로 가이드 (x ${gx})`, onClick: () => st.setGuides({ ...guides, x: [...guides.x, gx] }), testId: 'add-guide-x' })
+    const s1 = sel && ed.selection.length <= 1 ? sel : null
+    if (s1) {
+      const r = s1.rect
+      items.push({
+        label: `「${labelOf(s1.id)}」 가장자리에 가이드`,
+        onClick: () => st.setGuides({ x: [...new Set([...guides.x, Math.round(r.x), Math.round(r.x + r.w)])], y: [...new Set([...guides.y, Math.round(r.y), Math.round(r.y + r.h)])] }),
+        testId: 'guides-around',
+      })
+    }
+    items.push({ label: '캔버스 가운데에 가이드', onClick: () => st.setGuides({ x: [...new Set([...guides.x, Math.round(W / 2)])], y: [...new Set([...guides.y, Math.round(H / 2)])] }) })
+    if (guides.x.length || guides.y.length) {
+      items.push({ label: guidesOn ? '가이드 숨기기 (⌘;)' : '가이드 보이기 (⌘;)', onClick: () => setLayout({ showGuides: !guidesOn }) })
+      items.push({ label: `가이드 모두 지우기 (${guides.x.length + guides.y.length}개)`, danger: true, onClick: () => st.setGuides({ x: [], y: [] }), testId: 'clear-guides' })
+    }
+    items.push({ label: rulers ? '눈금자 숨기기 (⌘R)' : '눈금자 보이기 (⌘R) · 끌어서 가이드', onClick: () => setLayout({ rulers: !rulers }) })
+    items.push({ label: snap ? '스냅 끄기' : '스냅 켜기', onClick: () => setLayout({ snap: !snap }) })
+    setMenu({ ...at, items })
+  }
+  /** the pointer over the canvas: outline and name the layer it would pick (one lookup at a time) */
+  const trackHover = (p: Pt) => {
+    const h = hovering.current
+    h.next = p
+    h.over = true
+    if (h.busy) return
+    h.busy = true
+    void (async () => {
+      while (h.next) {
+        const q = h.next
+        h.next = null
+        const ids = await layersAt(q)
+        // the pointer left while this was looked up
+        setHover(h.over ? (ids?.[0] ?? null) : null)
+      }
+      h.busy = false
+    })()
   }
 
   // ---- pointer handling ----
@@ -273,13 +382,19 @@ export function Preview({ active }: { active: boolean }) {
     if (ed.tool === 'select') {
       playerRef.current?.pause()
       const add = e.shiftKey || e.metaKey || e.ctrlKey
-      // the layer painted on top (After Effects picks the top layer under the pointer); locked and hidden ones let the click through
-      const ok = new Set(pickable(visibleEls).map((x) => x.id))
+      // the top layer the designer sees here now (After Effects picks the top layer under the pointer);
+      // locked, hidden and faded-out ones let the click through
       const press = { up: false }
       pressing.current = press
-      const painted = (await hitTest(playerRef.current, p.x, p.y)).filter((id) => ok.has(id))
+      const painted = await layersAt(p)
       pressing.current = null
-      const hits = painted.length ? painted.map((id) => ({ id })) : elementsUnder(pickable(visibleEls), { x: p.x, y: p.y, w: 1, h: 1 })
+      // only when the preview did not answer: the smallest box there
+      const hits = painted !== null ? painted.map((id) => ({ id })) : elementsUnder(pickable(visibleEls), { x: p.x, y: p.y, w: 1, h: 1 })
+      // ⌥-click: the next layer down under the pointer (each click goes one deeper)
+      if (e.altKey && hits.length) {
+        const i = hits.findIndex((h) => h.id === useEditor.getState().selected)
+        return void ed.select(hits[(i + 1) % hits.length].id)
+      }
       if (press.up) {
         // the button was let go while looking: a plain click
         if (!hits.length) return void (!add && ed.select(null))
@@ -307,7 +422,8 @@ export function Preview({ active }: { active: boolean }) {
       // clicking inside the current selection keeps it, so all of it can be dragged
       const inside = hits.find((h) => ed.selection.includes(h.id))
       if (!inside) ed.select(hits[0].id)
-      const ids = inside ? ed.selection : [hits[0].id]
+      // a picked group carries its picked layers along: they are not moved twice
+      const ids = inside ? outermost(ed.selection, ed.elements) : [hits[0].id]
       const movable = ids.map((id) => ed.elements.find((x) => x.id === id)).filter((x): x is RuntimeElement => !!x && x.movable && !isLocked(x.id))
       if (movable.length) {
         capture()
@@ -370,6 +486,10 @@ export function Preview({ active }: { active: boolean }) {
           fx = f * Math.sign(fx || 1)
           fy = f * Math.sign(fy || 1)
         }
+        const sn = snapScale(cur, fx, fy, e.metaKey || e.ctrlKey)
+        fx = sn.fx
+        fy = sn.fy
+        setSnapLines(sn.lines)
         const next = { ...cur, nsx: +(cur.sx * fx).toFixed(4), nsy: +(cur.sy * fy).toFixed(4) }
         setGesture(next)
         if (!cur.keyed) setProps([{ id: cur.id, values: { scaleX: next.nsx, scaleY: next.nsy } }], ['scaleX'])
@@ -401,13 +521,24 @@ export function Preview({ active }: { active: boolean }) {
         return
       }
       if (cur.kind === 'guide') {
-        const v = Math.round(cur.axis === 'x' ? p.x : p.y)
+        let v = Math.round(cur.axis === 'x' ? p.x : p.y)
+        // a guide being placed snaps to the canvas centre and edges and to layer edges (⌘: free)
+        if (snap && !(e.metaKey || e.ctrlKey)) {
+          const { xs, ys } = snapLinesFor(new Set())
+          const own = new Set(guides[cur.axis])
+          const cands = (cur.axis === 'x' ? xs : ys).filter((c) => !own.has(c))
+          const hit = cands.reduce<number | null>((b, c) => (Math.abs(c - v) <= 6 / scale && (b === null || Math.abs(c - v) < Math.abs(b - v)) ? c : b), null)
+          if (hit !== null) v = Math.round(hit)
+        }
         setGesture({ ...cur, value: v })
         return
       }
       return
     }
-    if (!draft || !frame) return
+    if (!draft || !frame) {
+      if (frame && ed.tool === 'select' && !ed.playing && !hand && !markMode) trackHover(toComp(e.clientX, e.clientY))
+      return
+    }
     const p = toComp(e.clientX, e.clientY)
     setDraft({ ...draft, x1: p.x, y1: p.y })
   }
@@ -422,8 +553,9 @@ export function Preview({ active }: { active: boolean }) {
         const keyed = cur.items.filter((i) => i.keyed)
         if (keyed.length) setProps(keyed.map((i) => ({ id: i.id, values: { x: i.x + cur.dx / i.unit, y: i.y + cur.dy / i.unit } })), ['x', 'y'])
       }
-      if (cur.kind === 'scale' && cur.keyed) setProps([{ id: cur.id, values: { scaleX: cur.nsx, scaleY: cur.nsy } }], ['scaleX'])
-      if (cur.kind === 'rotate' && cur.keyed) setProps([{ id: cur.id, values: { rotate: cur.nr } }], ['rotate'])
+      // a click on a handle that did not move it adds no keyframe
+      if (cur.kind === 'scale' && cur.keyed && (cur.nsx !== cur.sx || cur.nsy !== cur.sy)) setProps([{ id: cur.id, values: { scaleX: cur.nsx, scaleY: cur.nsy } }], ['scaleX'])
+      if (cur.kind === 'rotate' && cur.keyed && cur.nr !== cur.r0) setProps([{ id: cur.id, values: { rotate: cur.nr } }], ['rotate'])
       if (cur.kind === 'anchor' && (cur.d.x || cur.d.y)) {
         // the pivot moves, the layer stays where it is: anchor += M⁻¹·d, position += d − anchor change
         const rad = (cur.r * Math.PI) / 180
@@ -440,15 +572,16 @@ export function Preview({ active }: { active: boolean }) {
         const r = { x: Math.min(cur.p0.x, cur.p1.x), y: Math.min(cur.p0.y, cur.p1.y), w: Math.abs(cur.p1.x - cur.p0.x), h: Math.abs(cur.p1.y - cur.p0.y) }
         if (cur.click && (r.w <= 4 / scale || r.h <= 4 / scale)) ed.select(cur.click)
         else if (r.w > 4 / scale && r.h > 4 / scale) {
-          const inside = pickable(visibleEls).filter((x) => x.rect.x < r.x + r.w && x.rect.x + x.rect.w > r.x && x.rect.y < r.y + r.h && x.rect.y + x.rect.h > r.y && x.rect.w * x.rect.h < W * H * 0.9)
+          const inside = pickable(visibleEls).filter((x) => x.type !== 'camera' && x.type !== 'part' && x.rect.x < r.x + r.w && x.rect.x + x.rect.w > r.x && x.rect.y < r.y + r.h && x.rect.y + x.rect.h > r.y && x.rect.w * x.rect.h < W * H * 0.9)
           const ids = inside.map((x) => x.id)
           const next = cur.add ? [...new Set([...ed.selection, ...ids])] : ids
           useEditor.setState({ selection: next, selected: next[0] ?? null })
         }
       }
       if (cur.kind === 'pathkey' && (cur.dx || cur.dy)) st.setKey(cur.id, labelOf(cur.id), ['x', 'y'], cur.t, [cur.x + cur.dx, cur.y + cur.dy])
-      if (cur.kind === 'pathhandle') st.setKeyHandles(cur.id, labelOf(cur.id), cur.t, cur.c)
-      if (cur.kind === 'guide') {
+      if (cur.kind === 'pathhandle' && JSON.stringify(cur.c) !== JSON.stringify(cur.c0)) st.setKeyHandles(cur.id, labelOf(cur.id), cur.t, cur.c)
+      // a guide clicked but not moved: nothing to save
+      if (cur.kind === 'guide' && !(cur.index >= 0 && guides[cur.axis][cur.index] === cur.value)) {
         const list = [...guides[cur.axis]]
         const outside = cur.value < 0 || cur.value > (cur.axis === 'x' ? W : H)
         if (cur.index >= 0) list.splice(cur.index, 1)
@@ -509,10 +642,12 @@ export function Preview({ active }: { active: boolean }) {
     else if (handle === 'anchor') {
       const t = ov(el.id)?.transform ?? {}
       setGesture({ kind: 'anchor', id: el.id, p0, ax: t.anchorX ?? 0, ay: t.anchorY ?? 0, x: valueNow(el.id, 'x'), y: valueNow(el.id, 'y'), sx: valueNow(el.id, 'scaleX'), sy: valueNow(el.id, 'scaleY'), r: valueNow(el.id, 'rotate'), keyedPos: isKeyed(el.id, 'x') || isKeyed(el.id, 'y'), d: { x: 0, y: 0 } })
-    } else setGesture({ kind: 'scale', id: el.id, handle, p0, pivot: el.pivot, sx: valueNow(el.id, 'scaleX'), sy: valueNow(el.id, 'scaleY'), r: valueNow(el.id, 'rotate'), keyed: isKeyed(el.id, 'scaleX') || isKeyed(el.id, 'scaleY'), nsx: valueNow(el.id, 'scaleX'), nsy: valueNow(el.id, 'scaleY') })
+    } else setGesture({ kind: 'scale', id: el.id, handle, p0, pivot: el.pivot, sx: valueNow(el.id, 'scaleX'), sy: valueNow(el.id, 'scaleY'), r: valueNow(el.id, 'rotate'), keyed: isKeyed(el.id, 'scaleX') || isKeyed(el.id, 'scaleY'), nsx: valueNow(el.id, 'scaleX'), nsy: valueNow(el.id, 'scaleY'), rect0: { ...el.rect } })
   }
   const startGuide = (e: React.PointerEvent, axis: 'x' | 'y', index: number, value: number) => {
     e.stopPropagation()
+    // a new guide out of the ruler is shown even when guides were hidden
+    if (!guidesOn) setLayout({ showGuides: true })
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
     setGesture({ kind: 'guide', axis, index, value })
   }
@@ -566,7 +701,19 @@ export function Preview({ active }: { active: boolean }) {
   })()
 
   return (
-    <div ref={host} data-preview-host style={{ position: 'absolute', inset: 0, cursor: hand ? 'grab' : undefined }} onWheel={onWheel}>
+    <div
+      ref={host}
+      data-preview-host
+      style={{ position: 'absolute', inset: 0, cursor: hand ? 'grab' : undefined }}
+      onWheel={onWheel}
+      onPointerDown={(e) => {
+        // the grey area around the frame: a click there clears the selection (Shift/⌘ keep it)
+        if (e.target !== e.currentTarget || e.button !== 0 || hand || e.shiftKey || e.metaKey || e.ctrlKey) return
+        useEditor.setState({ selectedKeys: [] })
+        ed.select(null)
+      }}
+      data-testid="canvas-letterbox"
+    >
       <div
         data-iframe-slot
         style={{
@@ -595,10 +742,28 @@ export function Preview({ active }: { active: boolean }) {
         <button className={`icon-btn${rulers ? ' active' : ''}`} title="눈금자·가이드 (⌘R) · 눈금자에서 끌어서 가이드를 만들어요" onClick={() => setLayout({ rulers: !rulers })} data-testid="rulers-toggle">
           <Ruler size={13} />
         </button>
+        <button
+          className={`icon-btn${guidesOn ? ' active' : ''}`}
+          title={`가이드 ${guidesOn ? '숨기기' : '보이기'} (⌘;) · 눈금자에서 끌거나 캔버스 오른쪽 클릭으로 가이드를 만들어요`}
+          onClick={() => setLayout({ showGuides: !guidesOn })}
+          data-testid="guides-show"
+        >
+          <Hash size={13} />
+        </button>
         <button className={`icon-btn${snap ? ' active' : ''}`} title="스냅: 캔버스·가이드·다른 레이어에 맞춰 붙어요 (끌면서 ⌘를 누르면 잠시 끔)" onClick={() => setLayout({ snap: !snap })}>
           <Magnet size={13} />
         </button>
         <SafeZoneMenu zone={out.safeZone} on={!!safe && safeOn} onChange={(_zone, on) => setLayout({ guides: on })} />
+      </div>
+      {/* marking what to change: always at hand on the canvas */}
+      <div className="canvas-mark-tools" style={{ top: 8 + pad, left: 8 + pad }} data-testid="canvas-mark-tools">
+        <span className="tiny muted" style={{ paddingLeft: 4 }}>수정 요청</span>
+        <ToolButtons />
+        {markMode && (
+          <span className="tiny" style={{ color: 'var(--mark)', fontWeight: 650 }}>
+            {ed.tool === 'pin' ? '바꿀 곳을 클릭하세요 · 여러 개 찍어도 돼요' : '바꿀 곳을 드래그하세요'} · 요청은 채팅창에 (Esc: 끝)
+          </span>
+        )}
       </div>
       {ed.maskDraw && (
         <div className="lock-banner" style={{ top: 10 + pad }}>
@@ -612,6 +777,12 @@ export function Preview({ active }: { active: boolean }) {
           onPointerDown={onDown}
           onPointerMove={onMove}
           onPointerUp={onUp}
+          onPointerLeave={() => {
+            hovering.current.over = false
+            hovering.current.next = null
+            setHover(null)
+          }}
+          onContextMenu={(e) => void canvasMenu(e)}
           style={{ position: 'absolute', left: frame.x, top: frame.y, width: frame.w, height: frame.h, cursor: hand ? 'grab' : markMode || ed.maskDraw ? 'crosshair' : 'default', zIndex: 2 }}
         >
           {/* safe zone (where Shorts / Reels buttons sit), only when the guide is on */}
@@ -629,13 +800,13 @@ export function Preview({ active }: { active: boolean }) {
             />
           )}
           {/* ruler guides */}
-          {rulers &&
+          {guidesOn &&
             (['x', 'y'] as const).flatMap((axis) =>
               guides[axis].map((v, i) =>
                 g?.kind === 'guide' && g.axis === axis && g.index === i ? null : (
                   <div
                     key={`${axis}${i}`}
-                    className={`canvas-guide ${axis}`}
+                    className={`canvas-guide ${axis}${snapLines[axis].some((l) => Math.abs(l - v) < 0.5) ? ' snapped' : ''}`}
                     style={axis === 'x' ? { left: S(v) } : { top: S(v) }}
                     onPointerDown={(e) => startGuide(e, axis, i, v)}
                     title="끌어서 옮기기 · 눈금자 밖으로 끌면 지워져요"
@@ -645,6 +816,11 @@ export function Preview({ active }: { active: boolean }) {
               ),
             )}
           {g?.kind === 'guide' && <div className={`canvas-guide ${g.axis} live`} style={g.axis === 'x' ? { left: S(g.value) } : { top: S(g.value) }} />}
+          {g?.kind === 'guide' && (
+            <div className="guide-value" style={g.axis === 'x' ? { left: S(g.value) + 4, top: 4 } : { top: S(g.value) + 4, left: 4 }} data-testid="guide-value">
+              {g.value < 0 || g.value > (g.axis === 'x' ? W : H) ? '놓으면 지워져요' : `${g.axis === 'x' ? 'x' : 'y'} ${g.value}`}
+            </div>
+          )}
           {/* hover/selection boxes */}
           {!markMode && !ed.playing &&
             visibleEls.map((x) => {
@@ -664,10 +840,20 @@ export function Preview({ active }: { active: boolean }) {
                     outline: picked ? `${lockedX ? 1 : 2}px ${x.id === ed.selected || !many ? 'solid' : 'dashed'} ${lockedX ? 'var(--text-3)' : 'var(--accent)'}` : '1px solid transparent',
                     pointerEvents: 'none',
                   }}
-                  className="el-box"
+                  className={`el-box${!picked && (x.id === hover || x.id === ed.peek) ? ' hover' : ''}`}
                 />
               )
             })}
+          {/* the layer a click would pick (or a menu item points at), named */}
+          {!markMode && !ed.playing && !g && (() => {
+            const id = ed.peek ?? hover
+            const el = id && !ed.selection.includes(id) ? visibleEls.find((x) => x.id === id) : null
+            return el ? (
+              <div className="hover-label" style={{ left: S(el.rect.x), top: Math.max(0, S(el.rect.y) - 18) }} data-testid="hover-label">
+                {labelOf(el.id)}
+              </div>
+            ) : null
+          })()}
           {/* snap lines */}
           {snapLines.x.map((x) => <div key={`sx${x}`} className="snap-line x" style={{ left: S(x) }} />)}
           {snapLines.y.map((y) => <div key={`sy${y}`} className="snap-line y" style={{ top: S(y) }} />)}
@@ -733,7 +919,7 @@ export function Preview({ active }: { active: boolean }) {
                     onPointerDown={(e) => {
                       e.stopPropagation()
                       ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
-                      setGesture({ kind: 'pathhandle', id: pathEl!.id, t: h.t, side, c: { ...h.c }, key: { x: h.x, y: h.y } })
+                      setGesture({ kind: 'pathhandle', id: pathEl!.id, t: h.t, side, c: { ...h.c }, c0: { ...h.c }, key: { x: h.x, y: h.y } })
                     }}
                     onPointerMove={onMove}
                     onPointerUp={onUp}
@@ -788,6 +974,7 @@ export function Preview({ active }: { active: boolean }) {
         </div>
       )}
 
+      {menu && <Menu items={menu.items} onClose={() => setMenu(null)} style={{ position: 'fixed', left: Math.min(menu.x, window.innerWidth - 260), top: Math.min(menu.y, window.innerHeight - 40 - menu.items.length * 30), maxHeight: '70vh', overflow: 'auto', zIndex: 60 }} />}
       {/* rulers: drag out of them to make a guide */}
       {rulers && frame && (
         <>

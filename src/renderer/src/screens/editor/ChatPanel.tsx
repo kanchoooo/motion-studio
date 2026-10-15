@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
-import { Activity, AlertCircle, ArrowUp, Check, ChevronsLeft, Clapperboard, Cpu, Film, ImagePlus, Info, Loader2, MapPin, Mic, Pause, Play, Scissors, ShieldCheck, ShieldQuestion, Square, SquareDashed, X, Link2 } from 'lucide-react'
+import { Activity, AlertCircle, ArrowUp, Check, ChevronsLeft, Clapperboard, Cpu, Film, ImagePlus, Info, Loader2, Mic, Pause, Play, Scissors, ShieldCheck, ShieldQuestion, Square, X, Link2 } from 'lucide-react'
 import type { ClaudeUsage } from '@shared/ai'
 import type { AgentEffort, AgentModel, AgentPermission, ChatItem, PermissionAsk, Storyboard } from '@shared/api'
 import type { ReferenceItem } from '@shared/brief'
 import { Markdown } from '../../components/Markdown'
-import { Modal } from '../../components/ui'
+import { Modal, Segmented } from '../../components/ui'
 import { studio, useStore } from '../../store'
 import { useBriefUi } from '../brief/briefUi'
 import { useEditor } from './editorStore'
+import { ToolButtons } from './MarkTools'
 import { captureAnnotatedFrame } from './Preview'
 
 const YT = /https?:\/\/(?:www\.|m\.)?(?:youtube\.com\/(?:watch\?[^\s]+|shorts\/[\w-]+|embed\/[\w-]+)|youtu\.be\/[\w-]+)[^\s]*/gi
@@ -101,7 +102,7 @@ export function ChatPanel({ onFold, mode = 'edit' }: { onFold?(): void; mode?: '
     void studio.references.remove(pid, a.id).catch(() => {})
   }
 
-  /** copies picked/dropped images into the project and returns their project paths (reference images of marks) */
+  /** copies picked/dropped images and videos into the project and returns their project paths (files of marks) */
   const addImages = async (files: string[]): Promise<string[]> => {
     const out: string[] = []
     for (const f of files) {
@@ -113,6 +114,8 @@ export function ChatPanel({ onFold, mode = 'edit' }: { onFold?(): void; mode?: '
     }
     return out
   }
+  /** the mark a file is being dragged onto */
+  const [markDrop, setMarkDrop] = useState<string | null>(null)
   const droppedFiles = (e: React.DragEvent) => [...e.dataTransfer.files].map((f) => studio.app.pathForFile(f)).filter(Boolean)
 
   const send = async (override?: string) => {
@@ -238,7 +241,7 @@ export function ChatPanel({ onFold, mode = 'edit' }: { onFold?(): void; mode?: '
         {!plan && marks.length > 0 && (
           <div className="col" style={{ gap: 6, maxHeight: 260, overflow: 'auto' }}>
             <div className="row tiny muted">
-              <span>{markTime?.toFixed(2)}초 화면에 표시 {marks.length}개 · 표시마다 참고 이미지를 끌어 놓을 수 있어요</span>
+              <span>{markTime?.toFixed(2)}초 화면에 표시 {marks.length}개 · 표시마다 이미지·영상을 붙여 바꿀 모습을 알려 줄 수 있어요</span>
               <div className="grow" />
               <button className="btn ghost sm" onClick={clearMarks}>
                 모두 지우기
@@ -248,46 +251,64 @@ export function ChatPanel({ onFold, mode = 'edit' }: { onFold?(): void; mode?: '
               <div
                 key={m.id}
                 className="col"
-                style={{ gap: 4 }}
+                style={{ gap: 4, borderRadius: 8, padding: 4, outline: markDrop === m.id ? '2px dashed var(--mark)' : 'none', background: markDrop === m.id ? 'color-mix(in srgb, var(--mark) 10%, transparent)' : undefined }}
                 data-mark-row={m.n}
                 onDragOver={(e) => {
                   if (![...e.dataTransfer.types].includes('Files')) return
                   e.preventDefault()
                   e.stopPropagation()
+                  setMarkDrop(m.id)
                 }}
+                onDragLeave={() => setMarkDrop(null)}
                 onDrop={async (e) => {
                   e.preventDefault()
                   e.stopPropagation()
                   setDropping(false)
+                  setMarkDrop(null)
                   const added = await addImages(droppedFiles(e))
                   if (added.length) updateMark(m.id, { refs: [...(m.refs ?? []), ...added] })
                 }}
               >
                 <div className="row" style={{ gap: 6 }}>
                   <span className="mark-chip">{m.n}</span>
-                  <span className="tiny muted" style={{ width: 64, flex: 'none' }} title={m.elements.map((e) => e.label).join(', ')}>
+                  <span className="tiny muted ellipsis grow" title={m.elements.map((e) => e.label).join(', ')}>
                     {m.elements[0]?.label ?? (m.kind === 'pin' ? '지점' : '영역')}
                   </span>
-                  <input className="input" style={{ height: 28 }} placeholder={`${m.n}번에 대한 요청 (선택)`} value={m.note} onChange={(e) => updateMark(m.id, { note: e.target.value })} />
                   <button
-                    className="icon-btn"
-                    title="참고 이미지 첨부 (끌어 놓아도 돼요)"
+                    className="btn sm"
+                    style={{ height: 28, flex: 'none', gap: 4 }}
+                    title="이 표시에 이미지·영상 붙이기 (끌어 놓아도 돼요): 참고, 교체할 파일, 따라 할 스타일"
                     onClick={async () => {
-                      const added = await addImages(await studio.app.pickFiles('images'))
+                      const added = await addImages(await studio.app.pickFiles('media'))
                       if (added.length) updateMark(m.id, { refs: [...(m.refs ?? []), ...added] })
                     }}
+                    data-testid={`mark-attach-${m.n}`}
                   >
-                    <ImagePlus size={14} />
+                    <ImagePlus size={13} />
+                    이미지·영상
                   </button>
                   <button className="icon-btn" title="이 표시 지우기" onClick={() => removeMark(m.id)}>
                     <X size={14} />
                   </button>
                 </div>
+                <input className="input" style={{ height: 28, marginLeft: 28, width: 'calc(100% - 28px)' }} placeholder={`${m.n}번을 어떻게 바꿀까요? (선택)`} value={m.note} onChange={(e) => updateMark(m.id, { note: e.target.value })} data-testid={`mark-note-${m.n}`} />
                 {!!m.refs?.length && (
-                  <div className="row" style={{ gap: 4, paddingLeft: 28, flexWrap: 'wrap' }}>
+                  <div className="row" style={{ gap: 6, paddingLeft: 28, flexWrap: 'wrap', alignItems: 'center' }}>
                     {m.refs.map((r) => (
                       <Thumb key={r} rel={r} size={40} onRemove={() => updateMark(m.id, { refs: m.refs!.filter((x) => x !== r) })} />
                     ))}
+                    {/* what the files are for: Claude follows it */}
+                    <span className="tiny muted">붙인 파일로</span>
+                    <Segmented
+                      value={m.refUse ?? 'ref'}
+                      onChange={(v) => updateMark(m.id, { refUse: v as 'ref' | 'replace' | 'style' })}
+                      options={[
+                        { value: 'ref', label: '참고만' },
+                        { value: 'replace', label: '이걸로 교체' },
+                        { value: 'style', label: '이 스타일로' },
+                      ]}
+                      testId={`mark-use-${m.n}`}
+                    />
                   </div>
                 )}
               </div>
@@ -703,22 +724,6 @@ function Thumb({ rel, size, onRemove }: { rel: string; size: number; onRemove?()
   )
 }
 
-function ToolButtons() {
-  const { tool } = useEditor()
-  const setTool = (t: 'select' | 'box' | 'pin') => useEditor.setState({ tool: tool === t ? 'select' : t })
-  return (
-    <div className="row" style={{ gap: 2 }}>
-      <button className={`icon-btn${tool === 'box' ? ' active' : ''}`} title="영역 표시 (M) — 화면에 드래그해서 표시해요" onClick={() => setTool('box')}>
-        <SquareDashed size={15} />
-      </button>
-      <button className={`icon-btn${tool === 'pin' ? ' active' : ''}`} title="지점 표시 (P) — 화면을 클릭해서 표시해요" onClick={() => setTool('pin')}>
-        <MapPin size={15} />
-      </button>
-      {tool !== 'select' && <span className="tiny" style={{ color: 'var(--mark)' }}>화면에 표시하세요</span>}
-    </div>
-  )
-}
-
 /** consecutive identical status lines ("영상을 다듬고 있어요" ×4) read better as one */
 function collapse(items: ChatItem[]): { item: ChatItem; count: number }[] {
   const out: { item: ChatItem; count: number }[] = []
@@ -775,6 +780,7 @@ function ChatRow({ item, count = 1 }: { item: ChatItem; count?: number }) {
                   {m.refs?.map((r) => (
                     <Thumb key={r} rel={r} size={32} />
                   ))}
+                  {!!m.refs?.length && m.refUse && m.refUse !== 'ref' && <span className="badge">{m.refUse === 'replace' ? '이걸로 교체' : '이 스타일로'}</span>}
                 </div>
               ))}
             </div>

@@ -7,6 +7,7 @@ import { ChatPanel } from './ChatPanel'
 import { useEditLocked, useLockNotice, useViewOnly } from './editLock'
 import { useEditor } from './editorStore'
 import { Inspector } from './Inspector'
+import { listedLayers, neighbourLayer } from '@shared/layers'
 import { clampSize, fitLayout, LAYOUT_DEFAULTS, useLayout, useWindowSize } from './layout'
 import { Preview } from './Preview'
 import { EASY_EASE } from '@shared/overrides'
@@ -35,7 +36,8 @@ export function EditorTab({ active }: { active: boolean }) {
       const ed = useEditor.getState()
       const fps = project?.brief.output.fps ?? 30
       const cmd = e.metaKey || e.ctrlKey
-      const key = e.key.toLowerCase()
+      // letters by the key pressed, not the character typed: with the Korean keyboard on, V is "ㅍ"
+      const key = /^Key[A-Z]$/.test(e.code) ? e.code.slice(3).toLowerCase() : e.key.toLowerCase()
       const go = (t: number) => {
         ed.player?.pause()
         const at = Math.max(0, Math.min(ed.duration || t, t))
@@ -59,7 +61,8 @@ export function EditorTab({ active }: { active: boolean }) {
       if (cmd && key === 'v') return done(), paste()
       if (cmd && key === 'a') {
         done()
-        const all = ed.elements.filter((x) => !['sfx', 'bgm', 'voice'].includes(x.type) && x.visible && !isLocked(x.id)).map((x) => x.id)
+        // every layer on screen — not the camera, not a character's parts (they move with their character)
+        const all = ed.elements.filter((x) => !['sfx', 'bgm', 'voice', 'camera', 'part'].includes(x.type) && x.visible && !isLocked(x.id)).map((x) => x.id)
         return useEditor.setState({ selection: all, selected: all[0] ?? null })
       }
       if (cmd && key === 'l') return done(), toggleLockSelection()
@@ -108,6 +111,18 @@ export function EditorTab({ active }: { active: boolean }) {
       if (!cmd && key === 'b') return done(), useEditor.setState({ workArea: { a: ed.time, b: Math.max(ed.time + 0.1, ed.workArea?.b ?? ed.duration) } })
       if (!cmd && key === 'n') return done(), useEditor.setState({ workArea: { a: Math.min(ed.workArea?.a ?? 0, ed.time - 0.1), b: ed.time } })
       if (e.key === '*') return done(), useOverrides.getState().addMarker(ed.time)
+      // ⌘↑ / ⌘↓: the layer above / below (After Effects); with ⇧ the group it is in / the first layer in it
+      if (cmd && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+        done()
+        const cur = ed.elements.find((x) => x.id === ed.selected)
+        if (e.shiftKey) {
+          const next = e.key === 'ArrowUp' ? cur?.parent : listedLayers(ed.elements).find((x) => x.parent === cur?.id)?.id
+          if (next) ed.select(next)
+          return
+        }
+        const next = neighbourLayer(ed.elements, ed.selected, e.key === 'ArrowUp' ? -1 : 1, (id) => isLocked(id))
+        return void (next && ed.select(next))
+      }
       if (e.key.startsWith('Arrow')) {
         done()
         const dx = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0
@@ -123,6 +138,7 @@ export function EditorTab({ active }: { active: boolean }) {
       if (cmd && e.key === '0') return done(), canvasView.fit()
       if (cmd && e.key === '1') return done(), canvasView.actual()
       if (cmd && key === 'r') return done(), useLayout.getState().set({ rulers: !useLayout.getState().rulers })
+      if (cmd && e.code === 'Semicolon') return done(), useLayout.getState().set({ showGuides: !useLayout.getState().showGuides })
       // ---- tools ----
       if (e.key === 'Escape') {
         // Esc leaves mask drawing and the markup tools first, then clears the selection

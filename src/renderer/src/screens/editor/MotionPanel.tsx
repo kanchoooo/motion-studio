@@ -14,7 +14,7 @@ export function MotionPanel() {
   const { value: ov, patchMotion } = useOverrides()
   const m = motions.find((x) => x.key === selectedMotion)
   const el = elements.find((e) => e.id === selected)
-  const mine = selected ? motions.filter((x) => x.owners.includes(selected)).sort((a, b) => a.start - b.start) : []
+  const mine = selected ? motions.filter((x) => x.owners.includes(selected) && !x.nested).sort((a, b) => a.start - b.start) : []
   const stale = staleMotions.filter((k) => ov?.motions[k])
 
   return (
@@ -75,7 +75,9 @@ function MotionEditor({ m }: { m: RuntimeMotion }) {
   const { value: ov, patchMotion } = useOverrides()
   const o = ov?.motions[m.editKey]?.sig === m.sig ? ov.motions[m.editKey] : undefined
   const label = motionLabel(m)
-  const start = m.authoredStart + (o?.shift ?? 0)
+  // the layer's own move (timeline bar) counts in: the field shows where the motion really starts
+  const ls = m.layerShift ?? 0
+  const start = m.authoredStart + (o?.shift ?? 0) + ls
   const duration = o?.duration ?? m.duration
   const ease = o?.ease ?? (m.ease || DEFAULT_EASE)
   const off = !!o?.disabled
@@ -104,7 +106,7 @@ function MotionEditor({ m }: { m: RuntimeMotion }) {
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, opacity: off ? 0.5 : 1 }}>
-        <NumberField title="시작 시점 (원래 시간 기준)" label="시작" unit="초" value={+start.toFixed(2)} step={0.05} precision={2} min={0} onChange={(v) => set({ shift: +(v - m.authoredStart).toFixed(3) }, `시작 ${v.toFixed(2)}초`)} />
+        <NumberField title="시작 시점 (원래 시간 기준)" label="시작" unit="초" value={+start.toFixed(2)} step={0.05} precision={2} min={0} onChange={(v) => set({ shift: +(v - m.authoredStart - ls).toFixed(3) }, `시작 ${v.toFixed(2)}초`)} />
         <NumberField title="움직이는 시간" label="길이" unit="초" value={+duration.toFixed(2)} step={0.05} precision={2} min={0} max={30} onChange={(v) => set({ duration: v }, `길이 ${v.toFixed(2)}초`)} />
       </div>
 

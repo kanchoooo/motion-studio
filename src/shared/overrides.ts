@@ -332,6 +332,26 @@ export interface FrozenGroup {
   kids: Record<string, { l: number; t: number; w: number; h: number }>
 }
 
+/**
+ * A whole layer moved in time (the timeline bar): Claude's motion by `authored` seconds of the
+ * authored timeline, the designer's own keys, in/out points, timed text, counter, text animator
+ * and parent link by `dt` seconds of output time (never before 0).
+ */
+export function shiftElement(e: ElementOverride, authored: number, dt: number): ElementOverride {
+  const mv = (t: number) => +Math.max(0, t + dt).toFixed(4)
+  const keysOf = <T extends { t: number }>(ks: T[] | undefined) => ks?.map((k) => ({ ...k, t: mv(k.t) }))
+  const out: ElementOverride = { ...e, timing: { ...(e.timing ?? {}), shift: +((e.timing?.shift ?? 0) + authored).toFixed(3) } }
+  if (e.keys) out.keys = Object.fromEntries(Object.entries(e.keys).map(([p, ks]) => [p, keysOf(ks)]))
+  if (e.own) out.own = Object.fromEntries(Object.entries(e.own).map(([p, ks]) => [p, keysOf(ks) ?? []]))
+  if (e.textKeys) out.textKeys = keysOf(e.textKeys)
+  if (e.inPoint != null) out.inPoint = mv(e.inPoint)
+  if (e.outPoint != null) out.outPoint = mv(e.outPoint)
+  if (e.counter) out.counter = { ...e.counter, start: mv(e.counter.start) }
+  if (e.textAnim) out.textAnim = { ...e.textAnim, start: mv(e.textAnim.start) }
+  if (e.parent) out.parent = { ...e.parent, at: mv(e.parent.at) }
+  return out
+}
+
 export const OVERRIDES_VERSION = 2
 
 export function emptyOverrides(): Overrides {

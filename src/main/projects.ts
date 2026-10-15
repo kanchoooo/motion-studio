@@ -10,7 +10,7 @@ import type { ProjectMeta, ProjectState, ProjectSummary } from '@shared/project'
 import { fontCss } from './fontcss'
 import { importPsd } from './psd'
 import * as history from './history'
-import { probeMedia } from './media'
+import { probeMedia, thumbnailFromVideo } from './media'
 import { candidateFolder, candidateTarget, discardCandidate } from './ai/generate'
 import type { GenCandidate } from '@shared/assetGen'
 import { dataDir, runtimeFiles } from './paths'
@@ -288,16 +288,26 @@ const AUDIO = new Set(['.mp3', '.wav', '.m4a', '.aac', '.ogg'])
 export const ASSET_EXTENSIONS = [...IMAGE, ...VIDEO, ...AUDIO, '.psd'].map((e) => e.slice(1))
 
 export const FEEDBACK_IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'gif']
+export const FEEDBACK_VIDEO_EXTENSIONS = ['mp4', 'mov', 'm4v', 'webm']
 
 /** reference image attached to a chat message or a canvas mark: copied into feedback/refs/ */
-export function addFeedbackImage(projectId: string, file: string): string {
+/**
+ * An image or video attached to a message or to one mark: copied into feedback/refs/. A video gets a
+ * still of its middle next to it (<name>.jpg) so Claude can look at it.
+ */
+export async function addFeedbackImage(projectId: string, file: string): Promise<string> {
   const ext = extname(file).toLowerCase().slice(1)
-  if (!FEEDBACK_IMAGE_EXTENSIONS.includes(ext)) throw new Error('PNG, JPG, WebP, GIF 이미지만 첨부할 수 있어요.')
-  if (statSync(file).size > 25 * 1024 * 1024) throw new Error('25MB보다 큰 이미지는 첨부할 수 없어요.')
+  const video = FEEDBACK_VIDEO_EXTENSIONS.includes(ext)
+  if (!FEEDBACK_IMAGE_EXTENSIONS.includes(ext) && !video) throw new Error('이미지(PNG·JPG·WebP·GIF)나 영상(MP4·MOV·WebM)만 첨부할 수 있어요.')
+  if (statSync(file).size > (video ? 300 : 25) * 1024 * 1024) throw new Error(video ? '300MB보다 큰 영상은 첨부할 수 없어요.' : '25MB보다 큰 이미지는 첨부할 수 없어요.')
   const dir = join(pathOf(projectId), 'feedback', 'refs')
   mkdirSync(dir, { recursive: true })
   const name = `${Date.now()}-${newId().slice(0, 6)}.${ext === 'jpeg' ? 'jpg' : ext}`
   copyFileSync(file, join(dir, name))
+  if (video) {
+    const meta = await probeMedia(join(dir, name)).catch(() => null)
+    await thumbnailFromVideo(join(dir, name), join(dir, `${name}.jpg`), (meta?.duration ?? 1) / 2, 640).catch(() => {})
+  }
   return `feedback/refs/${name}`
 }
 

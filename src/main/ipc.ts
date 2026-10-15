@@ -258,6 +258,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
   handle('agent:pickVoice', (id: string, itemId: string, voiceId: string) => agent.pickVoice(id, itemId, voiceId))
   // 편집 활성화: the video becomes editable by hand (Claude names the layers if needed)
   handle('agent:activateEditing', (id: string) => agent.activateEditing(id))
+  handle('agent:splitLayer', (id: string, layerId: string) => agent.splitLayer(id, layerId))
   handle('agent:setModel', (id: string, opts: { model: string; effort: string }) => agent.setModel(id, opts))
   handle('agent:setPermission', (id: string, mode: AgentPermission) => {
     projects.touch(id, { agentPermission: mode === 'all' ? 'all' : undefined })

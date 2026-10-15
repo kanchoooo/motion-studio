@@ -110,8 +110,13 @@ export interface FeedbackMark {
   /** data-ms-id of elements under the mark */
   elements: { id: string; label: string }[]
   resolved: boolean
-  /** reference images for this mark (absolute paths until sent, then project-relative) */
+  /** reference images or videos for this mark (project-relative, feedback/refs/…) */
   refs?: string[]
+  /**
+   * what the attached files are for: the direction to follow (ref), what goes in place of what the
+   * mark points at (replace: that picture / clip itself), or the look to restyle it in (style)
+   */
+  refUse?: 'ref' | 'replace' | 'style'
 }
 
 export interface FeedbackBatch {

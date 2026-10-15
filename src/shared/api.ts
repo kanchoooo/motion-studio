@@ -427,6 +427,8 @@ export interface StudioApi {
     pickVoice(projectId: string, itemId: string, voiceId: string): Promise<void>
     /** 편집 활성화: makes the video editable by hand ('asked': Claude is naming the layers now) */
     activateEditing(projectId: string): Promise<'ready' | 'asked'>
+    /** 배경 따로 떼기: Claude splits a text layer from its coloured box */
+    splitLayer(projectId: string, layerId: string): Promise<void>
     /** switches model / reasoning effort (restarts the session with --resume; waits for a running turn) */
     setModel(projectId: string, opts: { model: AgentModel; effort: AgentEffort }): Promise<SessionState>
     /** permission mode for this project (takes effect at once, no restart) */

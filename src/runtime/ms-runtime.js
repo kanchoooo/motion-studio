@@ -212,6 +212,9 @@
       var orig = owner[name]
       if (typeof orig !== 'function') return
       owner[name] = function (targets) {
+        // GSAP builds a stagger from one tween per target inside a "nested" timeline of its own:
+        // those are recorded (each target's own times, numbered as before) but are no motion blocks
+        var nested = isTimeline && this && this.data === 'nested'
         var args = Array.prototype.slice.call(arguments)
         var r = null
         // legacy signature: (targets, duration, vars[, toVars])
@@ -221,6 +224,7 @@
           r = name === 'fromTo' ? captureMotion('fromTo', targets, args[i], args[i + 1]) : captureMotion(name, targets, args[i])
         } catch (e) { r = null }
         if (r) {
+          if (nested) r.rec.nested = true
           if (name === 'fromTo') { args[i] = r.a; args[i + 1] = r.b } else args[i] = r.b
           if (legacy && typeof r.b.duration === 'number') args[1] = r.b.duration
         }
@@ -269,6 +273,8 @@
       var tw = m.tween
       if (!tw || !inRoot(tw, tl)) return
       m.start = globalStart(tw, tl)
+      // where Claude's code puts it (before the motion's own shift and the layer's)
+      m.authored = m.start
     })
     if (isMain) matchLateEdits()
     MOTIONS.forEach(function (m) {
@@ -353,7 +359,9 @@
     'opacity:calc(var(--ms-o) * var(--ms-io));mix-blend-mode:var(--ms-cb)}' +
     // a character part turns about its pivot in the drawing's own units
     '\ng[data-ms-wrap-for]{transform-box:view-box}' +
-    '\n[data-ms-solo-off]{opacity:0 !important}'
+    '\n[data-ms-solo-off]{opacity:0 !important}' +
+    // in / out points of a layer without a wrapper (one the composition lays out)
+    '\n[data-ms-io="0"]{visibility:hidden !important}'
 
   /** geometry of each wrapped element (its box in the wrapper, the wrapper's size), for masks */
   var GEO = {}
@@ -629,51 +637,52 @@
     }
     return { group: gid, size: { w: g.offsetWidth, h: g.offsetHeight }, kids: kids }
   }
+  /** one editable element in its own wrapper (moves and effects go there), unless it sits in a layout */
+  function wrapOne(el) {
+    if (el.parentElement && el.parentElement.hasAttribute('data-ms-wrap-for')) return
+    var cs = getComputedStyle(el)
+    if (cs.position !== 'absolute' && cs.position !== 'fixed') {
+      if (cs.position === 'relative') {
+        // keep the authored offset; designer moves add to it
+        el.style.setProperty('--ms-l0', cs.left === 'auto' ? '0px' : cs.left)
+        el.style.setProperty('--ms-t0', cs.top === 'auto' ? '0px' : cs.top)
+      }
+      el.setAttribute('data-ms-unwrappable', cs.position)
+      return
+    }
+    var id = el.getAttribute('data-ms-id')
+    var w = document.createElement('div')
+    w.setAttribute('data-ms-wrap-for', id)
+    w.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;'
+    if (cs.zIndex !== 'auto') w.style.zIndex = cs.zIndex
+    // a 3D scene keeps its depth through the wrapper: a parent in preserve-3d passes the 3D space on
+    // (its perspective already reaches the element through the wrapper — copying it would apply it twice);
+    // a flat parent's perspective only reaches its children, so the wrapper takes it over
+    var pcs = getComputedStyle(el.parentNode)
+    if (pcs.transformStyle === 'preserve-3d') w.style.transformStyle = 'preserve-3d'
+    else if (pcs.perspective && pcs.perspective !== 'none') {
+      w.style.perspective = pcs.perspective
+      w.style.perspectiveOrigin = pcs.perspectiveOrigin
+    }
+    if (cs.mixBlendMode && cs.mixBlendMode !== 'normal') {
+      w.style.setProperty('--ms-cb', cs.mixBlendMode)
+      el.style.setProperty('mix-blend-mode', 'normal', 'important')
+    }
+    el.parentNode.insertBefore(w, el)
+    w.appendChild(el)
+    // pivot designer scale/rotate on the element's untransformed centre (+ the designer's anchor)
+    w.style.setProperty('--ms-cx', (el.offsetLeft + el.offsetWidth / 2) + 'px')
+    w.style.setProperty('--ms-cy', (el.offsetTop + el.offsetHeight / 2) + 'px')
+    GEO[id] = { l: el.offsetLeft, t: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight, pw: w.offsetWidth || 1, ph: w.offsetHeight || 1 }
+    if ((cs.maskImage && cs.maskImage !== 'none') || (cs.webkitMaskImage && cs.webkitMaskImage !== 'none')) MASK_WRAP[id] = 1
+  }
   function wrapEditables() {
     if (wrapped) return
     wrapped = true
     try { if (autoIds()) scan(document.body) } catch (e) { /* layers of their own are best effort */ }
     try { applyFreeze() } catch (e) { /* free layout is best effort */ }
     var list = document.querySelectorAll('[data-ms-id]')
-    for (var i = 0; i < list.length; i++) {
-      var el = list[i]
-      if (el.parentElement && el.parentElement.hasAttribute('data-ms-wrap-for')) continue
-      var cs = getComputedStyle(el)
-      if (cs.position !== 'absolute' && cs.position !== 'fixed') {
-        if (cs.position === 'relative') {
-          // keep the authored offset; designer moves add to it
-          el.style.setProperty('--ms-l0', cs.left === 'auto' ? '0px' : cs.left)
-          el.style.setProperty('--ms-t0', cs.top === 'auto' ? '0px' : cs.top)
-        }
-        el.setAttribute('data-ms-unwrappable', cs.position)
-        continue
-      }
-      var id = el.getAttribute('data-ms-id')
-      var w = document.createElement('div')
-      w.setAttribute('data-ms-wrap-for', id)
-      w.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;'
-      if (cs.zIndex !== 'auto') w.style.zIndex = cs.zIndex
-      // a 3D scene keeps its depth through the wrapper: a parent in preserve-3d passes the 3D space on
-      // (its perspective already reaches the element through the wrapper — copying it would apply it twice);
-      // a flat parent's perspective only reaches its children, so the wrapper takes it over
-      var pcs = getComputedStyle(el.parentNode)
-      if (pcs.transformStyle === 'preserve-3d') w.style.transformStyle = 'preserve-3d'
-      else if (pcs.perspective && pcs.perspective !== 'none') {
-        w.style.perspective = pcs.perspective
-        w.style.perspectiveOrigin = pcs.perspectiveOrigin
-      }
-      if (cs.mixBlendMode && cs.mixBlendMode !== 'normal') {
-        w.style.setProperty('--ms-cb', cs.mixBlendMode)
-        el.style.setProperty('mix-blend-mode', 'normal', 'important')
-      }
-      el.parentNode.insertBefore(w, el)
-      w.appendChild(el)
-      // pivot designer scale/rotate on the element's untransformed centre (+ the designer's anchor)
-      w.style.setProperty('--ms-cx', (el.offsetLeft + el.offsetWidth / 2) + 'px')
-      w.style.setProperty('--ms-cy', (el.offsetTop + el.offsetHeight / 2) + 'px')
-      GEO[id] = { l: el.offsetLeft, t: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight, pw: w.offsetWidth || 1, ph: w.offsetHeight || 1 }
-      if ((cs.maskImage && cs.maskImage !== 'none') || (cs.webkitMaskImage && cs.webkitMaskImage !== 'none')) MASK_WRAP[id] = 1
-    }
+    for (var i = 0; i < list.length; i++) wrapOne(list[i])
     try { wrapParts() } catch (e) { /* character parts are best effort */ }
     try { trimAttrs() } catch (e) { /* line drawing is best effort */ }
     try { moveToGroups() } catch (e) { /* moving between groups is best effort */ }
@@ -745,8 +754,15 @@
           a.effect.updateTiming(t2)
         }
       }
+      // the designer moved the whole layer: its CSS animation moves too
+      var ls = LAYER_SHIFT[owner] != null ? LAYER_SHIFT[owner] : layerShift(owner)
+      if (ls && !rec.disabled) {
+        a.effect.updateTiming({ delay: Math.max(0, rec.delay0 + rec.shift + ls) * 1000 })
+        rec.layerShift = ls
+      }
+      rec.authored = rec.delay0
       var iters = tm.iterations === Infinity ? 1 : num(tm.iterations, 1)
-      rec.start = rec.delay0 + rec.shift
+      rec.start = Math.max(0, rec.delay0 + rec.shift + (rec.layerShift || 0))
       rec.end = rec.start + rec.duration * iters
       CSSANIMS.push(rec)
     })
@@ -875,12 +891,28 @@
     for (var i = 0; i < list.length; i++) applyContent(list[i])
   }
   /**
-   * Text and pictures inside a group that Claude left without a data-ms-id of their own (a phone
-   * mockup's copy) are layers too: they get an id from where they sit in the group
-   * ("<group>~<path>"), the same every time as long as the group keeps its shape.
+   * A plain coloured box: something painted (a fill, a picture background, a border or a shadow)
+   * with no text or pictures inside — the pill behind a label, a divider, a colour block.
+   */
+  function plainBox(e) {
+    if (/^(IMG|VIDEO|CANVAS|PICTURE|svg|SVG)$/.test(e.tagName) || e.querySelector('img,video,canvas,svg,picture,[data-ms-id]')) return false
+    if ((e.textContent || '').replace(/\s+/g, '').length) return false
+    var r = e.getBoundingClientRect()
+    if (r.width < 6 || r.height < 6) return false
+    var cs = getComputedStyle(e)
+    var seen = function (c) { var m = /rgba?\(([^)]+)\)/.exec(c || ''); if (!m) return !!c && c !== 'transparent'; var a = m[1].split(',')[3]; return a == null || parseFloat(a) > 0 }
+    return seen(cs.backgroundColor) || (cs.backgroundImage && cs.backgroundImage !== 'none') ||
+      (parseFloat(cs.borderTopWidth) > 0 && cs.borderTopStyle !== 'none' && seen(cs.borderTopColor)) || (cs.boxShadow && cs.boxShadow !== 'none')
+  }
+  /**
+   * Text, pictures and plain coloured boxes inside a group that Claude left without a data-ms-id of
+   * their own (a phone mockup's copy, the pill behind a label) are layers too: they get an id from
+   * where they sit in the group ("<group>~<path>"), the same every time as long as the group keeps
+   * its shape.
    */
   var autoDone = false
-  function autoIds() {
+  /** boxes: false while the page is still being read (an element's text may not be there yet) */
+  function autoIds(boxes) {
     var made = 0
     var groups = document.querySelectorAll('[data-ms-id]')
     for (var i = 0; i < groups.length; i++) {
@@ -897,13 +929,14 @@
         var own = ''
         for (var c = e.firstChild; c; c = c.nextSibling) if (c.nodeType === 3) own += c.nodeValue
         own = own.replace(/\s+/g, ' ').trim()
-        if (!pic && !own) continue
+        var box = !pic && !own && boxes !== false && plainBox(e)
+        if (!pic && !own && !box) continue
         var path = []
         for (var n = e; n && n !== g; n = n.parentElement) path.unshift(Array.prototype.indexOf.call(n.parentElement.children, n))
         e.setAttribute('data-ms-id', gid + '~' + path.join('.'))
         e.setAttribute('data-ms-auto', '')
-        if (!e.hasAttribute('data-ms-label')) e.setAttribute('data-ms-label', pic ? '그림' : own.slice(0, 16))
-        if (!e.hasAttribute('data-ms-type')) e.setAttribute('data-ms-type', pic ? (e.tagName === 'VIDEO' ? 'video' : 'image') : 'text')
+        if (!e.hasAttribute('data-ms-label')) e.setAttribute('data-ms-label', pic ? '그림' : box ? '상자' : own.slice(0, 16))
+        if (!e.hasAttribute('data-ms-type')) e.setAttribute('data-ms-type', pic ? (e.tagName === 'VIDEO' ? 'video' : 'image') : box ? 'shape' : 'text')
         made++
       }
     }
@@ -917,7 +950,7 @@
     // performs before executing each <script>, i.e. before authored code runs.
     var mo = new MutationObserver(function (recs) {
       // layers that got an id of their own now take their text too
-      if (hasAuto && autoIds()) scan(document.body)
+      if (hasAuto && autoIds(false)) scan(document.body)
       recs.forEach(function (r) { r.addedNodes.forEach(scan) })
     })
     mo.observe(document.documentElement, { childList: true, subtree: true })
@@ -1126,21 +1159,138 @@
     var host = target.closest('[data-ms-id]')
     return host ? host.getAttribute('data-ms-id') : null
   }
-  function applyElementTiming(tl) {
-    tl.getChildren(true, true, false).forEach(function (tw) {
-      var ids = {}
-      tw.targets().forEach(function (t) { var id = ownerId(t); if (id) ids[id] = 1 })
-      Object.keys(ids).forEach(function (id) {
-        var o = EL[id]
-        if (!o) return
-        if (o.animSpeed && o.animSpeed !== 1) tw.timeScale(o.animSpeed)
-        if (o.timing && o.timing.shift) {
-          // tweens inside scene sub-timelines move too (in their parent's time units)
-          var k = 1
-          for (var p = tw.parent; p && p !== tl; p = p.parent) k *= p.timeScale() || 1
-          tw.startTime(Math.max(0, tw.startTime() + o.timing.shift * k))
-        }
+  /** the layers a tween animates (its targets' nearest named elements), first target first */
+  function tweenOwners(tw) {
+    var ids = []
+    tw.targets().forEach(function (t) { var id = ownerId(t); if (id && ids.indexOf(id) < 0) ids.push(id) })
+    return ids
+  }
+  function layerShift(id) { var o = EL[id]; return o && o.timing ? +o.timing.shift || 0 : 0 }
+  /** a set at the very start (an initial state such as autoAlpha:0) belongs to no moment: it stays */
+  function initialSet(tw, tl) { return tw.duration() === 0 && globalStart(tw, tl) <= 1e-6 }
+  /** per-target start offsets of a staggered tween (GSAP's own distribution), null when not staggered */
+  function staggerOffsets(tw) {
+    var st = tw.vars && tw.vars.stagger, list = tw.targets()
+    if (st == null || list.length < 2 || !window.gsap) return null
+    try {
+      var f = typeof st === 'function' ? st : window.gsap.utils.distribute(typeof st === 'number' ? { each: st } : st)
+      return list.map(function (t, i) { return +f(i, t, list) || 0 })
+    } catch (e) { return null }
+  }
+  /** a tween's place in its parent, moved by s seconds of the main timeline */
+  function moveTween(tw, tl, s) {
+    var k = 1
+    for (var p = tw.parent; p && p !== tl; p = p.parent) k *= p.timeScale() || 1
+    // never before the start of the scene it sits in (GSAP would move the whole scene)
+    tw.startTime(Math.max(0, tw.startTime() + s * k))
+    tw.__msShifted = true
+  }
+  /**
+   * One tween animates layers the designer moved by different amounts: it becomes one tween per
+   * target (the stagger kept as each target's own offset), each moved with its layer.
+   */
+  function splitTween(tw, tl, eff) {
+    var parent = tw.parent, list = tw.targets(), v = tw.vars || {}
+    if (!parent || typeof parent.add !== 'function' || !window.gsap || !list.length) return
+    // a stagger that repeats as a whole cannot become separate tweens with the same rhythm: it stays
+    if (v.stagger != null && v.repeat) return
+    var offs = staggerOffsets(tw) || list.map(function () { return 0 })
+    // the tween's place already counts its delay; offsets are in the tween's own (sped-up) time
+    var at = tw.startTime(), speed = tw.timeScale() || 1
+    var per = v.stagger && typeof v.stagger === 'object' ? v.stagger : null
+    var k = 1
+    for (var p = parent; p && p !== tl; p = p.parent) k *= p.timeScale() || 1
+    // a from / fromTo tween already drew its start values: back to the values before it, so the
+    // copies read the same end values the original did
+    try { if (tw.revert) tw.revert(); else tw.kill() } catch (e) { tw.kill() }
+    var wasOff = CAPTURE_OFF
+    CAPTURE_OFF = true
+    var made = []
+    try {
+      list.forEach(function (t, i) {
+        var c = {}
+        Object.keys(v).forEach(function (key) { if (key !== 'stagger' && key !== 'delay') c[key] = v[key] })
+        if (v.startAt) c.startAt = Object.assign({}, v.startAt)
+        // what a stagger object gives each target (its own repeat / yoyo)
+        if (per) ['repeat', 'yoyo', 'repeatDelay', 'yoyoEase'].forEach(function (key) { if (per[key] != null) c[key] = per[key] })
+        var mine = window.gsap.to(t, c)
+        parent.add(mine, Math.max(0, at + offs[i] / speed + (eff[ownerId(t)] || 0) * k))
+        if (speed !== 1) mine.timeScale(speed)
+        mine.__msShifted = true
+        made.push({ t: t, tw: mine })
       })
+    } finally {
+      CAPTURE_OFF = wasOff
+    }
+    // the motion list keeps pointing at living tweens: the staggered motion at the first target's
+    // copy, each target's own record (inside GSAP's stagger) at that target's copy
+    MOTIONS.forEach(function (m) {
+      var inner = m.nested && m.tween && m.tween.parent && m.tween.parent.parent === tw
+      if (m.tween !== tw && !inner) return
+      var target = inner ? m.tween.targets()[0] : null
+      var hit = made.filter(function (x) { return inner ? x.t === target : ownerId(x.t) === m.owners[0] })[0] || (inner ? null : made[0])
+      if (hit) { m.tween = hit.tw; m.split = true }
+    })
+  }
+  function applyElementTiming(tl) {
+    var tweens = tl.getChildren(true, true, false).filter(function (tw) { return !tw.__msShifted })
+    tweens.forEach(function (tw) {
+      tweenOwners(tw).forEach(function (id) { var o = EL[id]; if (o && o.animSpeed && o.animSpeed !== 1) tw.timeScale(o.animSpeed) })
+    })
+    var eff = {}
+    Object.keys(EL).forEach(function (id) { if (layerShift(id)) eff[id] = layerShift(id) })
+    if (!Object.keys(eff).length) return
+    // moved earlier than the start of the video: the whole layer stops at 0 (its spacing is kept)
+    // (a tween in a scene can only move back to the scene's start: that counts too)
+    var first = {}
+    tweens.forEach(function (tw) {
+      if (initialSet(tw, tl)) return
+      var k = 1
+      for (var p = tw.parent; p && p !== tl; p = p.parent) k *= p.timeScale() || 1
+      var s = Math.min(globalStart(tw, tl), tw.parent === tl ? Infinity : tw.startTime() / k)
+      tweenOwners(tw).forEach(function (id) { if (eff[id] != null) first[id] = Math.min(first[id] == null ? Infinity : first[id], s) })
+    })
+    clipsOf(eff).forEach(function (c) { first[c.id] = Math.min(first[c.id] == null ? Infinity : first[c.id], c.start) })
+    Object.keys(eff).forEach(function (id) { if (eff[id] < 0 && isFinite(first[id])) eff[id] = Math.max(eff[id], -first[id]) })
+    tweens.forEach(function (tw) {
+      if (initialSet(tw, tl)) return
+      var moves = tweenOwners(tw).map(function (id) { return eff[id] || 0 })
+      if (!moves.some(function (x) { return x })) return
+      // a tween shared by layers moved together moves once
+      if (moves.every(function (x) { return x === moves[0] })) moveTween(tw, tl, moves[0])
+      else splitTween(tw, tl, eff)
+    })
+    // clips placed by data-start (videos, pictures) move with their layer
+    clipsOf(eff).forEach(function (c) {
+      c.el.setAttribute('data-start', Math.max(0, c.start + eff[c.id]).toFixed(4))
+      c.el.setAttribute('data-ms-shifted', '')
+    })
+    LAYER_SHIFT = eff
+  }
+  /** elements with their own data-start inside moved layers (not sounds, not scenes) */
+  function clipsOf(eff) {
+    var out = []
+    var list = document.querySelectorAll('[data-start]')
+    for (var i = 0; i < list.length; i++) {
+      var el = list[i]
+      // the app already wrote a moved video's start into the page (the export reads it there)
+      if (el.tagName === 'AUDIO' || el.hasAttribute('data-composition-id') || el.hasAttribute('data-ms-shifted') || el.hasAttribute('data-ms-shift-baked')) continue
+      var id = ownerId(el)
+      if (!id || eff[id] == null) continue
+      out.push({ el: el, id: id, start: parseFloat(el.getAttribute('data-start')) || 0 })
+    }
+    return out
+  }
+  /** what each layer actually moved by (after the stop at 0), for the editor */
+  var LAYER_SHIFT = {}
+  /** motion times after the layers moved (the editor's blocks and Claude's keys show these) */
+  function refreshMotionTimes(tl) {
+    MOTIONS.forEach(function (m) {
+      var tw = m.tween
+      if (!tw || !inRoot(tw, tl)) return
+      m.start = globalStart(tw, tl)
+      m.end = m.start + tw.totalDuration() / (tw.timeScale() || 1)
+      m.layerShift = LAYER_SHIFT[m.owners[0]] || 0
     })
   }
 
@@ -1552,6 +1702,13 @@
           T.set(w, { '--ms-io': inP > 0 ? 0 : 1 }, 0)
           if (inP > 0) T.set(w, { '--ms-io': 1 }, inP)
           if (outP < D) T.set(w, { '--ms-io': 0 }, Math.max(inP, outP))
+        } else if (!w.length && id !== CAMERA && (inP > 0 || outP < D)) {
+          // a layer the composition lays out has no wrapper: it is hidden by an attribute the
+          // stylesheet answers with !important (Claude's own opacity / autoAlpha stay as they are)
+          var self = targetsOf(id, 'el')
+          T.set(self, { attr: { 'data-ms-io': inP > 0 ? '0' : '1' } }, 0)
+          if (inP > 0) T.set(self, { attr: { 'data-ms-io': '1' } }, inP)
+          if (outP < D) T.set(self, { attr: { 'data-ms-io': '0' } }, Math.max(inP, outP))
         }
       })
     } finally {
@@ -1623,17 +1780,27 @@
     return t
   }
   function collectTiming(tl) {
+    var sets = {}
     tl.getChildren(true, true, false).forEach(function (tw) {
       var s = globalStart(tw, tl)
-      var e = s + tw.totalDuration() / (tw.timeScale() || 1)
-      tw.targets().forEach(function (t) {
+      var len = tw.totalDuration() / (tw.timeScale() || 1)
+      // a staggered tween's duration spans every target: one target plays for what is left after the last offset
+      var offs = staggerOffsets(tw), maxOff = offs ? Math.max.apply(null, offs) : 0
+      var init = initialSet(tw, tl)
+      tw.targets().forEach(function (t, i) {
         var id = ownerId(t)
         if (!id) return
+        // an initial state at 0 (autoAlpha:0 before an entrance) is not when the layer shows up
+        if (init) { sets[id] = 1; return }
+        var ts = tw.timeScale() || 1
+        var a = s + (offs ? offs[i] / ts : 0)
         var r = TIMING[id] || (TIMING[id] = { start: Infinity, end: -Infinity })
-        r.start = Math.min(r.start, s)
-        r.end = Math.max(r.end, e)
+        r.start = Math.min(r.start, a)
+        // each target ends that much before the last one (repeats included)
+        r.end = Math.max(r.end, offs ? s + len - (maxOff - offs[i]) / ts : s + len)
       })
     })
+    Object.keys(sets).forEach(function (id) { if (!TIMING[id]) TIMING[id] = { start: 0, end: 0 } })
     var clips = document.querySelectorAll('[data-ms-id][data-start]')
     for (var i = 0; i < clips.length; i++) {
       var c = clips[i], id = c.getAttribute('data-ms-id')
@@ -1655,7 +1822,8 @@
     var isMain = !prepped && (!root || rootEl === root || !rootEl)
     if (isMain) { try { prep(tl) } catch (e) { /* duplicates and order are best effort */ } }
     try { finishMotions(tl, isMain) } catch (e) { /* motion edits are best effort */ }
-    applyElementTiming(tl)
+    try { applyElementTiming(tl) } catch (e) { /* layer timing is best effort */ }
+    try { refreshMotionTimes(tl) } catch (e) { /* the editor's motion times are best effort */ }
     try { collectTiming(tl) } catch (e) { /* timing bars are best effort */ }
     wrapEditables()
     // registered twice: designer edits must not be applied twice
@@ -1696,6 +1864,21 @@
     set: function (obj, key, value) { obj[key] = wrapTimeline(String(key), value); return true },
   })
   document.addEventListener('DOMContentLoaded', wrapEditables)
+  /** plain boxes are only told apart once the page is read: named and wrapped then */
+  document.addEventListener('DOMContentLoaded', function () {
+    if (!wrapped) return
+    try {
+      if (autoIds()) scan(document.body)
+      // named now (here, or by the designer's own edits a moment ago) but not wrapped yet
+      var fresh = 0
+      document.querySelectorAll('[data-ms-auto]').forEach(function (e) {
+        if (e.hasAttribute('data-ms-unwrappable') || (e.parentElement && e.parentElement.hasAttribute('data-ms-wrap-for'))) return
+        wrapOne(e)
+        fresh++
+      })
+      if (fresh) applyStyles(EL)
+    } catch (e) { /* layers of their own are best effort */ }
+  })
 
   // ---- 3d. Claude's motion as keyframes (for the designer to take over) ----------------
   var READ_AS = { scale: 'scaleX', autoAlpha: 'opacity', rotate: 'rotation' }
@@ -1953,6 +2136,53 @@
       },
     }
   }
+  /** on screen at this moment: not hidden, not faded out (its own opacity and every parent's, wrappers included) */
+  function shownNow(el) {
+    var cs = getComputedStyle(el)
+    if (cs.visibility === 'hidden' || cs.display === 'none') return false
+    for (var p = el; p && p !== document.documentElement; p = p.parentElement) {
+      var pcs = p === el ? cs : getComputedStyle(p)
+      if (pcs.display === 'none' || parseFloat(pcs.opacity) <= 0.01) return false
+    }
+    return true
+  }
+  /** a layer draws something itself: a picture, its own text, a fill, a border or a shadow */
+  function paintsItself(el) {
+    if (/^(IMG|VIDEO|CANVAS|PICTURE)$/.test(el.tagName) || el.tagName.toLowerCase() === 'svg' || el.closest('svg')) return true
+    for (var c = el.firstChild; c; c = c.nextSibling) if (c.nodeType === 3 && c.nodeValue.trim()) return true
+    var cs = getComputedStyle(el)
+    var seen = function (c) { var m = /rgba?\(([^)]+)\)/.exec(c || ''); if (!m) return !!c && c !== 'transparent'; var a = m[1].split(',')[3]; return a == null || parseFloat(a) > 0 }
+    return seen(cs.backgroundColor) || (cs.backgroundImage && cs.backgroundImage !== 'none') || (parseFloat(cs.borderTopWidth) > 0 && seen(cs.borderTopColor)) || (cs.boxShadow && cs.boxShadow !== 'none')
+  }
+  /**
+   * The layers at a point, top first, as the designer sees them now (After Effects picks the top
+   * layer with pixels there): layers faded out or hidden at this moment are skipped, and the bare
+   * area of a container (a scene group that draws nothing itself) comes after what is drawn.
+   * The app's wrappers and the composition may turn pointer events off — the test ignores that.
+   */
+  function hitAt(x, y) {
+    var st = document.createElement('style')
+    st.textContent = '*{pointer-events:auto !important}'
+    document.head.appendChild(st)
+    var hits
+    try { hits = document.elementsFromPoint(x, y) } finally { st.remove() }
+    var ids = [], bare = []
+    for (var h = 0; h < hits.length; h++) {
+      var e = hits[h]
+      // the app's own wrappers fill their parent but draw nothing
+      if (!e.closest || (e.hasAttribute && e.hasAttribute('data-ms-wrap-for'))) continue
+      // a character part first (the editor picks it once its character is picked)
+      var part = e.closest('[data-ms-part]')
+      if (part && shownNow(part) && ids.indexOf(part.getAttribute('data-ms-part')) < 0) ids.push(part.getAttribute('data-ms-part'))
+      var host = e.closest('[data-ms-id]')
+      if (!host) continue
+      var hid = host.getAttribute('data-ms-id')
+      if (ids.indexOf(hid) >= 0 || !shownNow(e)) continue
+      if (e === host && !paintsItself(host)) { if (bare.indexOf(hid) < 0) bare.push(hid); continue }
+      ids.push(hid)
+    }
+    return ids.concat(bare.filter(function (id) { return ids.indexOf(id) < 0 }))
+  }
   function listElements() {
     var out = []
     var list = document.querySelectorAll('[data-ms-id]')
@@ -2036,8 +2266,9 @@
         items.push({
           key: m.key, editKey: m.editKey || m.key, owners: m.owners, self: m.self, type: m.type, sig: m.sig, props: m.props, ease: m.ease,
           duration: m.duration, stagger: m.stagger, staggerEach: m.staggerEach, staggerFrom: m.staggerFrom, staggerCount: m.tween && m.tween.targets ? m.tween.targets().length : 1,
-          repeat: m.repeat, yoyo: m.yoyo, shift: m.shift, edited: m.edited, disabled: m.disabled,
-          authoredStart: m.start - m.shift,
+          repeat: m.repeat, yoyo: m.yoyo, shift: m.shift, edited: m.edited, disabled: m.disabled, nested: !!m.nested,
+          authoredStart: m.authored != null ? m.authored : m.start - m.shift - (m.layerShift || 0),
+          layerShift: m.layerShift || 0,
           start: MM ? MM.map(m.start) : m.start,
           end: MM ? MM.map(m.end) : m.end,
         })
@@ -2059,21 +2290,7 @@
       solo(d.ids)
       reply({ ok: true })
     }
-    else if (d.ms === 'hit') {
-      // what is painted at a point, top first (the innermost editable element of each hit)
-      var ids = []
-      var hits = document.elementsFromPoint(+d.x || 0, +d.y || 0)
-      for (var h = 0; h < hits.length; h++) {
-        // a character part first (the editor picks it once its character is picked)
-        var part = hits[h].closest && hits[h].closest('[data-ms-part]')
-        if (part && ids.indexOf(part.getAttribute('data-ms-part')) < 0) ids.push(part.getAttribute('data-ms-part'))
-        var host = hits[h].closest && hits[h].closest('[data-ms-id]')
-        if (!host) continue
-        var hid = host.getAttribute('data-ms-id')
-        if (ids.indexOf(hid) < 0) ids.push(hid)
-      }
-      reply({ ids: ids })
-    }
+    else if (d.ms === 'hit') reply({ ids: hitAt(+d.x || 0, +d.y || 0) })
   })
 
   // ---- 5. transport state for the editor (time, duration, playing) ----------------

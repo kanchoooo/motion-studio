@@ -20,6 +20,7 @@ import {
   type Overrides,
   type TimeRemapSection,
   type WiggleProp,
+  shiftElement,
 } from '@shared/overrides'
 import { trackKeys, withTrack, type Track } from './tracks'
 import { onLeaveProject, studio, useStore } from '../../store'
@@ -105,7 +106,8 @@ interface OverrideState {
   /** box, text, picture… of a layer added by hand */
   updateLayer(id: string, patch: Partial<DesignerLayer>, summary: string): void
   /** copies in place (a copy of Claude's layer keeps its motion); returns the new ids */
-  duplicate(items: { id: string; label: string; copyOf: string | null; stack: string }[]): string[]
+  /** copies of layers (with `override`: those edits instead of the original's current ones, e.g. a paste) */
+  duplicate(items: { id: string; label: string; copyOf: string | null; stack: string; override?: ElementOverride }[]): string[]
   /** deletes (Claude's layers stay restorable) */
   remove(items: { id: string; label: string }[]): void
   restore(id: string, label: string): void
@@ -133,6 +135,11 @@ interface OverrideState {
   /** a group laid out by the composition, set free (null: back to its layout) */
   setFree(group: string, label: string, frozen: FrozenGroup | null): void
   setInOut(items: { id: string; label: string }[], inPoint: number | null | undefined, outPoint: number | null | undefined): void
+  /**
+   * whole layers moved in time (the timeline bar): Claude's motion by `authored` seconds of the
+   * authored timeline, the designer's own keys, in/out points and other timed edits by `dt` (output time)
+   */
+  shiftLayers(items: { id: string; label: string; authored: number; dt: number }[]): void
   // ---- timeline / canvas helpers ----
   addMarker(t: number): void
   updateMarker(id: string, patch: { t?: number; label?: string }): void
@@ -243,7 +250,7 @@ export const useOverrides = create<OverrideState>((set, get) => {
   const commit = (next: Overrides, keys: string[], summary: string, live = false) => {
     const cur = get().value
     if (!cur) return
-    set({ value: next, ...pushUndo(cur) })
+    set({ value: next, ...pushUndo(cur, keys.join(',')) })
     if (live && !keys.some((k) => NEEDS_RELOAD.has(k))) void livePreview(next)
     schedule(keys, summary)
   }
@@ -267,6 +274,7 @@ export const useOverrides = create<OverrideState>((set, get) => {
       const { past, value, future } = get()
       if (!past.length || !value) return
       const prev = past[past.length - 1]
+      breakUndoGroup()
       set({ value: prev, past: past.slice(0, -1), future: [value, ...future].slice(0, 100), reload: true })
       schedule(['text'], '실행 취소')
     },
@@ -275,6 +283,7 @@ export const useOverrides = create<OverrideState>((set, get) => {
       const { past, value, future } = get()
       if (!future.length || !value) return
       const next = future[0]
+      breakUndoGroup()
       set({ value: next, future: future.slice(1), past: [...past, value].slice(-100), reload: true })
       schedule(['text'], '다시 실행')
     },
@@ -373,7 +382,7 @@ export const useOverrides = create<OverrideState>((set, get) => {
         const id = newLayerId(own ? 'L' : 'D')
         if (own) layers = [...layers, { ...own, id, label: `${own.label} 복사` }]
         else duplicates = [...duplicates, { id, of: it.copyOf ?? it.id }]
-        const { locked: _l, deleted: _d, ...copy } = structuredClone(elements[it.id] ?? {})
+        const { locked: _l, deleted: _d, ...copy } = structuredClone(it.override ?? elements[it.id] ?? {})
         elements[id] = { ...copy, label: `${copy.label ?? it.label} 복사` }
         // the copy sits right above the original
         const stack = order[it.stack]
@@ -588,6 +597,14 @@ export const useOverrides = create<OverrideState>((set, get) => {
       commit(next, ['inout'], items.length === 1 ? `${items[0].label}: 인/아웃` : `레이어 ${items.length}개 인/아웃`)
     },
 
+    shiftLayers: (items) => {
+      if (!editable() || !items.length) return
+      let next = get().value!
+      for (const { id, authored, dt } of items) next = withElement(next, id, (e) => shiftElement(e, authored, dt))
+      const dt = items[0].dt
+      const by = `${dt >= 0 ? '+' : ''}${dt.toFixed(2)}초`
+      commit(next, ['shift', 'keys'], items.length === 1 ? `${items[0].label}: 시간 이동 ${by}` : `레이어 ${items.length}개 시간 이동 ${by}`)
+    },
     addMarker: (t) => {
       if (!editable()) return
       const cur = get().value!
@@ -622,14 +639,22 @@ function mergeElement(prev: ElementOverride, patch: ElementOverride): ElementOve
   }
 }
 
-// a drag or a scrub produces many patches; keep one undo step per gesture
+// a drag or a scrub produces many patches of the same kind: one undo step per gesture (another kind of
+// edit right after — ⌘D then an arrow nudge — is a step of its own)
 let lastPush = 0
-function pushUndo(cur: Overrides): Partial<OverrideState> {
+let lastKind = ''
+function pushUndo(cur: Overrides, kind = ''): Partial<OverrideState> {
   const now = Date.now()
   const st = useOverrides.getState()
-  const coalesce = now - lastPush < 600
+  const coalesce = now - lastPush < 600 && kind === lastKind
   lastPush = now
+  lastKind = kind
   return coalesce ? { future: [] } : { past: [...st.past, cur].slice(-100), future: [] }
+}
+/** after undo / redo the next edit is always a step of its own */
+function breakUndoGroup() {
+  lastPush = 0
+  lastKind = ''
 }
 
 export function rgbToHex(c: string): string {

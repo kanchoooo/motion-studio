@@ -48,6 +48,8 @@ interface EditorState {
   view: { zoom: number | null; panX: number; panY: number }
   /** draw a mask on the canvas for this layer */
   maskDraw: string | null
+  /** a layer pointed at in a list (layer list, menu): outlined on the canvas */
+  peek: string | null
   set(p: Partial<EditorState>): void
   /** pick one element (null clears); add: Shift/⌘ adds it to the selection, or takes it out again */
   select(id: string | null, add?: boolean): void
@@ -85,12 +87,14 @@ export const useEditor = create<EditorState>((set, get) => ({
   workArea: null,
   view: { zoom: null, panX: 0, panY: 0 },
   maskDraw: null,
+  peek: null,
   set: (p) => set(p),
   select: (id, add = false) => {
     const { selection: picked, selected } = get()
     const cur = picked.length ? picked : selected ? [selected] : []
-    if (!id) return set({ selected: null, selection: [] })
-    if (!add) return set({ selected: id, selection: [id] })
+    // another layer: keyframes picked before are no longer what Delete removes
+    if (!id) return set({ selected: null, selection: [], selectedKeys: [] })
+    if (!add) return set(id === selected && picked.length <= 1 ? { selected: id, selection: [id] } : { selected: id, selection: [id], selectedKeys: [] })
     const selection = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]
     set({ selection, selected: selection[0] ?? null })
   },

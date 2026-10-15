@@ -46,9 +46,10 @@ import {
   type TextCounter,
   type WiggleProp,
 } from '@shared/overrides'
+import { makeTimeMap } from '@shared/timeRemap'
 import { FontSelect } from '../../components/FontSelect'
 import { ColorField, NumberField, Segmented, Toggle } from '../../components/ui'
-import { studio, useStore } from '../../store'
+import { cleanError, studio, useStore } from '../../store'
 import { anyNow, freeLayout, isKeyed, keyTimes, labelOf, releaseOwn, reorder, setOwnNow, setProps, snapT, takeOver, toggleKeyHere, toggleStopwatch } from './edit'
 import { useEditor } from './editorStore'
 import { useOverrides } from './overrides'
@@ -783,6 +784,15 @@ function TextSection({ id }: { id: string }) {
   )
 }
 
+/** a CSS colour that shows (not transparent, not fully clear) */
+const seenColour = (c: string | undefined) => {
+  if (!c || c === 'transparent') return false
+  const m = /rgba?\(([^)]+)\)/.exec(c)
+  if (!m) return true
+  const a = m[1].split(',')[3]
+  return a == null || parseFloat(a) > 0
+}
+
 function ShapeSection({ id }: { id: string }) {
   const o = useOverrides((s) => s.value?.elements[id]) ?? {}
   const { patchElement } = useOverrides()
@@ -793,8 +803,32 @@ function ShapeSection({ id }: { id: string }) {
   const gradOn = !!s.gradient || isKeyed(id, 'gradA') || isKeyed(id, 'gradB')
   const strokeOn = !!s.stroke || isKeyed(id, 'strokeWidth')
   const any = fillOn || gradOn || strokeOn || s.radius != null
+  // a text of Claude's that carries its own coloured box: Claude can make the box a layer of its own
+  const el = useEditor((st) => st.elements.find((e) => e.id === id))
+  const { project, toast } = useStore()
+  const boxed = !!el && el.type === 'text' && !el.designer && !id.includes('~') && seenColour(el.style.background)
   return (
     <Section title="모양" right={any && <button className="btn ghost sm" style={{ height: 22 }} onClick={() => patchElement(id, label, { style: { fill: undefined, stroke: undefined, radius: undefined, gradient: null } }, ['fill'])}>되돌리기</button>}>
+      {boxed && (
+        <div className="row tiny" style={{ gap: 6, padding: '6px 8px', borderRadius: 6, background: 'var(--surface-2)' }} data-testid="split-box">
+          <span className="grow muted">글자와 배경 상자가 한 레이어예요. 따로 고치려면 나눠요.</span>
+          <button
+            className="btn sm"
+            style={{ height: 24 }}
+            onClick={async () => {
+              try {
+                await studio.agent.splitLayer(project!.meta.id, id)
+                toast('Claude에게 글자와 배경을 나눠 달라고 했어요. 끝나면 두 레이어로 보여요.', 'success')
+              } catch (e) {
+                toast(cleanError(e instanceof Error ? e.message : String(e)), 'error')
+              }
+            }}
+            data-testid="split-box-run"
+          >
+            배경 따로 떼기
+          </button>
+        </div>
+      )}
       <div className="row small">
         <Toggle on={fillOn && !gradOn} onChange={(on) => patchStyle({ fill: on ? String(anyNow(id, 'fill')) : undefined, gradient: null }, 'fill')} />
         <span className="grow">채우기</span>
@@ -968,26 +1002,51 @@ function TimeSection({ id }: { id: string }) {
       </div>
       {!layer && el.type !== 'part' && (
         <>
-          <div className="row tiny muted">
-            <span className="grow">Claude가 만든 움직임 속도</span>
-            <span className="mono">{(o.animSpeed ?? 1).toFixed(2)}×</span>
-          </div>
-          <input
-            type="range"
-            min={0.25}
-            max={3}
-            step={0.05}
-            value={o.animSpeed ?? 1}
-            onChange={(e) => useOverrides.setState({ value: { ...ov, elements: { ...ov.elements, [id]: { ...o, animSpeed: Number(e.target.value) } } } })}
-            onPointerUp={(e) => patchElement(id, label, { animSpeed: Number((e.target as HTMLInputElement).value) }, ['animSpeed'])}
+          <SpeedSlider value={o.animSpeed ?? 1} onCommit={(animSpeed) => patchElement(id, label, { animSpeed }, ['animSpeed'])} />
+          <NumberField
+            title="레이어 전체(Claude 움직임, 직접 넣은 키프레임, 인/아웃)를 앞뒤로 옮겨요 · 타임라인 막대를 끌어도 돼요"
+            label="시점"
+            unit="초"
+            value={o.timing?.shift ?? 0}
+            step={0.1}
+            precision={2}
+            min={-60}
+            max={60}
+            onChange={(shift) => {
+              // the field is Claude's (authored) time; the bar, keys and in/out are output time (sections may run at another speed)
+              const start = useEditor.getState().timing.find((t) => t.id === id)?.start ?? 0
+              const map = makeTimeMap(useStore.getState().project?.brief.output.duration ?? 1, ov.timeRemap ?? [])
+              const a0 = map.toAuthored(start)
+              // never before 0: the layer stops there with its keys (as the preview stops it)
+              const by = +Math.max(shift - (o.timing?.shift ?? 0), -a0).toFixed(3)
+              const dt = +(map.toOutput(a0 + by) - start).toFixed(3)
+              if (by) useOverrides.getState().shiftLayers([{ id, label, authored: by, dt }])
+            }}
           />
-          <NumberField title="Claude가 만든 움직임을 앞뒤로 옮겨요" label="시점" unit="초" value={o.timing?.shift ?? 0} step={0.1} precision={1} min={-10} max={10} onChange={(shift) => patchElement(id, label, { timing: { shift } }, ['shift'])} />
           <button className="btn sm" style={{ alignSelf: 'flex-start' }} onClick={() => useEditor.setState({ panel: 'motion', selectedMotion: null })}>
             Claude가 만든 모션 하나하나 조정하기 →
           </button>
         </>
       )}
     </Section>
+  )
+}
+
+/** Claude's motion speed: dragged freely, saved (one undo step) when let go */
+function SpeedSlider({ value, onCommit }: { value: number; onCommit(v: number): void }) {
+  const [draft, setDraft] = useState<number | null>(null)
+  const commit = () => {
+    if (draft != null && draft !== value) onCommit(draft)
+    setDraft(null)
+  }
+  return (
+    <>
+      <div className="row tiny muted">
+        <span className="grow">Claude가 만든 움직임 속도</span>
+        <span className="mono">{(draft ?? value).toFixed(2)}×</span>
+      </div>
+      <input type="range" min={0.25} max={3} step={0.05} value={draft ?? value} onChange={(e) => setDraft(Number(e.target.value))} onPointerUp={commit} onKeyUp={commit} onBlur={commit} data-testid="anim-speed" />
+    </>
   )
 }
 

@@ -35,7 +35,7 @@ import {
   Volume2,
   X,
 } from 'lucide-react'
-import { CAMERA_ID, EASY_EASE, KEY_EASES, keysAt, PROPS, sortedKeys, type KeyProp, type TimeRemapSection } from '@shared/overrides'
+import { EASY_EASE, KEY_EASES, keysAt, PROPS, sortedKeys, type KeyProp, type TimeRemapSection } from '@shared/overrides'
 import { makeTimeMap } from '@shared/timeRemap'
 import { Splitter } from '../../components/Splitter'
 import { CurveEditor } from './CurveEditor'
@@ -55,6 +55,7 @@ import {
   toggleHidden,
   trimToPlayhead,
 } from './edit'
+import { stackedTree } from '@shared/layers'
 import { useEditor } from './editorStore'
 import { ADD_LAYER } from './Inspector'
 import { clampSize, LAYOUT_DEFAULTS, useLayout } from './layout'
@@ -94,7 +95,7 @@ function keyRowsOf(o: Parameters<typeof keyedTracks>[0]): { label: string; props
 type Drag =
   | { kind: 'ckey'; id: string; prop: string; t: number; dx: number }
   | { kind: 'motion'; key: string; mode: 'move' | 'len'; dx: number }
-  | { kind: 'layer'; id: string; dx: number }
+  | { kind: 'layer'; id: string; dx: number; snapAt?: number }
   | { kind: 'inout'; id: string; edge: 'in' | 'out'; dx: number }
   | { kind: 'keys'; dx: number }
   | { kind: 'marker'; id: string; dx: number }
@@ -108,43 +109,12 @@ export function timecode(t: number, fps: number): string {
   return `${p(Math.floor(s / 3600))}:${p(Math.floor(s / 60) % 60)}:${p(s % 60)}:${p(f % fr)}`
 }
 
-/** layers in stacking order: a group's children follow it, top of each stack first */
-function stackedTree(elements: RuntimeElement[]): RuntimeElement[] {
-  const layers = elements.filter((e) => !['sfx', 'bgm', 'voice'].includes(e.type))
-  const kids = new Map<string | null, RuntimeElement[]>()
-  for (const e of layers) {
-    const k = e.parent
-    if (!kids.has(k)) kids.set(k, [])
-    kids.get(k)!.push(e)
-  }
-  const out: RuntimeElement[] = []
-  const walk = (parent: string | null) => {
-    const list = kids.get(parent) ?? []
-    // siblings that stack together keep their group (in document order), each group top first
-    const groups: string[] = []
-    for (const e of list) if (!groups.includes(e.stack)) groups.push(e.stack)
-    for (const g of groups) {
-      for (const e of list.filter((x) => x.stack === g).sort((a, b) => a.rank - b.rank)) {
-        out.push(e)
-        walk(e.id)
-      }
-    }
-  }
-  walk(null)
-  // anything whose parent is not listed (should not happen) still shows
-  for (const e of layers) if (!out.includes(e)) out.push(e)
-  // the camera sits on top, like a camera layer in After Effects
-  const cam = out.findIndex((e) => e.id === CAMERA_ID)
-  if (cam > 0) out.unshift(...out.splice(cam, 1))
-  return out
-}
-
 export function Timeline() {
   const { project, toast } = useStore()
   const ed = useEditor()
   const { player, time, duration, playing, marks, audio, selectedAudio, timing, selection, elements, motions, selectedMotion, openLayers, selectedKeys, solo, workArea } = ed
-  const { value: ov, setRemap, patchElements, patchMotion, setLocked, setInOut, moveKeys, setKeyEase, removeKeys, addMarker, updateMarker, removeMarker } = useOverrides()
-  const { layerW, zoom, frames, set: setLayout } = useLayout()
+  const { value: ov, setRemap, patchMotion, setLocked, setInOut, moveKeys, setKeyEase, removeKeys, addMarker, updateMarker, removeMarker, shiftLayers } = useOverrides()
+  const { layerW, zoom, frames, snap, set: setLayout } = useLayout()
   const scroller = useRef<HTMLDivElement>(null)
   const [viewW, setViewW] = useState(800)
   const [drag, setDrag] = useState<Drag | null>(null)
@@ -243,17 +213,32 @@ export function Timeline() {
     el.addEventListener('pointercancel', up)
   }
 
-  /** layer click: Shift/⌘ adds or removes it, a click on the only selected layer clears the selection */
+  /** layer click: picks it (Shift/⌘ adds or removes it); the empty space below the layers or Esc clears */
   const pickLayer = (id: string, e: React.MouseEvent | React.PointerEvent) => {
     const add = e.shiftKey || e.metaKey || e.ctrlKey
-    if (!add && selection.length === 1 && selection[0] === id) ed.select(null)
-    else ed.select(id, add)
+    ed.select(id, add)
     useEditor.setState({ selectedMotion: null, panel: 'elements', selectedKeys: [] })
   }
 
-  const layers = useMemo(() => stackedTree(elements), [elements])
+  const [onlySel, setOnlySel] = useState(false)
+  /** the pointer just ended a drag (its click is not a click) */
+  const dragged = useRef(false)
+  const stacked = useMemo(() => stackedTree(elements), [elements])
+  // 선택한 것만: the picked layers and the groups they sit in
+  const layers = useMemo(() => {
+    if (!onlySel || !selection.length) return stacked
+    const keep = new Set<string>()
+    for (const id of selection) for (let p: string | null | undefined = id; p; p = stacked.find((x) => x.id === p)?.parent) keep.add(p)
+    return stacked.filter((x) => keep.has(x.id))
+  }, [stacked, onlySel, selection])
+  // the picked layer is in view (the list may be long)
+  useEffect(() => {
+    const id = selection[selection.length - 1]
+    if (!id) return
+    requestAnimationFrame(() => scroller.current?.querySelector(`[data-layer="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'nearest' }))
+  }, [selection])
   const timingById = new Map(timing.map((t) => [t.id, t]))
-  const motionsOf = (id: string) => motions.filter((m) => m.owners[0] === id).sort((a, b) => a.start - b.start)
+  const motionsOf = (id: string) => motions.filter((m) => m.owners[0] === id && !m.nested).sort((a, b) => a.start - b.start)
   const toggleOpen = (id: string) => useEditor.setState({ openLayers: openLayers.includes(id) ? openLayers.filter((x) => x !== id) : [...openLayers, id] })
 
   // ---- ruler: scrub, or pick a section ----
@@ -285,23 +270,48 @@ export function Timeline() {
   }
 
   // ---- dragging blocks, bar ends, keyframes, markers ----
-  const startDrag = (e: React.PointerEvent, init: Drag, onDone: (dt: number) => void) => {
+  /** times a dragged edge snaps to: the start and end, the playhead, markers, the work area, other layers' bars */
+  const snapTimes = (skip: Set<string>) => {
+    const out = [0, d, time, ...markers.map((m) => m.t)]
+    if (workArea) out.push(workArea.a, workArea.b)
+    for (const t of timing) if (!skip.has(t.id)) out.push(t.start, ...(t.end != null ? [t.end] : []))
+    return out
+  }
+  /**
+   * A drag along the timeline. `edges(dt)` are the times that should snap (a bar's start and end):
+   * within a few pixels of a snap time the drag lands on it (⌘ while dragging: no snapping).
+   */
+  const startDrag = (e: React.PointerEvent, init: Drag, onDone: (dt: number) => void, snapping?: { edges: (dt: number) => number[]; skip: Set<string> }) => {
     e.preventDefault()
     e.stopPropagation()
     const el = e.currentTarget as HTMLElement
     el.setPointerCapture(e.pointerId)
     const x0 = e.clientX
+    const cands = snapping ? snapTimes(snapping.skip) : []
     let dx = 0
     const move = (ev: PointerEvent) => {
       dx = ev.clientX - x0
-      setDrag({ ...init, dx } as Drag)
+      let snapAt: number | undefined
+      if (snapping && !(ev.metaKey || ev.ctrlKey) && snap) {
+        const dt = (dx / trackW) * d
+        const tol = (6 / trackW) * d
+        let best: { off: number; at: number } | null = null
+        for (const edge of snapping.edges(dt)) for (const c of cands) if (Math.abs(c - edge) <= tol && (!best || Math.abs(c - edge) < Math.abs(best.off))) best = { off: c - edge, at: c }
+        if (best) {
+          dx = ((dt + best.off) / d) * trackW
+          snapAt = best.at
+        }
+      }
+      setDrag({ ...init, dx, ...(snapAt != null ? { snapAt } : {}) } as Drag)
     }
     const up = () => {
       el.removeEventListener('pointermove', move)
       el.removeEventListener('pointerup', up)
       setDrag(null)
       const dt = (dx / trackW) * d
-      if (Math.abs(dx) >= 3) onDone(dt)
+      // the click that ends a drag is no click (a marker would jump back to where it was)
+      dragged.current = Math.abs(dx) >= 3
+      if (dragged.current) onDone(dt)
     }
     el.addEventListener('pointermove', move)
     el.addEventListener('pointerup', up)
@@ -316,9 +326,9 @@ export function Timeline() {
   const moveMotion = (m: RuntimeMotion, dt: number) => {
     // the bar shows output time; edits are stored in authored time
     const newStart = map.toAuthored(Math.max(0, m.start + dt))
-    const curStart = m.authoredStart + m.shift
+    const curStart = m.authoredStart + m.shift + (m.layerShift ?? 0)
     const shift = +(m.shift + (newStart - curStart)).toFixed(3)
-    patchMotion(m.editKey, m.sig, { shift, at: m.authoredStart }, `${motionLabel(m)}: 시작 ${(m.authoredStart + shift).toFixed(2)}초`)
+    patchMotion(m.editKey, m.sig, { shift, at: m.authoredStart }, `${motionLabel(m)}: 시작 ${(m.authoredStart + shift + (m.layerShift ?? 0)).toFixed(2)}초`)
   }
   const resizeMotion = (m: RuntimeMotion, dt: number) => {
     const cur = ov?.motions[m.editKey]?.duration ?? m.duration
@@ -577,6 +587,7 @@ export function Timeline() {
         {t && (
           <div
             className={`tl-bar${isSel ? ' sel' : ''}${locked ? ' locked' : ''}`}
+            data-testid={`bar-${el.id}`}
             title={`${label} · Claude 움직임 ${start.toFixed(2)}~${end.toFixed(2)}초 · 끌어서 요소 전체의 등장 시점 옮기기`}
             style={{ left: px(start) + layerDx, width: Math.max(4, px(Math.min(d, end) - start)) }}
             onPointerDown={(e) => {
@@ -587,18 +598,40 @@ export function Timeline() {
                 ed.select(el.id, e.shiftKey || e.metaKey || e.ctrlKey)
                 useEditor.setState({ selectedMotion: null, panel: 'elements' })
               }
-              startDrag(e, { kind: 'layer', id: el.id, dx: 0 }, (dt) => {
-                const ids = group ? selection : [el.id]
-                const items = ids.map((id) => elements.find((x) => x.id === id)).filter((x): x is NonNullable<typeof x> => !!x)
-                patchElements(
-                  items.map((x) => ({ id: x.id, label: labelOf(x.id), patch: { timing: { shift: +((ov?.elements[x.id]?.timing?.shift ?? 0) + dt).toFixed(2) } } })),
-                  ['shift'],
-                )
-              })
+              // locked layers stay where they are (also in a group drag)
+              const ids = (group ? selection : [el.id]).filter((id) => !ov?.elements[id]?.locked)
+              const bars = ids.map((id) => timingById.get(id)).filter((x): x is NonNullable<typeof x> => !!x)
+              startDrag(
+                e,
+                { kind: 'layer', id: el.id, dx: 0 },
+                (dt) => {
+                  // the bar shows output time; Claude's motion moves in authored time (sections may run at another speed)
+                  // a layer stops at 0 (the preview keeps its spacing there): its keys move by the same amount
+                  shiftLayers(
+                    bars.map((b) => {
+                      const by = Math.max(dt, -b.start)
+                      return { id: b.id, label: labelOf(b.id), authored: +(map.toAuthored(b.start + by) - map.toAuthored(b.start)).toFixed(3), dt: +by.toFixed(3) }
+                    }),
+                  )
+                  // the moved layer at its new start (the preview reloads)
+                  seek(Math.max(0, start + dt))
+                },
+                { edges: (dt) => bars.flatMap((b) => [b.start + dt, ...(b.end != null ? [b.end + dt] : [])]), skip: new Set(ids) },
+              )
             }}
           >
             {label}
           </div>
+        )}
+        {/* where the dragged bar would start, and by how much it moves */}
+        {t && layerDx !== 0 && drag?.kind === 'layer' && drag.id === el.id && (
+          <span className="tl-drag-tip" style={{ left: px(start) + layerDx + Math.max(4, px(Math.min(d, end) - start)) + 6 }} data-testid="layer-drag-tip">
+            {fmt(Math.max(0, start + (layerDx / trackW) * d))} ({(layerDx / trackW) * d >= 0 ? '+' : ''}
+            {((layerDx / trackW) * d).toFixed(2)}초){drag.snapAt != null ? ' · 붙음' : ''}
+          </span>
+        )}
+        {!t && el.type !== 'camera' && (
+          <div className="tl-bar ghost" style={{ left: 0, width: px(d) }} title={`${label} · Claude 움직임이 없는 레이어예요. 양 끝 손잡이(In/Out)로 보이는 구간을 정해요.`} />
         )}
         {/* in / out handles */}
         {!locked && el.type !== 'camera' && (
@@ -896,6 +929,9 @@ export function Timeline() {
         <div className="tl-grid" style={{ gridTemplateColumns: `${layerW}px ${trackW}px` }}>
           <div className="tl-corner tiny muted">
             레이어 {layers.length ? `· ${layers.length}` : ''}
+            <button className={`btn ghost sm${onlySel ? ' active' : ''}`} style={{ height: 18, marginLeft: 6, color: onlySel ? 'var(--accent)' : undefined }} onClick={() => setOnlySel(!onlySel)} title="고른 레이어(와 그 그룹)만 보기" data-testid="timeline-only-selected">
+              {onlySel ? '모두 보기' : '선택만'}
+            </button>
             {solo.length > 0 && (
               <button className="btn ghost sm" style={{ height: 18, marginLeft: 6 }} onClick={() => useEditor.setState({ solo: [] })} title="솔로 모두 끄기">
                 솔로 끄기
@@ -953,6 +989,7 @@ export function Timeline() {
                   }}
                   onClick={(e) => {
                     e.stopPropagation()
+                    if (dragged.current) return void (dragged.current = false)
                     seek(m.t)
                   }}
                   onDoubleClick={(e) => {
@@ -1011,6 +1048,7 @@ export function Timeline() {
           {/* playhead over every track: the line can be grabbed too */}
           {/* no grid placement: the rows are implicit, so '1 / -1' would be zero rows tall */}
           <div className="tl-playhead" style={{ left: layerW + px(time) }} onPointerDown={project?.hasVideo ? scrub : undefined} data-testid="playhead-line" />
+          {drag?.kind === 'layer' && drag.snapAt != null && <div className="tl-snap-line" style={{ left: layerW + px(drag.snapAt) }} data-testid="timeline-snap" />}
         </div>
       </div>
 
