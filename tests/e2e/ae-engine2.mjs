@@ -88,6 +88,8 @@ try {
   check(`the phone's motion sampled as keys (y: ${(ph.y || []).map((k) => `${k.t}:${Math.round(k.v)}`).join(' ')}; live at 0.4 s ${Math.round(live)})`, (ph.y || []).length >= 3 && (ph.rotation || []).length >= 3 && ph.y.some((k) => near(k.t, 0.05, 0.01) && near(k.v, 900, 1)))
   const motions = await inPreview(() => window.__MS_RUNTIME__.motions())
   check(`set and keyframes tweens are recorded (${motions.filter((m) => m.self === 't-set' || m.self === 't-kf').map((m) => `${m.key}:${m.type}`).join(', ')})`, motions.some((m) => m.self === 't-set' && m.type === 'set') && motions.some((m) => m.self === 't-kf' && m.type === 'keyframes' && m.props.some((p) => p.name === 'x') && m.props.some((p) => p.name === 'y')))
+  // numbered apart: the fromTo after the set is still "#1", as before set tweens were recorded (edits of 0.3.x keep their tween)
+  check('…without changing the numbers of the other motions', motions.some((m) => m.self === 't-set' && m.type === 'fromTo' && m.key === 't-set#1') && motions.some((m) => m.self === 't-set' && m.key === 't-set#set1'))
   const flow = await inPreview(() => window.__MS_RUNTIME__.measureFlow('row'))
   check(`a flex group's children are measured (${JSON.stringify(flow.kids)})`, near(flow.kids['row-a']?.l ?? -1, 0, 0.5) && near(flow.kids['row-b']?.l ?? -1, 100, 0.5) && near(flow.kids['row-b']?.w ?? 0, 120, 0.5))
   check('…and until then they only move', els.find((e) => e.id === 'row-b')?.transformable === false)

@@ -121,9 +121,12 @@
     if (fromVars) propsOf(fromVars).forEach(function (k) { if (props.indexOf(k) < 0) props.push(k) })
     if (!props.length) return null
     var primary = owners[0]
-    var n = (MCOUNT[primary] = (MCOUNT[primary] || 0) + 1)
-    var key = primary + '#' + n
     var kind = kf ? 'keyframes' : type
+    // set and keyframes tweens are numbered apart, so the keys of to / from / fromTo stay what they
+    // were before they were recorded (edits saved by earlier versions keep finding their tween)
+    var series = kind === 'set' ? 'set' : kind === 'keyframes' ? 'kf' : ''
+    var n = (MCOUNT[series + primary] = (MCOUNT[series + primary] || 0) + 1)
+    var key = primary + '#' + series + n
     var sig = kind + ':' + props.slice().sort().join(',')
     var self = selfIdOf(targets)
     var st = toVars.stagger
