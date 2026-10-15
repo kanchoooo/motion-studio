@@ -123,7 +123,12 @@ export function magnificModels(v: unknown, kind: AiMediaKind): AiModelList {
 // Higgsfield lists editing / dubbing / workflow tools among its "video" models: only models that
 // make a picture or a clip from a prompt (and optionally images) are offered
 const HF_EDIT_ROLES = new Set(['video_references', 'input_video', 'input_audio', 'audio_references', 'mask'])
-const HF_SKIP = /^(marketing_studio|higgsfield_preset|autosprite|soul_cast|video_background_remover|voice_change|dubbing|sync_so|ads_studio|ai_influencer)/
+const HF_SKIP =
+  /^(marketing_studio|higgsfield_preset|autosprite|soul_cast|video_background_remover|voice_change|dubbing|sync_so|ads_studio|ai_influencer|ms_image|ad_multiplier_v2|draw_to_video|reframe|clipify|hf_mult_|kling3_0_motion_control|kling_video_edit|flux_3_video_edit|topaz_|bytedance_(video|image)_upscale|video_upscale|video_deflicker|depth_anything|sam_\d|fps_boost|flux_2_pro_outpaint|outpaint|image_background_remover|image_decompose|3d_jutsu_angles)/
+// tools that change an existing picture or clip (no text- or image-to-video)
+const HF_EDIT_TAGS = /^(video-edit|video-editing|video-to-video|motion-control|object-replacement|depth-map|frame-interpolation|recreate|outpaint|image-edit|upscale)$/
+// arguments the app sends; a model that requires another one with no default is a special workflow
+const HF_SENT = /^(prompt|model|aspect_ratio|duration|medias|count|resolution|seed|negative_prompt)$/
 
 export function higgsfieldModels(pages: unknown[], kind: AiMediaKind): AiModelList {
   const items: AiModelInfo[] = []
@@ -136,6 +141,10 @@ export function higgsfieldModels(pages: unknown[], kind: AiMediaKind): AiModelLi
       const roles = [...new Set(medias.flatMap((x) => (Array.isArray(x.roles) ? x.roles.map(String) : [])))]
       // only media inputs that edit an existing clip / sound: not a generator
       if (kind === 'video' && roles.length && roles.every((r) => HF_EDIT_ROLES.has(r))) continue
+      const tags = strings(m.tags)
+      if (tags.some((t) => HF_EDIT_TAGS.test(t)) && !tags.some((t) => /^(text|image)-to-(video|image)$/.test(t))) continue
+      const params = (Array.isArray(m.parameters) ? m.parameters : []) as { name?: unknown; required?: unknown; default?: unknown }[]
+      if (params.some((x) => x.required === 'required' && x.default == null && !HF_SENT.test(String(x.name)))) continue
       const range = m.duration_range && typeof m.duration_range === 'object' ? (m.duration_range as { min?: unknown; max?: unknown }) : null
       items.push({
         provider: 'higgsfield',

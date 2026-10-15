@@ -35,6 +35,11 @@ const HF_CATALOG = higgsfieldModels(
         { id: 'video_background_remover', name: 'BG remover', medias: [{ roles: ['input_video'], required: true }] },
         { id: 'lipsync_x', name: 'Lip', medias: [{ roles: ['input_video', 'input_audio'], required: true }] },
         { id: 'marketing_studio_video', name: 'Marketing' },
+        // live catalog 2026-10-15: editing tools and special workflows among the video models
+        { id: 'reframe', name: 'Reframe', medias: [{ roles: ['video_references', 'start_image', 'image_references'] }] },
+        { id: 'new_edit_tool', name: 'Edit', tags: ['video-to-video', 'video-editing'], medias: [{ roles: ['start_image'] }] },
+        { id: 'new_brand_tool', name: 'Brand', parameters: [{ name: 'style_id', required: 'required' }] },
+        { id: 'gemini_omni', name: 'Gemini Omni', tags: ['reference', 'image-to-video', 'video-to-video', 'text-to-video'], medias: [{ roles: ['image_references', 'video_references'] }], parameters: [{ name: 'resolution', required: 'required', default: '720p' }] },
       ],
     },
   ],
@@ -53,7 +58,7 @@ describe('Higgsfield tool parameters', () => {
   })
 
   it('offers generators only, with what each takes', () => {
-    expect(HF_CATALOG.map((m) => m.id)).toEqual(['seedance1_5', 'kling3_0', 'wan2_6'])
+    expect(HF_CATALOG.map((m) => m.id)).toEqual(['seedance1_5', 'kling3_0', 'wan2_6', 'gemini_omni'])
     expect(HF_CATALOG[0]).toMatchObject({ roles: ['start_image', 'end_image'], durations: [4, 8, 12], needsImage: false })
     expect(HF_CATALOG[1].durationRange).toEqual({ min: 3, max: 15 })
     expect(HF_CATALOG[2].needsImage).toBe(true)
