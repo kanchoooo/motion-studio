@@ -7,8 +7,8 @@ import { promisify } from 'node:util'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import type { Storyboard, StoryMaterial } from '@shared/api'
-import { AI_PROVIDERS, type AiConnectProvider, type AiVoiceInfo, type AudioCandidateList } from '@shared/ai'
-import { describeTiming } from '@shared/brief'
+import { AI_PROVIDERS, type AiConnectProvider, type AudioCandidateList, type VoiceChoice } from '@shared/ai'
+import { describeTiming, FPS_OPTIONS, OUTPUT_PRESETS } from '@shared/brief'
 import { directionForClaude } from '@shared/direction'
 import { activeAccount } from '../ai/accounts'
 import { codexImage, codexStatus } from '../ai/codex'
@@ -41,12 +41,14 @@ const text = (t: string) => ({ content: [{ type: 'text' as const, text: t }] })
 export interface ToolHooks {
   onStoryboard(projectId: string, sb: Storyboard): void
   /** voices for a narration: the designer listens and picks one */
-  onVoices(projectId: string, card: { label?: string; script?: string; voices: AiVoiceInfo[] }): void
+  onVoices(projectId: string, card: { label?: string; script?: string; voices: VoiceChoice[] }): void
   /** Claude starts building what the designer approved in the conversation: the editor opens */
   onBuildStart(projectId: string): void
   onAudioCandidates(projectId: string, list: AudioCandidateList): void
   /** images / video clips Claude generated: shown to the designer to keep or discard */
   onGenerated(projectId: string, files: { file: string; kind: string }[], label?: string): void
+  /** a line in the chat from the app (e.g. the output spec Claude changed with the designer) */
+  onNotice?(projectId: string, text: string): void
 }
 
 const PROVIDER = z.enum(['higgsfield', 'magnific'])
@@ -133,6 +135,51 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
           null,
           1,
         ),
+      )
+    },
+  )
+
+  server.registerTool(
+    'set_output',
+    {
+      description:
+        "Change the app's output spec (출력 사양: length, fps, size) to a value agreed with the designer in this conversation. When what they say about the video (\"15초짜리\", \"세로 영상\", …) differs from get_brief's output, ask which one they want first — sound, music cuts and narration are timed to this length — and call this only after they answered. Then make the composition match it (root data-duration / data-width / data-height / data-fps).",
+      inputSchema: {
+        duration: z.number().min(1).max(180).optional().describe('seconds'),
+        fps: z.number().optional().describe('one of 23.976, 24, 25, 29.97, 30, 59.94, 60'),
+        width: z.number().int().min(64).max(7680).optional(),
+        height: z.number().int().min(64).max(7680).optional(),
+        agreed: z.string().describe("the designer's answer that settled it, quoted (e.g. \"15초로 할게요\")"),
+      },
+    },
+    async ({ duration, fps, width, height, agreed }) => {
+      const before = st().brief.output
+      const patch: Record<string, unknown> = {}
+      if (duration != null) patch.duration = Math.round(duration * 10) / 10
+      if (fps != null) {
+        const f = FPS_OPTIONS.find((x) => Math.abs(x.value - fps) < 0.01)
+        if (!f) return text(`fps ${fps} is not offered: use one of ${FPS_OPTIONS.map((x) => x.value).join(', ')}.`)
+        patch.fps = f.value
+      }
+      if ((width == null) !== (height == null)) return text('Give width and height together.')
+      if (width != null && height != null) {
+        if (width % 2 || height % 2) return text('Width and height must be even numbers (video encoders need it).')
+        patch.width = width
+        patch.height = height
+        patch.preset = OUTPUT_PRESETS.find((p) => p.width === width && p.height === height)?.id ?? 'custom'
+      }
+      if (!Object.keys(patch).length) return text('Nothing to change: give duration, fps or width + height.')
+      projects.saveOutput(projectId, patch)
+      const o = st().brief.output
+      const changes = [
+        o.duration !== before.duration ? `길이 ${before.duration}초 → ${o.duration}초` : '',
+        o.fps !== before.fps ? `fps ${before.fps} → ${o.fps}` : '',
+        o.width !== before.width || o.height !== before.height ? `크기 ${before.width}×${before.height} → ${o.width}×${o.height}` : '',
+      ].filter(Boolean)
+      if (changes.length) hooks.onNotice?.(projectId, `대화에서 정한 대로 출력 사양을 바꿨어요: ${changes.join(' · ')}`)
+      return text(
+        `${changes.length ? `Output spec changed (${changes.join(', ')}); agreed: ${agreed}.` : 'The output spec already had these values.'} Now: ${o.width}x${o.height}, ${o.duration}s, ${o.fps}fps (data-fps ${Math.round(o.fps)}).` +
+          (st().hasVideo ? ' The composition exists: update the root data-duration / data-width / data-height / data-fps to match and re-time what depends on the length (music cut, narration, end card) — unless the root has data-ms-authored-duration (the designer re-timed sections), then ask the designer first.' : ''),
       )
     },
   )
@@ -973,16 +1020,18 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
     'show_voice_candidates',
     {
       description:
-        "Show narration voices to the designer as a card in the chat: they listen (preview_url) and pick one; their pick comes back as a message. Get voices with the service's voice list (ai_call: Higgsfield list_voices / Magnific audio_voices_list).",
+        "Show narration voices to the designer as a card in the chat: they listen (preview_url, or the sample of a local voice) and pick one; their pick comes back as a message. Service voices come from the service's voice list (ai_call: Higgsfield list_voices / Magnific audio_voices_list). A voice from an open-source model you ran on this Mac is provider \"local\" with engine (model · licence) and sample (the take you made of the script, a composition path). Service and local voices can be on one card.",
       inputSchema: {
         label: z.string().optional().describe('what the narration is for, in Korean'),
         script: z.string().optional().describe('the narration script so far'),
         voices: z
           .array(
             z.object({
-              provider: PROVIDER,
+              provider: z.enum(['higgsfield', 'magnific', 'local']),
               id: z.string(),
               name: z.string(),
+              engine: z.string().optional().describe('local voices: model and licence, e.g. "MeloTTS-Korean · MIT"'),
+              sample: z.string().optional().describe('local voices: the sample take, a composition path (assets/generated/…wav)'),
               description: z.string().optional(),
               gender: z.string().optional(),
               preview_url: z.string().optional(),
@@ -995,10 +1044,13 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
       },
     },
     async ({ label, script, voices }) => {
+      // a local voice is heard from its sample: a sound file inside the composition
+      const bad = voices.find((v) => v.provider === 'local' && !(v.sample && /^[\w./-]+\.(wav|mp3|m4a|aac|ogg|flac)$/i.test(v.sample) && !v.sample.includes('..') && existsSync(join(dir(), 'composition', v.sample))))
+      if (bad) return text(`「${bad.name}」: a local voice needs sample = the take you made, a composition path to a sound file that exists (e.g. assets/generated/voice-melo-1.wav).`)
       hooks.onVoices(projectId, {
         label,
         script,
-        voices: voices.map((v) => ({ provider: v.provider, id: v.id, name: v.name, description: v.description, gender: v.gender, previewUrl: v.preview_url, voiceType: v.voice_type, source: v.source })),
+        voices: voices.map((v) => ({ provider: v.provider, id: v.id, name: v.name, description: v.description, gender: v.gender, previewUrl: v.preview_url, voiceType: v.voice_type, source: v.source, engine: v.engine, sample: v.sample })),
       })
       return text('목소리 후보를 디자이너에게 보여줬어요. 들어 보고 고르면 메시지로 알려 줘요. 이번 턴은 여기서 마무리하세요.')
     },
@@ -1009,6 +1061,7 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
 
 export const STUDIO_TOOL_LABELS: Record<string, string> = {
   mcp__studio__get_brief: '브리프를 확인하고 있어요',
+  mcp__studio__set_output: '대화에서 정한 출력 사양을 앱에 반영하고 있어요',
   mcp__studio__get_designer_edits: '직접 수정한 내용을 확인하고 있어요',
   mcp__studio__clear_designer_edits: '직접 수정한 레이어를 넘겨받고 있어요',
   mcp__studio__update_designer_edits: '직접 수정한 값을 고치고 있어요',

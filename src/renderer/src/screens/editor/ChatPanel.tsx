@@ -918,7 +918,13 @@ function VoicesCard({ item }: { item: Extract<ChatItem, { role: 'voices' }> }) {
   const [playing, setPlaying] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const audio = useRef<HTMLAudioElement | null>(null)
+  // local voices (an open-source model Claude ran here) are heard from their sample in the project
+  const [base, setBase] = useState('')
+  useEffect(() => {
+    if (item.voices.some((v) => v.sample)) void studio.projects.fileUrl(project!.meta.id, '').then(setBase)
+  }, [item.voices, project])
   useEffect(() => () => audio.current?.pause(), [])
+  const urlOf = (v: (typeof item.voices)[number]) => (v.sample ? (base ? `${base}composition/${v.sample}` : undefined) : v.previewUrl)
   const play = (id: string, url?: string) => {
     audio.current?.pause()
     if (!url || playing === id) return setPlaying(null)
@@ -938,12 +944,12 @@ function VoicesCard({ item }: { item: Extract<ChatItem, { role: 'voices' }> }) {
       <div className="col" style={{ gap: 4 }}>
         {item.voices.map((v) => (
           <div key={v.id} className="row" style={{ gap: 8, padding: '4px 6px', borderRadius: 8, background: item.picked === v.id ? 'var(--accent-soft)' : 'var(--surface-2)' }}>
-            <button className="icon-btn" disabled={!v.previewUrl} title={v.previewUrl ? '들어 보기' : '미리듣기가 없어요'} onClick={() => play(v.id, v.previewUrl)}>
+            <button className="icon-btn" disabled={!urlOf(v)} title={urlOf(v) ? '들어 보기' : '미리듣기가 없어요'} onClick={() => play(v.id, urlOf(v))}>
               {playing === v.id ? <Pause size={13} /> : <Play size={13} />}
             </button>
             <div className="col grow" style={{ gap: 0, minWidth: 0 }}>
               <span className="small ellipsis">{v.name}</span>
-              {(v.description || v.gender) && <span className="tiny muted ellipsis">{[v.gender, v.description].filter(Boolean).join(' · ')}</span>}
+              {(v.description || v.gender || v.engine) && <span className="tiny muted ellipsis">{[v.provider === 'local' ? `오픈소스 · ${v.engine ?? '이 Mac에서 만든 샘플'}` : '', v.gender, v.description].filter(Boolean).join(' · ')}</span>}
             </div>
             {item.picked === v.id ? (
               <span className="badge success">골랐어요</span>

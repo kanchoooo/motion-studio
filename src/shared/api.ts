@@ -1,6 +1,6 @@
 import type { Asset, Brief, OutputFormat, OutputQuality, ReferenceItem } from './brief'
 import type { CharacterInfo, Framing, GenCandidate, GenRequest, VideoGenRequest } from './assetGen'
-import type { AiAccountInfo, AiLoginEvent, AiModelInfo, AiModelList, AiSettings, AiVoiceInfo, AudioCandidate, AudioCandidateList, ClaudeUsage, CreditInfo, LoginBrowser, LoginWindow, CodexStatus } from './ai'
+import type { AiAccountInfo, AiLoginEvent, AiModelInfo, AiModelList, AiSettings, AiVoiceInfo, VoiceChoice, AudioCandidate, AudioCandidateList, ClaudeUsage, CreditInfo, LoginBrowser, LoginWindow, CodexStatus } from './ai'
 import type { Overrides } from './overrides'
 import type { FeedbackMark, HistoryEntry, ProjectState, ProjectSummary, RenderRecord } from './project'
 
@@ -61,7 +61,7 @@ export type ChatItem =
   | { id: string; at: string; role: 'error'; text: string; detail?: string }
   | { id: string; at: string; role: 'notice'; text: string }
   /** voices Claude suggests for a narration: the designer listens and picks one */
-  | { id: string; at: string; role: 'voices'; label?: string; script?: string; voices: AiVoiceInfo[]; picked?: string }
+  | { id: string; at: string; role: 'voices'; label?: string; script?: string; voices: VoiceChoice[]; picked?: string }
   /** images / video clips Claude generated, waiting for the designer: keep in assets, discard, or apply */
   | { id: string; at: string; role: 'generated'; files: { file: string; kind: string }[]; label?: string; status: 'pending' | 'kept' | 'discarded' | 'applied'; note?: string }
 

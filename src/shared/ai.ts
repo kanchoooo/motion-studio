@@ -118,6 +118,18 @@ export interface AiModelList {
   note?: string
 }
 
+/**
+ * a voice on Claude's voice card: a service voice, or an open-source model Claude ran on this Mac
+ * (provider "local": its sample is a file in the project, its engine and licence are named)
+ */
+export type VoiceChoice = Omit<AiVoiceInfo, 'provider'> & {
+  provider: AiVoiceInfo['provider'] | 'local'
+  /** local: the sample take, a composition path (assets/generated/…) */
+  sample?: string
+  /** local: the model and its licence, e.g. "MeloTTS-Korean · MIT · 이 Mac에서 무료" */
+  engine?: string
+}
+
 export interface AiVoiceInfo {
   provider: AiConnectProvider
   id: string

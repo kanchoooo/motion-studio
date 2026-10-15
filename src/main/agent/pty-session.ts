@@ -20,7 +20,7 @@ import { aiSettings } from '../ai/settings'
 import { claudeEnv } from '../claude-env'
 import { claudeBinary } from '../doctor'
 import * as history from '../history'
-import { isDev, appRoot, projectsDir, runtimeFiles } from '../paths'
+import { isDev, appRoot, dataDir, projectsDir, runtimeFiles } from '../paths'
 import { previewBase } from '../preview-server'
 import * as projects from '../projects'
 import { newId, nowIso, writeText } from '../util'
@@ -127,6 +127,10 @@ export class SessionManager {
         if (l) this.addApp(l, { id: newId(), at: nowIso(), role: 'voices', ...card })
       },
       onBuildStart: (projectId) => this.buildStarted(projectId),
+      onNotice: (projectId, text) => {
+        const l = this.live.get(projectId)
+        if (l) this.addApp(l, { id: newId(), at: nowIso(), role: 'notice', text })
+      },
     })
   }
 
@@ -224,7 +228,7 @@ export class SessionManager {
     if (!l || !it || it.role !== 'voices') throw new Error('이 목소리 카드를 찾을 수 없어요.')
     const v = it.voices.find((x) => x.id === voiceId)
     if (!v) throw new Error('그 목소리를 찾을 수 없어요.')
-    await this.send({ projectId, text: `내레이션 목소리는 「${v.name}」으로 할게요.`, detail: `고른 목소리: provider ${v.provider}, id ${v.id}${v.voiceType ? `, voice_type ${v.voiceType}` : ''}${v.source ? `, source ${v.source}` : ''}` })
+    await this.send({ projectId, text: `내레이션 목소리는 「${v.name}」으로 할게요.`, detail: `고른 목소리: provider ${v.provider}, id ${v.id}${v.voiceType ? `, voice_type ${v.voiceType}` : ''}${v.source ? `, source ${v.source}` : ''}${v.engine ? `, engine ${v.engine}` : ''}${v.sample ? `, sample ${v.sample}` : ''}` })
     const now = this.live.get(projectId)?.appItems.find((x) => x.id === itemId)
     if (now?.role === 'voices') this.updateApp(this.live.get(projectId)!, { ...now, picked: voiceId })
   }
@@ -409,7 +413,8 @@ export class SessionManager {
     const cols = existing?.cols ?? kept?.cols ?? 110
     const rows = existing?.rows ?? kept?.rows ?? 34
     // PATH: `hyperframes` / `npx hyperframes` reach the CLI inside the app (no Node needed on this computer)
-    const term = pty.spawn(claudeBinary(), args, { name: 'xterm-256color', cols, rows, cwd: dir, env: claudeEnv({ PATH: sessionPath() }), useConpty: true })
+    // MS_LOCAL_TOOLS: where open-source models Claude installs (e.g. a local TTS) live, shared by every project
+    const term = pty.spawn(claudeBinary(), args, { name: 'xterm-256color', cols, rows, cwd: dir, env: claudeEnv({ PATH: sessionPath(), MS_LOCAL_TOOLS: join(dataDir(), 'local-tools') }), useConpty: true })
 
     const l: Live = {
       projectId,
