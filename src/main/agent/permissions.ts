@@ -134,7 +134,8 @@ function shellWords(seg: string): string[] {
     const c = seg[i]
     if (q) {
       if (c === q) q = null
-      else if (q === '"' && c === '\\' && i + 1 < seg.length) cur += seg[++i]
+      // in double quotes a backslash escapes only $ ` " \ (as in bash): "C:\Users\…" keeps its backslashes
+      else if (q === '"' && c === '\\' && /[$`"\\]/.test(seg[i + 1] ?? '')) cur += seg[++i]
       else cur += c
       continue
     }
@@ -165,8 +166,8 @@ export function hyperframesReadPipeline(cmd: string, projectDir: string): boolea
     if (q) {
       if (c === q) q = null
       else if (q === '"' && (c === '`' || (c === '$' && cmd[i + 1] === '('))) return false
-      else if (q === '"' && c === '\\') {
-        cur += c + (cmd[i + 1] ?? '')
+      else if (q === '"' && c === '\\' && /[$`"\\]/.test(cmd[i + 1] ?? '')) {
+        cur += c + cmd[i + 1]
         i++
         continue
       }

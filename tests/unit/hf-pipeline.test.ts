@@ -14,13 +14,14 @@ const ok = (cmd: string) => hyperframesReadPipeline(cmd, proj)
 
 describe('hyperframes report pipelines', () => {
   it('allows reading a report through read-only filters', () => {
+    // on Windows the folder is "C:\…": in double quotes its backslashes stay (bash escapes only $ ` " \ there)
     expect(ok(`cd "${proj}/composition" && hyperframes check 2>&1 | grep -E "✗|error\\(s\\)|:1 \\(|Check" | head -40`)).toBe(true)
     expect(ok('cd composition && hyperframes check 2>&1 | tail -5')).toBe(true)
     expect(ok("hyperframes lint 2>/dev/null | grep -c 'error'")).toBe(true)
     expect(ok('npx -y hyperframes inspect --at 2 | sort | head -3')).toBe(true)
     expect(ok("hyperframes check 2>&1 | grep '⚠' | cut -c1-200 | head -30")).toBe(true)
     // the folder can be named through /private on macOS
-    expect(ok(`cd "/private${proj}/composition" && hyperframes snapshot --at 0,1.5,3 2>&1 | grep -E "contact-sheet"`)).toBe(true)
+    if (process.platform === 'darwin') expect(ok(`cd "/private${proj}/composition" && hyperframes snapshot --at 0,1.5,3 2>&1 | grep -E "contact-sheet"`)).toBe(true)
     expect(ok(`cd "${proj}/composition" && hyperframes check 2>&1 | sed -n '/^Layout/,/^Snapshots/p'`)).toBe(true)
     expect(ok('hyperframes check 2>&1 | sed -n 10,40p')).toBe(true)
     expect(ok(`cd "${proj}/composition" && hyperframes check`)).toBe(true)
