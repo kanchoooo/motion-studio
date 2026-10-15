@@ -12,7 +12,14 @@ const TYPED = '__typed__'
 
 export const resetModelCache = () => {}
 
-export function ModelSelect({ kind, value, onChange, autoLabel = '자동 (Claude가 골라요)' }: { kind: AiMediaKind; value: AiModelRef | null | undefined; onChange(v: AiModelRef | null): void; autoLabel?: string }) {
+/** what a clip model takes, in a few words ("시작·끝 프레임 · 4~15초") */
+export function modelHint(m: AiModelInfo): string {
+  const frames = m.roles?.includes('end_image') ? '시작·끝 프레임' : m.roles?.some((r) => r === 'start_image' || r === 'image') ? '시작 프레임' : m.roles ? '프레임 없이' : ''
+  const len = m.durations?.length ? `${m.durations.join('·')}초` : m.durationRange ? `${m.durationRange.min}~${m.durationRange.max}초` : ''
+  return [m.needsImage ? '이미지 필요' : '', frames, len].filter(Boolean).join(' · ')
+}
+
+export function ModelSelect({ kind, value, onChange, onInfo, autoLabel = '자동 (Claude가 골라요)' }: { kind: AiMediaKind; value: AiModelRef | null | undefined; onChange(v: AiModelRef | null): void; onInfo?(m: AiModelInfo | null): void; autoLabel?: string }) {
   const [lists, setLists] = useState<Partial<Record<AiConnectProvider, { items: AiModelInfo[]; note?: string; error?: string }>> | null>(null)
   const [connected, setConnected] = useState<AiConnectProvider[]>([])
   const [typing, setTyping] = useState(false)
@@ -55,6 +62,9 @@ export function ModelSelect({ kind, value, onChange, autoLabel = '자동 (Claude
 
   const all = Object.values(lists ?? {}).flatMap((l) => l?.items ?? [])
   const key = value ? `${value.provider}::${value.model}` : ''
+  // what the chosen model takes (lengths, frames, ratios) for the form around it
+  const chosen = value ? (all.find((m) => m.provider === value.provider && m.id === value.model) ?? null) : null
+  useEffect(() => onInfo?.(chosen), [chosen?.provider, chosen?.id, lists]) // eslint-disable-line react-hooks/exhaustive-deps
   const known = !value || all.some((m) => m.provider === value.provider && m.id === value.model)
   const notes = Object.entries(lists ?? {}).flatMap(([p, l]) => [l?.error && `${AI_PROVIDERS[p as AiConnectProvider].name}: ${l.error}`, l?.note && `${AI_PROVIDERS[p as AiConnectProvider].name}: ${l.note}`].filter(Boolean) as string[])
 
@@ -120,6 +130,7 @@ export function ModelSelect({ kind, value, onChange, autoLabel = '자동 (Claude
                     {m.recommended ? '★ ' : ''}
                     {m.name}
                     {m.unavailable ? ' (지금 플랜으로는 사용 불가)' : m.premium ? ' · 유료 플랜' : ''}
+                    {kind === 'video' && modelHint(m) ? ` — ${modelHint(m)}` : ''}
                   </option>
                 ))}
               </optgroup>

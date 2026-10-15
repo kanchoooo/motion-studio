@@ -11,12 +11,24 @@ import sharp from 'sharp'
 import { buildPrompt, negativeFor, withRevision, type GenCandidate, type GenRequest, type Ratio } from '@shared/assetGen'
 import { convertCharacter } from '../character/convert'
 import { newId, nowIso, readJson, writeJson } from '../util'
-import { failIfError, payload } from './catalog'
+import { autoHiggsfieldModel, failIfError, listModels, payload } from './catalog'
 import { codexImage } from './codex'
 import { callTool, listTools, type ToolResult } from './connect'
 import { saveResultMedia } from './media'
 
-export type Schema = { type?: string; properties?: Record<string, Schema>; enum?: unknown[]; description?: string; items?: Schema }
+export type Schema = { type?: string; properties?: Record<string, Schema>; enum?: unknown[]; description?: string; items?: Schema; anyOf?: Schema[] }
+
+/**
+ * the parameters a generate tool takes: Higgsfield nests them under "params" (now an anyOf of
+ * an object and a string) — the object form is the one to fill
+ */
+export function toolParams(inputSchema: unknown): { nested: 'params' | null; props: Record<string, Schema> } {
+  const top = ((inputSchema as Schema | undefined)?.properties ?? {}) as Record<string, Schema>
+  const p = top.params
+  const obj = p?.anyOf?.find((x) => x.type === 'object' || x.properties) ?? p
+  const nested = p && (obj?.type === 'object' || obj?.properties) ? 'params' : null
+  return { nested, props: (nested ? obj!.properties : top) ?? {} }
+}
 /** services reached through their MCP tools (Codex runs as a local CLI instead) */
 export type McpProvider = Exclude<GenRequest['provider'], 'codex'>
 
@@ -29,6 +41,67 @@ export const writeCandidates = (projectDir: string, list: GenCandidate[]) => wri
 const saveList = writeCandidates
 
 export const keyOf = (props: Record<string, Schema>, re: RegExp, not?: RegExp) => Object.keys(props).find((k) => re.test(k) && !not?.test(k))
+
+/** the ratio a model lists that is closest to the one wanted ("9:16" when it has it) */
+export function nearestOf(options: string[], ratio: string): string {
+  const [w, h] = ratio.split(':').map(Number)
+  const want = Math.log(w / h)
+  let best = options[0]
+  for (const o of options) {
+    const [a, b] = o.split(':').map(Number)
+    if (Math.abs(Math.log(a / b) - want) < Math.abs(Math.log(Number(best.split(':')[0]) / Number(best.split(':')[1])) - want)) best = o
+  }
+  return best
+}
+
+/**
+ * the credits a generation would cost — Higgsfield's get_cost preflight ({cost:{credits}}) or
+ * Magnific's simulate_cost ({credits, certainty}); nothing is submitted, nothing charged
+ */
+export function costOf(r: ToolResult): { credits: number; adjusted?: string[]; certainty?: string } | null {
+  const p = payload(r) as { credits?: unknown; certainty?: unknown; cost?: { credits?: unknown; credits_exact?: unknown }; adjustments?: Record<string, { requested?: unknown; used?: unknown }> } | null
+  // Magnific's auto video mode answers with the most it could cost
+  if (p && typeof p.credits === 'number') return { credits: p.credits, certainty: /maximum/i.test(String((p as { reason?: unknown }).reason ?? '')) ? 'max' : typeof p.certainty === 'string' ? p.certainty : undefined }
+  const credits = Number(p?.cost?.credits_exact ?? p?.cost?.credits)
+  if (!Number.isFinite(credits)) {
+    const m = JSON.stringify(r.content ?? '').match(/([\d.]+)\s*credits?/i)
+    return m ? { credits: Number(m[1]) } : null
+  }
+  const adjusted = Object.entries(p?.adjustments ?? {})
+    .filter(([k, v]) => k === 'duration' && v && v.requested !== v.used)
+    .map(([, v]) => `길이 ${v.requested}초 → ${v.used}초`)
+  return { credits, adjusted: adjusted.length ? adjusted : undefined }
+}
+
+/**
+ * the arguments ask only for the price: Higgsfield's generate tools make the picture unless
+ * get_cost is set (an estimate never goes out without it)
+ */
+export function isCostOnly(args: Record<string, unknown>): boolean {
+  const a = (args.params && typeof args.params === 'object' ? args.params : args) as Record<string, unknown>
+  return Object.entries(a).some(([k, v]) => /^get_?cost$/i.test(k) && v === true)
+}
+
+/** what one image would cost with these settings (no reference images uploaded for the estimate) */
+export async function estimateImage(req: GenRequest): Promise<{ credits: number; adjusted?: string[]; certainty?: string } | null> {
+  if (req.provider === 'codex') return null
+  const mcp = req as GenRequest & { provider: McpProvider }
+  const { tool, args } = await argumentsFor(mcp, buildPrompt(req.style, req.framing, req.lang, req.prompt || 'estimate', req.kind), [], { cost: req.provider === 'higgsfield' })
+  if (req.provider === 'higgsfield' && !isCostOnly(args)) return null
+  const r = req.provider === 'magnific' ? await callTool('magnific', 'simulate_cost', { tool, arguments: args }, 60_000) : await callTool('higgsfield', tool, args, 60_000)
+  if (r.isError) return null
+  return costOf(r)
+}
+
+/** credits left on the active account of a service (read-only) */
+export async function balanceOf(provider: McpProvider): Promise<number | null> {
+  const r = await callTool(provider, provider === 'magnific' ? 'account_balance' : 'balance', {}, 30_000)
+  if (r.isError) return null
+  const p = payload(r) as { credits?: unknown } | null
+  const c = p?.credits
+  const n = typeof c === 'number' ? c : c && typeof c === 'object' ? Number((c as { available?: unknown }).available) : Number(JSON.stringify(r.content ?? '').match(/Credits:\s*([\d.]+)/i)?.[1])
+  return Number.isFinite(n) ? n : null
+}
 
 /** an aspect-ratio value the schema accepts: "3:4", or the nearest enum entry ("traditional_3_4", …) */
 export function pickRatio(s: Schema | undefined, ratio: Ratio): string {
@@ -65,6 +138,21 @@ const still = (r: ToolResult) => /in[_ -]?progress|queued|pending|processing|run
 
 /** waits for a queued generation and returns the result that holds its files */
 export async function waitFor(provider: McpProvider, ids: string[], rounds = 12): Promise<ToolResult | null> {
+  // Higgsfield: a direct generation is followed with job_status (jobs_wait is for batch jobs); sync waits ~25 s a call
+  if (provider === 'higgsfield') {
+    const done: unknown[] = []
+    for (const id of ids) {
+      let last: ToolResult | null = null
+      for (let i = 0; i < rounds * 2; i++) {
+        last = await callTool('higgsfield', 'job_status', { jobId: id, sync: true }, 60_000)
+        failIfError(last)
+        if (!still(last)) break
+      }
+      if (!last || still(last)) return null
+      done.push(payload(last))
+    }
+    return { content: [{ type: 'text', text: JSON.stringify(done) }], structuredContent: { jobs: done } } as ToolResult
+  }
   for (let i = 0; i < rounds; i++) {
     if (provider === 'magnific') {
       const w = await callTool('magnific', 'creations_wait', { identifiers: ids, timeoutSeconds: 25 }, 60_000)
@@ -109,6 +197,28 @@ const mimeOfImage = (f: string) => (/\.png$/i.test(f) ? 'image/png' : /\.webp$/i
 export async function referenceValues(provider: McpProvider, files: string[], prop: Schema, tools: { name: string; inputSchema?: unknown }[]): Promise<string[]> {
   const base64 = /base64/i.test(prop.description ?? '') || /base64/i.test(prop.items?.description ?? '')
   if (base64) return files.map((f) => readFileSync(f).toString('base64'))
+  // Magnific: a presigned PUT slot, the bytes, then finalize → a creation identifier the generators take
+  const request = tools.find((t) => /^creations_request_upload$/.test(t.name))
+  const finalize = tools.find((t) => /^creations_finalize_upload$/.test(t.name))
+  if (request && finalize) {
+    const out: string[] = []
+    for (const f of files) {
+      const slot = await callTool(provider, request.name, { mimeType: mimeOfImage(f) }, 60_000)
+      failIfError(slot)
+      const s = payload(slot)
+      const url = valueAt(s, /^(proxy_?upload_?url|upload_?url|url)$/i)
+      const path = valueAt(s, /^path$/i)
+      if (!url || !path) throw new Error('이미지를 서비스에 올리지 못했어요.')
+      const put = await fetch(url, { method: 'PUT', body: readFileSync(f), headers: { 'Content-Type': mimeOfImage(f) } })
+      if (!put.ok) throw new Error('이미지를 서비스에 올리지 못했어요.')
+      const done = await callTool(provider, finalize.name, { path, fileName: basename(f), visible: false }, 120_000)
+      failIfError(done)
+      const id = valueAt(payload(done), /^(identifier|creation_?identifier)$/i) ?? valueAt(payload(done), /^(id|creation_?id)$/i)
+      if (!id) throw new Error('이미지를 서비스에 올리지 못했어요.')
+      out.push(id)
+    }
+    return out
+  }
   const upload = tools.find((t) => /upload/i.test(t.name))
   const props = (upload?.inputSchema as Schema | undefined)?.properties ?? {}
   const dataKey = keyOf(props, /base64|data|content|^file$/i, /name|type|mime|url/i)
@@ -125,11 +235,19 @@ export async function referenceValues(provider: McpProvider, files: string[], pr
     failIfError(r)
     const p = payload(r)
     const signed = valueAt(p, /^(upload_?url|put_?url|presigned_?url|signed_?url)$/i)
+    const mediaId = valueAt(p, /^(media_?id|id|upload_?id|file_?id)$/i)
     if (signed && !dataKey) {
       const put = await fetch(signed, { method: 'PUT', body: readFileSync(f), headers: { 'Content-Type': mimeOfImage(f) } })
       if (!put.ok) throw new Error('이미지를 서비스에 올리지 못했어요.')
+      // Higgsfield: an uploaded file counts once it is confirmed; generations then take its media id
+      const confirm = tools.find((t) => /^media_confirm$/i.test(t.name))
+      if (confirm && mediaId) {
+        failIfError(await callTool(provider, confirm.name, { type: 'image', media_id: mediaId }, 60_000))
+        out.push(mediaId)
+        continue
+      }
     }
-    const value = valueAt(p, /^(url|public_?url|file_?url|cdn_?url|media_?url)$/i) ?? valueAt(p, /^(id|upload_?id|media_?id|file_?id)$/i) ?? JSON.stringify(p ?? '').match(/https:\/\/[^"\\\s]+/)?.[0]
+    const value = valueAt(p, /^(url|public_?url|file_?url|cdn_?url|media_?url)$/i) ?? mediaId ?? JSON.stringify(p ?? '').match(/https:\/\/[^"\\\s]+/)?.[0]
     if (!value) throw new Error('이미지를 서비스에 올리지 못했어요.')
     out.push(value)
   }
@@ -143,10 +261,8 @@ async function imageTool(provider: McpProvider) {
   const tools = (await listTools(provider)) as { name: string; inputSchema?: unknown }[]
   const tool = tools.find((t) => GENERATE_TOOL[provider].test(t.name))
   if (!tool) throw new Error('이 서비스에서 이미지 만들기 도구를 찾지 못했어요. AI 연결을 다시 확인해 주세요.')
-  const top = ((tool.inputSchema as Schema | undefined)?.properties ?? {}) as Record<string, Schema>
   // Higgsfield nests everything under "params"
-  const nested = top.params && (top.params.type === 'object' || top.params.properties) ? 'params' : null
-  const props = (nested ? top.params.properties : top) ?? {}
+  const { nested, props } = toolParams(tool.inputSchema)
   return { tools, tool, nested, props }
 }
 
@@ -154,7 +270,7 @@ async function imageTool(provider: McpProvider) {
 async function takesImages(provider: McpProvider): Promise<boolean> {
   const { props } = await imageTool(provider)
   // a tool without a described reference field cannot be sent the picture: the change goes in words
-  return !!keyOf(props, REF_KEY, /prompt|negative/i)
+  return !!keyOf(props, REF_KEY, /prompt|negative/i) || !!keyOf(props, /^medias?$/i)
 }
 
 /** a reference path: composition-relative (assets/…), or project-relative (.studio/…, composition/…) */
@@ -166,25 +282,39 @@ export function referencePath(projectDir: string, rel: string): string {
 }
 
 /** the tool arguments for one image, following the tool's own schema */
-async function argumentsFor(req: GenRequest & { provider: McpProvider }, sent: string, references: string[]): Promise<{ tool: string; args: Record<string, unknown> }> {
+async function argumentsFor(req: GenRequest & { provider: McpProvider }, sent: string, references: string[], opts: { cost?: boolean } = {}): Promise<{ tool: string; args: Record<string, unknown> }> {
   const { tools, tool, nested, props } = await imageTool(req.provider)
   const free = !Object.keys(props).length
   const a: Record<string, unknown> = {}
   a[keyOf(props, /^prompt$/i) ?? keyOf(props, /prompt/i, /negative/i) ?? 'prompt'] = sent
   const modelKey = keyOf(props, /^(model|mode|slug|model_?id)$/i) ?? (free ? (req.provider === 'magnific' ? 'mode' : 'model') : undefined)
-  if (req.model && modelKey) a[modelKey] = req.model
+  // Higgsfield needs a model: "자동" is its image_auto
+  const catalog = req.provider === 'higgsfield' ? (await listModels('higgsfield', 'image').catch(() => ({ items: [] }))).items : []
+  const model = req.model || (req.provider === 'higgsfield' ? autoHiggsfieldModel(catalog, 'image') : '') || ''
+  const info = catalog.find((m) => m.id === model)
+  if (model && modelKey) a[modelKey] = model
   const ratioKey = keyOf(props, /aspect/i) ?? (free ? (req.provider === 'magnific' ? 'aspectRatio' : 'aspect_ratio') : undefined)
-  if (ratioKey) a[ratioKey] = pickRatio(props[ratioKey], req.ratio)
+  if (ratioKey) a[ratioKey] = info?.aspectRatios?.length ? nearestOf(info.aspectRatios, req.ratio) : pickRatio(props[ratioKey], req.ratio)
+  if (opts.cost && keyOf(props, /^get_?cost$/i)) a[keyOf(props, /^get_?cost$/i)!] = true
   const countKey = keyOf(props, /^(count|num_?images|n|batch_?size|number_?of_?images)$/i)
   if (countKey) a[countKey] = 1
   const negKey = keyOf(props, /negative/i)
   const negative = negativeFor(req.style)
   if (negKey && negative) a[negKey] = negative
-  if (references.length) {
+  const mediasKey = keyOf(props, /^medias?$/i)
+  if (references.length && mediasKey) {
+    // Higgsfield: [{role, value: media id}], the role the chosen model lists for reference images
+    if (info?.roles && !info.roles.some((r) => r === 'image' || r === 'image_references')) throw new Error('고른 모델에는 참고 이미지를 함께 보낼 수 없어요. 참고 소재를 빼거나 다른 모델을 골라 주세요.')
+    const role = info?.roles?.includes('image_references') ? 'image_references' : 'image'
+    const values = await referenceValues(req.provider, references, props[mediasKey].items?.properties?.value ?? {}, tools)
+    a[mediasKey] = values.map((value) => ({ role, value }))
+  } else if (references.length) {
     const refKey = keyOf(props, REF_KEY, /prompt|negative/i)
     if (!refKey) throw new Error('고른 모델에는 참고 이미지를 함께 보낼 수 없어요. 참고 소재를 빼거나 다른 모델을 골라 주세요.')
     const values = await referenceValues(req.provider, references, props[refKey], tools)
-    a[refKey] = props[refKey].type === 'array' ? values : values[0]
+    // Magnific: references are objects {type: "image", identifier}
+    const item = props[refKey].items?.properties
+    a[refKey] = props[refKey].type === 'array' ? (item?.identifier ? values.map((identifier) => ({ type: 'image', identifier })) : values) : values[0]
   }
   return { tool: tool.name, args: nested ? { params: a } : a }
 }

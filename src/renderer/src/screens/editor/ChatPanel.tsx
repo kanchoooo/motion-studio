@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { AlertCircle, ArrowUp, Check, ChevronsLeft, Clapperboard, Cpu, Film, ImagePlus, Info, Loader2, MapPin, Mic, Pause, Play, Scissors, ShieldCheck, ShieldQuestion, Square, SquareDashed, X, Link2 } from 'lucide-react'
+import { Activity, AlertCircle, ArrowUp, Check, ChevronsLeft, Clapperboard, Cpu, Film, ImagePlus, Info, Loader2, MapPin, Mic, Pause, Play, Scissors, ShieldCheck, ShieldQuestion, Square, SquareDashed, X, Link2 } from 'lucide-react'
+import type { ClaudeUsage } from '@shared/ai'
 import type { AgentEffort, AgentModel, AgentPermission, ChatItem, PermissionAsk, Storyboard } from '@shared/api'
 import type { ReferenceItem } from '@shared/brief'
 import { Markdown } from '../../components/Markdown'
@@ -341,6 +342,7 @@ export function ChatPanel({ onFold, mode = 'edit' }: { onFold?(): void; mode?: '
         <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
           <ModelPicker />
           <PermissionPicker />
+          <UsageBadge />
         </div>
       </div>
       {dropping && (
@@ -637,6 +639,48 @@ function ModelPicker() {
       </select>
       {session.pendingRestart && <span style={{ color: 'var(--warning)' }}>작업 후 적용</span>}
     </div>
+  )
+}
+
+/** how much of the Claude plan is used (Claude Code's own /usage), asked again after each turn */
+function UsageBadge() {
+  const status = useStore((s) => s.session.status)
+  const [u, setU] = useState<ClaudeUsage | null>(null)
+  const [busy, setBusy] = useState(false)
+  const load = (force = false) => {
+    setBusy(true)
+    void studio.app
+      .claudeUsage(force)
+      .then((r) => r && setU(r))
+      .catch(() => {})
+      .finally(() => setBusy(false))
+  }
+  useEffect(() => {
+    load()
+    const t = setInterval(() => load(), 5 * 60_000)
+    return () => clearInterval(t)
+  }, [])
+  // a turn just finished: the numbers moved
+  useEffect(() => {
+    if (status === 'ready') load()
+  }, [status])
+  if (!u?.session && !u?.week) return busy ? <span className="row tiny faint" style={{ gap: 4 }}><Loader2 size={11} className="spin" />사용량 확인 중</span> : null
+  const tone = (pct?: number) => (pct == null ? undefined : pct >= 95 ? 'var(--danger)' : pct >= 80 ? 'var(--warning)' : undefined)
+  const tip = [
+    u.session && `현재 세션 ${u.session.pct}%${u.session.resets ? ` · ${u.session.resets} 초기화` : ''}`,
+    u.week && `이번 주 (전체 모델) ${u.week.pct}%${u.week.resets ? ` · ${u.week.resets} 초기화` : ''}`,
+    ...u.models.map((m) => `이번 주 (${m.name}) ${m.pct}%${m.resets ? ` · ${m.resets} 초기화` : ''}`),
+    `${new Date(u.at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}에 확인 · 누르면 다시 확인해요`,
+  ]
+    .filter(Boolean)
+    .join('\n')
+  return (
+    <button className="btn ghost sm tiny" style={{ height: 24, padding: '0 6px', gap: 4, color: 'var(--text-3)' }} title={tip} onClick={() => load(true)} data-testid="claude-usage">
+      {busy ? <Loader2 size={11} className="spin" /> : <Activity size={11} />}
+      Claude 사용량
+      {u.session && <span style={{ color: tone(u.session.pct) }}>세션 {u.session.pct}%</span>}
+      {u.week && <span style={{ color: tone(u.week.pct) }}>· 주간 {u.week.pct}%</span>}
+    </button>
   )
 }
 

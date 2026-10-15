@@ -1323,6 +1323,11 @@
   min-height: 0;
   overflow: auto;
 }
+/* a column inside the scrolling panel keeps each block at its own height (squeezed blocks clipped their
+   content and the panel never scrolled) */
+.floating-panel .panel-body.col > * {
+  flex-shrink: 0;
+}
 .popover {
   position: absolute;
   z-index: 30;

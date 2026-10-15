@@ -58,8 +58,8 @@ export function BriefTab() {
             {panel === 'storyboard' ? <StoryboardPanel onClose={() => open(null)} /> : <AssetsPanel onClose={() => open(null)} />}
           </div>
         )}
-        <div style={{ flex: 1, minWidth: 380, display: 'flex', justifyContent: 'center' }}>
-          <div style={{ width: '100%', maxWidth: 880, height: '100%' }} data-testid="plan-chat">
+        <div style={{ flex: 1, minWidth: 380, display: 'flex' }}>
+          <div style={{ width: '100%', height: '100%' }} data-testid="plan-chat">
             <ChatPanel mode="plan" />
           </div>
         </div>

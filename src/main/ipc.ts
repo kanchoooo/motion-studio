@@ -21,7 +21,7 @@ import { cancelExport, exportAll, exportingDirs, listRenders, removeRender, star
 import { createVariations, setFamilyStatus } from './variations'
 import { addReferenceFiles, addYoutube, listReferences, nearDuplicates, REFERENCE_EXTENSIONS, removeReference, updateReference } from './references'
 import { snapshot as hfSnapshot } from './hyperframes'
-import type { AiConnectProvider, AiLoginEvent, AiMediaKind, AiSettings, AiVoiceInfo, AudioCandidate, AudioCandidateList, LoginWindow } from '@shared/ai'
+import type { AiConnectProvider, AiLoginEvent, AiMediaKind, AiSettings, AiVoiceInfo, AudioCandidate, AudioCandidateList, CreditInfo, LoginWindow } from '@shared/ai'
 import { loginBrowsers } from './ai/browser'
 import { refreshThumbnail } from './thumbnail'
 import { patchAccount, publicInfo, removeAccount, setActive } from './ai/accounts'
@@ -34,8 +34,9 @@ import { ttsSample } from './ai/tts'
 import { readJson } from './util'
 import { answerPermission, askingFor, setPermissionHooks, type PermissionAnswer } from './agent/permissions'
 import { projectForToken } from './agent/mcp-http'
-import { discardCandidate, generateCandidate, listCandidates, reconvert, writeCandidates } from './ai/generate'
-import { generateVideoCandidate } from './ai/generateVideo'
+import { balanceOf, discardCandidate, estimateImage, generateCandidate, listCandidates, reconvert, writeCandidates } from './ai/generate'
+import { claudeUsage } from './claudeUsage'
+import { estimateVideo, generateVideoCandidate } from './ai/generateVideo'
 import { askHelper } from './ai/promptHelper'
 import type { Framing, GenRequest, VideoGenRequest } from '@shared/assetGen'
 import { exportAePackage } from './ae/export'
@@ -443,6 +444,22 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
   })
   handle('ai:generated', (id: string) => listGenerated(projects.pathOf(id)))
   handle('ai:generate', (id: string, req: GenRequest) => generateCandidate(projects.pathOf(id), req))
+  // what a generation would cost and what is left — read-only checks (nothing is submitted or charged)
+  handle('ai:estimate', async (req: GenRequest | VideoGenRequest, kind: 'image' | 'video'): Promise<CreditInfo> => {
+    if (req.provider === 'codex') return { cost: null }
+    let problem: string | undefined
+    const [cost, balance] = await Promise.all([
+      (kind === 'video' ? estimateVideo(req as VideoGenRequest) : estimateImage(req as GenRequest)).catch((e: Error) => {
+        // the app's own checks (the model does not take an end frame, …) are worth saying before the click
+        if (/[가-힣]/.test(e.message)) problem = e.message
+        return null
+      }),
+      balanceOf(req.provider).catch(() => null),
+    ])
+    return { cost: cost?.credits ?? null, certainty: cost?.certainty, adjusted: cost?.adjusted, balance: balance ?? undefined, problem }
+  })
+  handle('ai:balance', async (provider: 'higgsfield' | 'magnific') => (await balanceOf(provider).catch(() => null)) ?? null)
+  handle('app:claudeUsage', (force?: boolean) => claudeUsage(!!force))
   handle('ai:generateVideo', (id: string, req: VideoGenRequest) => generateVideoCandidate(projects.pathOf(id), req))
   handle('ai:candidates', (id: string) => listCandidates(projects.pathOf(id)))
   handle('ai:discardCandidate', (id: string, cid: string) => {

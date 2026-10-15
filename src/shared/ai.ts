@@ -78,6 +78,38 @@ export interface AiModelInfo {
   premium?: boolean
   /** exists, but the signed-in account's plan cannot use it */
   unavailable?: boolean
+  /** what the model takes (Higgsfield's catalog): media roles, durations, aspect ratios */
+  roles?: string[]
+  durations?: number[]
+  durationRange?: { min: number; max: number }
+  aspectRatios?: string[]
+  /** it cannot start without an image */
+  needsImage?: boolean
+  /** Magnific: the output resolutions it offers ("720p" is sent when it has it) */
+  resolutions?: string[]
+}
+
+/** what a generation would cost and what is left (read-only checks on the service) */
+export interface CreditInfo {
+  /** credits the generation would cost (null: the service could not say) */
+  cost: number | null
+  /** "exact", "variable", or "max" (Magnific's auto mode picks a model at run time: the most it could cost) */
+  certainty?: string
+  /** what the service would change (e.g. "길이 5초 → 4초") */
+  adjusted?: string[]
+  /** credits left on the active account */
+  balance?: number
+  /** why these settings would not work with the chosen model (checked before anything is sent) */
+  problem?: string
+}
+
+/** the Claude plan's limits as Claude Code reports them (/usage) */
+export interface ClaudeUsage {
+  session?: { pct: number; resets?: string }
+  week?: { pct: number; resets?: string }
+  /** a separate weekly limit per model (e.g. Fable) */
+  models: { name: string; pct: number; resets?: string }[]
+  at: number
 }
 
 export interface AiModelList {

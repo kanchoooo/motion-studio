@@ -1,6 +1,6 @@
 import type { Asset, Brief, OutputFormat, OutputQuality, ReferenceItem } from './brief'
 import type { CharacterInfo, Framing, GenCandidate, GenRequest, VideoGenRequest } from './assetGen'
-import type { AiAccountInfo, AiLoginEvent, AiModelInfo, AiModelList, AiSettings, AiVoiceInfo, AudioCandidate, AudioCandidateList, LoginBrowser, LoginWindow, CodexStatus } from './ai'
+import type { AiAccountInfo, AiLoginEvent, AiModelInfo, AiModelList, AiSettings, AiVoiceInfo, AudioCandidate, AudioCandidateList, ClaudeUsage, CreditInfo, LoginBrowser, LoginWindow, CodexStatus } from './ai'
 import type { Overrides } from './overrides'
 import type { FeedbackMark, HistoryEntry, ProjectState, ProjectSummary, RenderRecord } from './project'
 
@@ -335,6 +335,8 @@ export interface StudioApi {
     openExternal(url: string): Promise<void>
     reveal(path: string): Promise<void>
     pickFiles(kind: 'assets' | 'images' | 'media' | 'any'): Promise<string[]>
+    /** the Claude plan's limits as Claude Code reports them (/usage; cached three minutes, force asks again) */
+    claudeUsage(force?: boolean): Promise<ClaudeUsage | null>
     pickFolder(): Promise<string | null>
     /** opens Claude Code once in the projects folder so the designer can trust it (covers every project) */
     trustWorkspace(): Promise<SessionState>
@@ -516,6 +518,10 @@ export interface StudioApi {
     artlistLoginDone(): Promise<void>
     /** 소재 > AI로 만들기: one image (characters are converted to SVG before it returns) */
     generate(projectId: string, req: GenRequest): Promise<GenCandidate>
+    /** what an image / clip would cost and the credits left (read-only: nothing submitted or charged) */
+    estimate(req: GenRequest | VideoGenRequest, kind: 'image' | 'video'): Promise<CreditInfo>
+    /** credits left on the active account of a service */
+    balance(provider: 'higgsfield' | 'magnific'): Promise<number | null>
     /** a clip from a video model, optionally between a first and a last frame */
     generateVideo(projectId: string, req: VideoGenRequest): Promise<GenCandidate>
     candidates(projectId: string): Promise<GenCandidate[]>

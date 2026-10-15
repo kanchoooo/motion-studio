@@ -15,7 +15,9 @@ import { probeMedia, thumbnailFromVideo } from '../media'
 import { newId, nowIso } from '../util'
 import { failIfError, payload } from './catalog'
 import { callTool, listTools } from './connect'
-import { genDir, keyOf, listCandidates, pickRatio, queued, referenceValues, waitFor, writeCandidates, type Schema } from './generate'
+import { costOf, genDir, isCostOnly, keyOf, listCandidates, nearestOf, pickRatio, queued, referenceValues, toolParams, waitFor, writeCandidates, type Schema } from './generate'
+import { autoHiggsfieldModel, listModels } from './catalog'
+import type { AiModelInfo } from '@shared/ai'
 import { saveResultMedia } from './media'
 
 const VIDEO_TOOL: Record<VideoGenRequest['provider'], RegExp> = { higgsfield: /^generate_video$/, magnific: /^videos?_generate$/ }
@@ -32,24 +34,39 @@ export function pickDuration(s: Schema | undefined, seconds: number): number | s
 }
 
 /** the tool arguments for one clip, following the tool's own schema */
-export async function videoArguments(req: VideoGenRequest, frames: { start?: string; end?: string }, tools: { name: string; inputSchema?: unknown }[]): Promise<{ tool: string; args: Record<string, unknown> }> {
+export async function videoArguments(req: VideoGenRequest, frames: { start?: string; end?: string }, tools: { name: string; inputSchema?: unknown }[], catalog: AiModelInfo[] = [], opts: { cost?: boolean; estimate?: boolean } = {}): Promise<{ tool: string; args: Record<string, unknown> }> {
   const tool = tools.find((t) => VIDEO_TOOL[req.provider].test(t.name))
   if (!tool) throw new Error('이 서비스에서 영상 만들기 도구를 찾지 못했어요. AI 연결을 다시 확인해 주세요.')
-  const top = ((tool.inputSchema as Schema | undefined)?.properties ?? {}) as Record<string, Schema>
-  const nested = top.params && (top.params.type === 'object' || top.params.properties) ? 'params' : null
-  const props = (nested ? top.params.properties : top) ?? {}
+  // Higgsfield nests the parameters under "params" (an anyOf of an object and a string)
+  const { nested, props } = toolParams(tool.inputSchema)
   const free = !Object.keys(props).length
   const a: Record<string, unknown> = {}
   a[keyOf(props, /^prompt$/i) ?? keyOf(props, /prompt/i, /negative/i) ?? 'prompt'] = withRevision(req.prompt, req.lang, req.revision, false)
   const modelKey = keyOf(props, /^(model|slug|mode|model_?id)$/i) ?? (free ? (req.provider === 'magnific' ? 'slug' : 'model') : undefined)
-  if (req.model && modelKey) a[modelKey] = req.model
+  // Higgsfield needs a model: "자동" = a generator that takes the frames given
+  const model = req.model || (req.provider === 'higgsfield' ? autoHiggsfieldModel(catalog, 'video', { start: !!frames.start, end: !!frames.end }) : '') || ''
+  // Magnific: no slug = its own auto-select (frames and length rules are then its own)
+  const info = catalog.find((m) => m.id === model)
+  if (info && frames.start && info.roles && !info.roles.some((r) => r === 'start_image' || r === 'image')) throw new Error(`고른 영상 모델(${info.name})은 시작 프레임 이미지를 받지 않아요. 프레임을 빼거나 다른 모델을 골라 주세요.`)
+  if (info && frames.end && info.roles && !info.roles.includes('end_image')) throw new Error(`고른 영상 모델(${info.name})은 끝 프레임을 받지 않아요. 끝 프레임을 빼거나, 시작·끝 프레임을 받는 모델을 골라 주세요.`)
+  if (info?.needsImage && !frames.start) throw new Error(`고른 영상 모델(${info.name})은 시작 프레임 이미지가 있어야 해요.`)
+  if (model && modelKey) a[modelKey] = model
   const ratioKey = keyOf(props, /aspect/i) ?? (free ? (req.provider === 'magnific' ? 'aspectRatio' : 'aspect_ratio') : undefined)
-  if (ratioKey) a[ratioKey] = pickRatio(props[ratioKey], req.ratio)
+  if (ratioKey) a[ratioKey] = info?.aspectRatios?.length ? nearestOf(info.aspectRatios, req.ratio) : pickRatio(props[ratioKey], req.ratio)
+  const costKey = keyOf(props, /^get_?cost$/i)
+  if (opts.cost && costKey) a[costKey] = true
   const durKey = keyOf(props, /^duration(_?s(ec(onds)?)?)?$/i) ?? (free ? 'duration' : undefined)
-  if (durKey) a[durKey] = pickDuration(props[durKey], req.duration)
+  // the length the model allows that is closest to the one wanted
+  const allowed = info?.durations?.length ? info.durations : info?.durationRange ? [Math.max(info.durationRange.min, Math.min(info.durationRange.max, req.duration))] : null
+  const seconds = allowed ? allowed.reduce((b, x) => (Math.abs(x - req.duration) < Math.abs(b - req.duration) ? x : b)) : req.duration
+  if (durKey) a[durKey] = pickDuration(props[durKey], seconds)
+  // Magnific requires a resolution for most models: 720p when offered
+  const resKey = keyOf(props, /^resolution$/i)
+  if (resKey && info?.resolutions?.length) a[resKey] = info.resolutions.find((r) => /^720p$/i.test(r)) ?? info.resolutions.find((r) => !/draft/i.test(r)) ?? info.resolutions[0]
 
   const wanted = (['start', 'end'] as const).filter((k) => frames[k])
-  if (wanted.length) {
+  // an estimate checks what the model takes but uploads nothing (the price is the model's, not the picture's)
+  if (wanted.length && !opts.estimate) {
     const keyframesKey = keyOf(props, /^key_?frames$/i) ?? (free && req.provider === 'magnific' ? 'keyframes' : undefined)
     const mediasKey = keyframesKey ? undefined : (keyOf(props, /^medias?$/i) ?? (free && req.provider === 'higgsfield' ? 'medias' : undefined))
     const startKey = keyOf(props, START_RE, /end|last|tail|reference|negative/i)
@@ -69,7 +86,9 @@ export async function videoArguments(req: VideoGenRequest, frames: { start?: str
       const item = props[mediasKey]?.items?.properties ?? {}
       const roleKey = keyOf(item, /role|type|kind/i) ?? 'role'
       const valKey = keyOf(item, /value|url|id|image|media/i, /role|type|kind/i) ?? 'value'
-      a[mediasKey] = wanted.map((k) => ({ [roleKey]: k === 'start' ? 'start_image' : 'end_image', [valKey]: byRole[k] }))
+      // the start frame's role: start_image, or image for a model that only lists that
+      const startRole = info?.roles && !info.roles.includes('start_image') && info.roles.includes('image') ? 'image' : 'start_image'
+      a[mediasKey] = wanted.map((k) => ({ [roleKey]: k === 'start' ? startRole : 'end_image', [valKey]: byRole[k] }))
     } else {
       const sk = startKey ?? (free ? 'start_image' : undefined)
       const ek = endKey ?? (free ? 'end_image' : undefined)
@@ -81,6 +100,22 @@ export async function videoArguments(req: VideoGenRequest, frames: { start?: str
   return { tool: tool.name, args: nested ? { params: a } : a }
 }
 
+/** what one clip would cost with these settings (Higgsfield's get_cost preflight: nothing is submitted) */
+export async function estimateVideo(req: VideoGenRequest): Promise<{ credits: number; adjusted?: string[]; certainty?: string } | null> {
+  const tools = (await listTools(req.provider)) as { name: string; inputSchema?: unknown }[]
+  const catalog = (await listModels(req.provider, 'video').catch(() => ({ items: [] }))).items
+  // frames are not uploaded for an estimate (they only choose the 자동 model and are checked against the chosen one)
+  const { tool, args } = await videoArguments({ ...req, prompt: req.prompt || 'estimate' }, { start: req.start, end: req.end }, tools, catalog, { cost: req.provider === 'higgsfield', estimate: true })
+  if (req.provider === 'higgsfield' && !isCostOnly(args)) return null
+  const r = req.provider === 'magnific' ? await callTool('magnific', 'simulate_cost', { tool, arguments: args }, 60_000) : await callTool('higgsfield', tool, args, 60_000)
+  if (r.isError) return null
+  const c = costOf(r)
+  // the length actually used (the request snaps to what the model allows)
+  const used = (tool && (args.params as Record<string, unknown> | undefined)?.duration) ?? args.duration
+  if (c && typeof used === 'number' && used !== req.duration && !c.adjusted) c.adjusted = [`길이 ${req.duration}초 → ${used}초`]
+  return c
+}
+
 /** makes one clip; the card shows its poster still and plays it */
 export async function generateVideoCandidate(projectDir: string, req: VideoGenRequest): Promise<GenCandidate> {
   const id = newId()
@@ -89,7 +124,8 @@ export async function generateVideoCandidate(projectDir: string, req: VideoGenRe
   try {
     const frames = { start: req.start && join(projectDir, req.start), end: req.end && join(projectDir, req.end) }
     const tools = (await listTools(req.provider)) as { name: string; inputSchema?: unknown }[]
-    const { tool, args } = await videoArguments(req, frames, tools)
+    const catalog = (await listModels(req.provider, 'video').catch(() => ({ items: [] }))).items
+    const { tool, args } = await videoArguments(req, frames, tools, catalog)
     let r = await callTool(req.provider, tool, args, 600_000)
     failIfError(r)
     let saved = (await saveResultMedia(folder, 'gen', r, 4)).filter((m) => m.kind === 'video')

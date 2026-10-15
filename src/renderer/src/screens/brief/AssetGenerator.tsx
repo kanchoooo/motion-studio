@@ -31,9 +31,11 @@ import {
   type VideoGenRequest,
 } from '@shared/assetGen'
 import { KIND_HINTS, KIND_LABELS, LOOK_HINTS } from '@shared/genStyles'
+import type { AiModelInfo } from '@shared/ai'
 import type { AiModelRef, Asset, Brief } from '@shared/brief'
 import type { HelperReply } from '@shared/api'
 import type { GenIntent } from './briefUi'
+import { CreditLine } from '../../components/ai/CreditLine'
 import { ModelSelect } from '../../components/ai/ModelSelect'
 import { Modal, Segmented } from '../../components/ui'
 import { studio, useStore } from '../../store'
@@ -77,6 +79,16 @@ export interface HelperCtx {
 export const useGenHelper = create<{ ctx: HelperCtx | null; target: PromptTarget; use: ((p: string) => void) | null }>(() => ({ ctx: null, target: 'image', use: null }))
 const TARGET_LABEL: Record<PromptTarget, string> = { image: '이미지 프롬프트', video: '움직임 프롬프트', start: '시작 프레임 프롬프트', end: '끝 프레임 프롬프트' }
 export const targetLabel = (t: PromptTarget) => TARGET_LABEL[t]
+
+/** the clip lengths a model offers (its own list, a few points of its range, else the usual three) */
+export function durationChoices(m: AiModelInfo | null): number[] {
+  if (m?.durations?.length) return [...new Set(m.durations)].sort((a, b) => a - b).slice(0, 8)
+  if (m?.durationRange) {
+    const { min, max } = m.durationRange
+    return [...new Set([min, 5, 8, 10, max].filter((d) => d >= min && d <= max))].sort((a, b) => a - b)
+  }
+  return [...VIDEO_DURATIONS]
+}
 
 /** an AI-made asset of the brief the designer wants changed (수정해서 다시 만들기) */
 export interface ReviseTarget {
@@ -154,6 +166,12 @@ export function AssetGenerator({
   const [vPrompt, setVPrompt] = useState('')
   const [frames, setFrames] = useState<{ start?: string; end?: string }>({})
   const [duration, setDuration] = useState<number>(5)
+  const [vInfo, setVInfo] = useState<AiModelInfo | null>(null)
+  const lengths = durationChoices(vInfo)
+  // another model: keep the length when it has it, else the nearest one it offers
+  useEffect(() => {
+    if (!lengths.includes(duration)) setDuration(lengths.reduce((b, d) => (Math.abs(d - duration) < Math.abs(b - duration) ? d : b), lengths[0]))
+  }, [lengths.join(',')]) // eslint-disable-line react-hooks/exhaustive-deps
   const out = brief.output
   const outRatio: VideoRatio = out.width > out.height * 1.2 ? '16:9' : out.height > out.width * 1.2 ? '9:16' : '1:1'
   const [vRatio, setVRatio] = useState<VideoRatio>(outRatio)
@@ -220,13 +238,17 @@ export function AssetGenerator({
   const request = (): GenRequest | null =>
     provider ? { provider, model: model?.model ?? (provider === 'codex' ? 'gpt-image' : ''), modelLabel: model?.label ?? (provider === 'codex' ? 'GPT 이미지 (Codex)' : undefined), style, kind: flat ? 'character' : kind, framing: showFraming ? framing : 'auto', ratio, lang, prompt: prompt.trim(), references: refs } : null
 
-  const generate = async (req = request()) => {
+  /** a new candidate is shown where the designer can act on it (keep it, put it in the scene) */
+  const reveal = (id: string) => setTimeout(() => box.current?.querySelector(`[data-candidate-id="${id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 120)
+
+  const generate = async (req = request(), opts: { reveal?: boolean } = {}) => {
     if (!req || busy) return
     if (!req.prompt) return toast('만들 이미지를 프롬프트 칸에 적어 주세요.', 'error')
     setBusy('image')
     try {
       const c = await studio.ai.generate(pid, req)
       setCandidates((l) => [c, ...l.filter((x) => x.id !== c.id)])
+      if (opts.reveal !== false) reveal(c.id)
       if (c.character && !c.character.pass) toast('SVG로 바꿨지만 기준에 못 미쳐요. 후보 카드에서 확인해 주세요.', 'info')
       else if (req.revision?.length) toast('고친 후보를 만들었어요. 아래 후보에서 확인해 주세요.', 'success')
       return c
@@ -248,6 +270,7 @@ export function AssetGenerator({
     try {
       const c = await studio.ai.generateVideo(pid, req)
       setCandidates((l) => [c, ...l.filter((x) => x.id !== c.id)])
+      reveal(c.id)
       return c
     } catch (e) {
       toast(errText(e), 'error')
@@ -266,7 +289,7 @@ export function AssetGenerator({
     try {
       // the end frame follows the start frame's look when the model takes a reference image
       const refsFor = which === 'end' && frames.start?.startsWith('composition/') ? [frames.start.replace(/^composition\//, '')] : []
-      const c = await generate({ ...base, style: 'none', kind: 'free', framing: 'auto', ratio: vRatio as Ratio, prompt: text, references: refsFor })
+      const c = await generate({ ...base, style: 'none', kind: 'free', framing: 'auto', ratio: vRatio as Ratio, prompt: text, references: refsFor }, { reveal: false })
       if (c) setFrames((f) => ({ ...f, [which]: c.file }))
     } finally {
       setMaking(null)
@@ -515,7 +538,10 @@ export function AssetGenerator({
               )}
 
               <div className="row">
-                <span className="tiny faint grow">{provider === 'codex' ? '이 컴퓨터 Codex의 ChatGPT 한도에서 써요. 한 장에 1분쯤 걸려요.' : '만들 때마다 고른 계정의 크레딧을 써요.'}</span>
+                <span className="col grow" style={{ gap: 2, minWidth: 0 }}>
+                  <span className="tiny faint">{provider === 'codex' ? '이 컴퓨터 Codex의 ChatGPT 한도에서 써요. 한 장에 1분쯤 걸려요.' : '만들 때마다 고른 계정의 크레딧을 써요.'}</span>
+                  <CreditLine req={request()} kind="image" />
+                </span>
                 <button className="btn primary" disabled={!!busy || !provider || !prompt.trim()} onClick={() => void generate()} data-testid="gen-run">
                   {busy === 'image' ? <Loader2 size={14} className="spin" /> : <Wand2 size={14} />}
                   {busy === 'image' ? (flat ? '만들고 SVG로 바꾸는 중…' : '만드는 중…') : '만들기'}
@@ -528,12 +554,12 @@ export function AssetGenerator({
                 <span className="small muted">영상 모델</span>
                 <div className="row" style={{ gap: 8 }}>
                   <div className="grow">
-                    <ModelSelect kind="video" value={vModel} onChange={setVModel} autoLabel="자동 (서비스 기본 모델)" />
+                    <ModelSelect kind="video" value={vModel} onChange={setVModel} onInfo={setVInfo} autoLabel="자동 (서비스 기본 모델)" />
                   </div>
                   <LangPick lang={lang} onChange={(l) => void setLang(l)} />
                 </div>
                 <span className="small muted">길이</span>
-                <Segmented value={String(duration)} onChange={(v) => setDuration(Number(v))} options={VIDEO_DURATIONS.map((d) => ({ value: String(d), label: `${d}초` }))} />
+                <Segmented value={String(duration)} onChange={(v) => setDuration(Number(v))} options={lengths.map((d) => ({ value: String(d), label: `${d}초` }))} />
                 <span className="small muted">비율</span>
                 <Segmented value={vRatio} onChange={setVRatio} options={VIDEO_RATIOS.map((r) => ({ value: r, label: r }))} />
               </div>
@@ -551,6 +577,14 @@ export function AssetGenerator({
               />
               {vMode === 'frames' ? (
                 <div className="col" style={{ gap: 10 }} data-testid="frame-steps">
+                  <div className="row" style={{ gap: 8 }}>
+                    <span className="small muted" style={{ width: 84, flex: 'none' }}>
+                      프레임 이미지 모델
+                    </span>
+                    <div className="grow" style={{ minWidth: 0 }} data-testid="frame-image-model">
+                      <ModelSelect kind="image" value={model} onChange={setModel} autoLabel={providers.length || !codexUsable ? '자동 (서비스 기본 모델)' : '자동 (Codex GPT 이미지)'} />
+                    </div>
+                  </div>
                   {(['start', 'end'] as const).map((which, i) => (
                     <div key={which} className="card" style={{ padding: 10, display: 'grid', gridTemplateColumns: '140px 1fr', gap: 10, background: 'var(--surface-2)' }}>
                       <FrameSlot label={which === 'start' ? '시작 프레임' : '끝 프레임'} value={frames[which]} base={base} choices={frameChoices} onChange={(v) => setFrames((f) => ({ ...f, [which]: v }))} testId={`frame-${which}`} />
@@ -568,7 +602,10 @@ export function AssetGenerator({
                           data-testid={`${which}-prompt`}
                         />
                         <div className="row" style={{ gap: 6 }}>
-                          <span className="tiny faint grow">이미지 모델: {model?.label ?? (provider === 'codex' ? 'GPT 이미지 (Codex)' : '자동')} · {vRatio}</span>
+                          <span className="col grow" style={{ gap: 2, minWidth: 0 }}>
+                            <span className="tiny faint">{model?.label ?? (provider === 'codex' ? 'GPT 이미지 (Codex)' : '자동')} · {vRatio}</span>
+                            {which === 'start' && <CreditLine req={(() => { const r = request(); return r && { ...r, style: 'none' as GenStyle, kind: 'free' as GenKind, framing: 'auto' as Framing, ratio: vRatio as Ratio } })()} kind="image" />}
+                          </span>
                           <button className="btn sm" disabled={!!busy || !provider} onClick={() => void generateFrame(which)} data-testid={`${which}-make`}>
                             {making === which ? <Loader2 size={12} className="spin" /> : <Wand2 size={12} />}
                             {making === which ? '만드는 중…' : frames[which] ? '다시 만들기' : '이미지 만들기'}
@@ -602,7 +639,10 @@ export function AssetGenerator({
               </div>
 
               <div className="row">
-                <span className="tiny faint grow">고른 계정의 크레딧을 써요. 한 편에 몇 분 걸려요.</span>
+                <span className="col grow" style={{ gap: 2, minWidth: 0 }}>
+                  <span className="tiny faint">고른 계정의 크레딧을 써요. 한 편에 몇 분 걸려요.</span>
+                  <CreditLine req={videoRequest()} kind="video" />
+                </span>
                 <button className="btn primary" disabled={!!busy || !vProvider} onClick={() => void generateVideo()} data-testid="video-run">
                   {busy === 'video' ? <Loader2 size={14} className="spin" /> : <Film size={14} />}
                   {busy === 'video' ? '영상을 만드는 중… (몇 분 걸려요)' : '영상 만들기'}
@@ -757,7 +797,7 @@ function CandidateCard({ c, base, busy, onKeep, onDiscard, onAgain, onRevise, on
   const [revising, setRevising] = useState(false)
   const notes = (c.video ? c.video.request.revision : c.request.revision) ?? []
   return (
-    <div className="card" style={{ padding: 8, display: 'flex', flexDirection: 'column', gap: 8 }} data-testid="gen-candidate">
+    <div className="card" style={{ padding: 8, display: 'flex', flexDirection: 'column', gap: 8 }} data-testid="gen-candidate" data-candidate-id={c.id}>
       <div style={{ aspectRatio: '1', background: 'var(--canvas)', borderRadius: 6, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
         {base && c.video && <video src={`${base}${c.file}`} poster={`${base}${c.video.poster}`} controls muted loop playsInline style={{ maxWidth: '100%', maxHeight: '100%' }} data-testid="gen-video" />}
         {base && !c.video && <img src={`${base}${c.file}`} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />}

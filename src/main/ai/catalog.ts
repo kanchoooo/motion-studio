@@ -77,6 +77,9 @@ const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string =>
 // ---- models -------------------------------------------------------------------------
 
 /** Magnific catalogue text → models (plan-blocked slugs included, flagged) */
+// Magnific lists lip-sync, motion-transfer and video-edit models among its video generators
+const MG_NOT_GENERATOR = /lipsync|act-two|motion-control|animate|-edit\b|live2d|fabric|v2v|omnihuman|sync-/i
+
 export function magnificModels(v: unknown, kind: AiMediaKind): AiModelList {
   const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>
   const items: AiModelInfo[] = (Array.isArray(o.models) ? o.models : [])
@@ -93,9 +96,17 @@ export function magnificModels(v: unknown, kind: AiMediaKind): AiModelList {
         recommended: !!rec,
         premium: m.requiresPremium === true,
         _rank: rec && typeof rec.rank === 'number' ? rec.rank : 99,
+        // what the model takes: lengths, ratios, resolutions, first / last frame
+        durations: Array.isArray(m.durations) ? m.durations.map(Number).filter((x) => Number.isFinite(x)) : undefined,
+        aspectRatios: strings(m.aspectRatios).filter((r) => /^\d+:\d+$/.test(r)),
+        resolutions: strings(m.resolutions),
+        roles: [...(m.supportsStartFrame === true ? ['start_image'] : []), ...(m.supportsEndFrame === true ? ['end_image'] : [])],
+        needsImage: strings(m.requiredInputs).includes('keyframes'),
+        _skip: kind === 'video' && (MG_NOT_GENERATOR.test(String(m.slug ?? '')) || strings(m.requiredInputs).includes('audioConstraints')),
       }
     })
-    .filter((m) => m.id && m.id !== 'auto')
+    .filter((m) => m.id && m.id !== 'auto' && !m._skip)
+    .map(({ _skip, ...m }) => (void _skip, m))
     .sort((a, b) => Number(b.recommended) - Number(a.recommended) || a._rank - b._rank || a.name.localeCompare(b.name))
     .map(({ _rank, ...m }) => (void _rank, m))
   const blocked = strings(o.unavailableToThisAccount)
@@ -109,16 +120,44 @@ export function magnificModels(v: unknown, kind: AiMediaKind): AiModelList {
   return { items, note }
 }
 
+// Higgsfield lists editing / dubbing / workflow tools among its "video" models: only models that
+// make a picture or a clip from a prompt (and optionally images) are offered
+const HF_EDIT_ROLES = new Set(['video_references', 'input_video', 'input_audio', 'audio_references', 'mask'])
+const HF_SKIP = /^(marketing_studio|higgsfield_preset|autosprite|soul_cast|video_background_remover|voice_change|dubbing|sync_so|ads_studio|ai_influencer)/
+
 export function higgsfieldModels(pages: unknown[], kind: AiMediaKind): AiModelList {
   const items: AiModelInfo[] = []
   for (const p of pages)
     for (const m of entries(p)) {
       const id = str(m, 'id', 'model_id', 'slug')
-      if (!id || items.some((x) => x.id === id)) continue
+      if (!id || items.some((x) => x.id === id) || HF_SKIP.test(id)) continue
       const provider = str(m, 'provider_name')
-      items.push({ provider: 'higgsfield', id, name: `${str(m, 'name') ?? id}${provider && provider !== 'Higgsfield' ? ` · ${provider}` : ''}`, kind, description: str(m, 'description') })
+      const medias = (Array.isArray(m.medias) ? m.medias : []).filter((x): x is Record<string, unknown> => !!x && typeof x === 'object')
+      const roles = [...new Set(medias.flatMap((x) => (Array.isArray(x.roles) ? x.roles.map(String) : [])))]
+      // only media inputs that edit an existing clip / sound: not a generator
+      if (kind === 'video' && roles.length && roles.every((r) => HF_EDIT_ROLES.has(r))) continue
+      const range = m.duration_range && typeof m.duration_range === 'object' ? (m.duration_range as { min?: unknown; max?: unknown }) : null
+      items.push({
+        provider: 'higgsfield',
+        id,
+        name: `${str(m, 'name') ?? id}${provider && provider !== 'Higgsfield' ? ` · ${provider}` : ''}`,
+        kind,
+        description: str(m, 'description'),
+        roles,
+        durations: Array.isArray(m.durations) ? m.durations.map(Number).filter((x) => Number.isFinite(x)) : undefined,
+        durationRange: range && Number.isFinite(Number(range.min)) && Number.isFinite(Number(range.max)) ? { min: Number(range.min), max: Number(range.max) } : undefined,
+        aspectRatios: Array.isArray(m.aspect_ratios) ? m.aspect_ratios.map(String).filter((r) => /^\d+:\d+$/.test(r)) : undefined,
+        needsImage: medias.some((x) => x.required === true),
+      })
     }
   return { items }
+}
+
+/** Higgsfield's "자동": a model id is required there — image_auto for pictures; for clips the first generator that takes the frames given */
+export function autoHiggsfieldModel(list: AiModelInfo[], kind: AiMediaKind, frames: { start?: boolean; end?: boolean } = {}): string | undefined {
+  if (kind === 'image') return (list.find((m) => m.id === 'image_auto') ?? list[0])?.id
+  const fits = (m: AiModelInfo) => !m.needsImage && (!frames.start || m.roles?.some((r) => r === 'start_image' || r === 'image')) && (!frames.end || m.roles?.includes('end_image'))
+  return (list.find((m) => m.id === 'seedance1_5' && fits(m)) ?? list.find(fits) ?? list[0])?.id
 }
 
 export async function listModels(provider: AiConnectProvider, kind: AiMediaKind): Promise<AiModelList> {
