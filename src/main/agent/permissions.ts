@@ -118,6 +118,128 @@ export function scriptEditsComposition(cmd: string): boolean {
   return writes && /\.(html?|css|m?js)\b/.test(cmd)
 }
 
+// `hyperframes check 2>&1 | grep … | head` — Claude reads a long report through filters. The
+// session allows `hyperframes …` alone; a pipeline of it into read-only filters is allowed here
+// instead of asking the designer. Anything that could run or write something else still asks.
+const HF_READ = new Set(['check', 'lint', 'validate', 'inspect', 'keyframes', 'snapshot', 'catalog', 'add', 'info', 'compositions', 'timeline', 'beats', 'docs'])
+const FILTERS = new Set(['grep', 'egrep', 'fgrep', 'head', 'tail', 'wc', 'cut', 'tr', 'sort'])
+
+/** shell words of one simple command (quotes removed) */
+function shellWords(seg: string): string[] {
+  const out: string[] = []
+  let cur = ''
+  let q: string | null = null
+  let any = false
+  for (let i = 0; i < seg.length; i++) {
+    const c = seg[i]
+    if (q) {
+      if (c === q) q = null
+      else if (q === '"' && c === '\\' && i + 1 < seg.length) cur += seg[++i]
+      else cur += c
+      continue
+    }
+    if (c === '"' || c === "'") {
+      q = c
+      any = true
+    } else if (c === '\\' && i + 1 < seg.length) {
+      cur += seg[++i]
+      any = true
+    } else if (/\s/.test(c)) {
+      if (cur || any) out.push(cur)
+      cur = ''
+      any = false
+    } else cur += c
+  }
+  if (cur || any) out.push(cur)
+  return out
+}
+
+/** true for `[cd <project or composition> &&] hyperframes <read command> … | <read-only filter> …` */
+export function hyperframesReadPipeline(cmd: string, projectDir: string): boolean {
+  const segs: string[] = []
+  const ops: string[] = []
+  let cur = ''
+  let q: string | null = null
+  for (let i = 0; i < cmd.length; i++) {
+    const c = cmd[i]
+    if (q) {
+      if (c === q) q = null
+      else if (q === '"' && (c === '`' || (c === '$' && cmd[i + 1] === '('))) return false
+      else if (q === '"' && c === '\\') {
+        cur += c + (cmd[i + 1] ?? '')
+        i++
+        continue
+      }
+      cur += c
+      continue
+    }
+    if (c === '"' || c === "'") {
+      q = c
+      cur += c
+    } else if (c === '\\') {
+      cur += c + (cmd[i + 1] ?? '')
+      i++
+    } else if (c === '`' || c === ';' || c === '\n' || c === '<' || (c === '$' && cmd[i + 1] === '(')) return false
+    else if (c === '>') {
+      // only stderr into stdout or nowhere
+      const rest = cmd.slice(i)
+      if (!cur.endsWith('2')) return false
+      const m = rest.match(/^>(&1|\/dev\/null)(?=\s|$|\|)/)
+      if (!m) return false
+      cur = cur.slice(0, -1)
+      i += m[0].length - 1
+    } else if (c === '&') {
+      if (cmd[i + 1] !== '&') return false
+      segs.push(cur)
+      ops.push('&&')
+      cur = ''
+      i++
+    } else if (c === '|') {
+      if (cmd[i + 1] === '|' || cmd[i + 1] === '&') return false
+      segs.push(cur)
+      ops.push('|')
+      cur = ''
+    } else cur += c
+  }
+  if (q) return false
+  segs.push(cur)
+  const words = segs.map(shellWords)
+  if (words.some((w) => !w.length)) return false
+  let at = 0
+  if (ops[0] === '&&') {
+    const [cd, target, ...more] = words[0]
+    if (cd !== 'cd' || !target || more.length) return false
+    const real = (p: string) => {
+      try {
+        return realpathSync(p)
+      } catch {
+        return p
+      }
+    }
+    const to = real(resolvePath(projectDir, target))
+    if (to !== real(projectDir) && to !== real(join(projectDir, 'composition'))) return false
+    at = 1
+  }
+  if (ops.slice(at).some((o) => o !== '|') || at >= words.length) return false
+  const [first, ...filters] = words.slice(at)
+  let k = 0
+  if (first[0] === 'npx') {
+    k = 1
+    if (first[k] === '-y' || first[k] === '--yes') k++
+  }
+  if (!/^hyperframes(@[\w.-]+)?$/.test(first[k] ?? '') || !HF_READ.has(first[k + 1] ?? '')) return false
+  return filters.every((f) => (FILTERS.has(f[0]) && !(f[0] === 'sort' && f.some((a) => a === '-o' || a.startsWith('--output')))) || sedPrintsRange(f))
+}
+
+/** `sed -n '/^Layout/,/^Snapshots/p'` or `sed -n 10,40p`: prints lines, nothing else */
+function sedPrintsRange(f: string[]): boolean {
+  if (f[0] !== 'sed') return false
+  const opts = f.slice(1).filter((a) => a.startsWith('-'))
+  const scripts = f.slice(1).filter((a) => !a.startsWith('-'))
+  const addr = String.raw`(\d+|\$|\/(?:[^\/\\]|\\.)*\/)`
+  return opts.length > 0 && opts.every((o) => o === '-n' || o === '-E' || o === '-nE' || o === '-En') && scripts.length === 1 && new RegExp(`^${addr}(,${addr})?p$`).test(scripts[0])
+}
+
 /** /hook/<token>/… — true when the request was ours */
 export async function handleHook(req: IncomingMessage, res: ServerResponse, path: string): Promise<boolean> {
   if (/\/pretool$/.test(path)) return handlePreTool(req, res, path)
@@ -270,6 +392,10 @@ export async function handlePermission(req: IncomingMessage, res: ServerResponse
   // sent back to Claude before the designer is even asked (in both modes)
   if (tool === 'Bash') {
     const cmd = typeof input.command === 'string' ? input.command : ''
+    if (hyperframesReadPipeline(cmd, dir)) {
+      reply(res, 'allow')
+      return true
+    }
     if (scriptEditsComposition(cmd)) {
       reply(res, 'deny', '영상 파일은 셸 스크립트(python, node, sed -i, perl -i, > 리다이렉션, tee)가 아니라 Edit / Write 도구로만 고쳐 주세요. 디자이너가 명령마다 직접 허락해야 해요. 비슷한 수정이 많으면 Edit를 여러 번 쓰거나 Write로 파일을 한 번에 다시 쓰세요. 이 안내는 디자이너에게 말하지 말고 그대로 이어서 작업하세요.')
       return true

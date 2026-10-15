@@ -504,6 +504,11 @@
 - [x] 브리프 › 톤앤매너·스타일: 영상 템포(맡기기·느림·보통·빠름·매우 빠름 → 장면 길이·BPM·움직임 숫자)와 스타일 14가지(2개까지, 주·보조) → BRIEF.md·get_brief에 숫자와 규칙으로, 검수 에이전트도 확인
 - 테스트: 단위(주소→사본, 검색, 네트워크 막고 CLI 설치·검색, 세션 명령의 클립보드, MCP 도구, 템포·스타일), brief-direction(화면), 패키지 앱에서 한글 경로·네트워크 차단 설치, reviewer-effort-live·quality-flow-live(실제 Claude)
 
+### 12-1. 0.3.1 배포본 테스트에서 찾은 것 (배포 전)
+- [x] GPT 이미지(codex_image)가 60초를 넘으면 Claude 쪽에서 "The operation timed out." → 앱 MCP 서버에 서버별 timeout 15분 (75초 도구로 재현·확인: 없으면 60초에 끊기고, timeout 또는 SSE면 끝까지 받음)
+- [x] `hyperframes check 2>&1 | grep … | head` 같은 보고서 읽기에 허락 카드가 뜸 → 읽기 전용 필터로 이어진 hyperframes 읽기 명령은 앱이 바로 허용
+- 테스트: hf-pipeline(단위), release-check에 MCP timeout 확인
+
 ## 작업 기록
 
 | 날짜 | 단계 | 내용 |

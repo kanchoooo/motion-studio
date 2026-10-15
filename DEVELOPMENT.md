@@ -131,6 +131,8 @@ poc/               Phase 0 기술 검증 기록 (RESULTS.md)
   - `composition/BRIEF.md`(`agent/briefDoc.ts`): 브리프를 HyperFrames 브리프 형식(workflow: general-video, flow: companion, storyboard: yes)으로 세션 시작·브리프 저장 때마다 앱이 다시 씀. Claude는 고칠 수 없음(거부 규칙).
   - 플러그인 에이전트 `resources/claude-plugin/agents/motion-reviewer.md`(opus, 추론 강도는 세션과 같음 — PreToolUse 훅이 Agent 호출에 세션의 `effort`를 넣음, 읽기 전용 + snapshot/look_at_frames): 장면별 [꼭]/[권장] 수정 목록. 플러그인 스킬 `motion-studio-media`: AI 생성·아트리스트·SVG 캐릭터 안내(시스템 프롬프트에서 분리).
   - 기본 추론 강도는 `high`(DEFAULT_EFFORT, 채팅 패널에서 프로젝트별로 바꿀 수 있음). WebSearch는 미리 허용(비슷한 광고 조사), WebFetch는 질문.
+  - `PermissionRequest` 훅은 `[cd <프로젝트|composition> &&] hyperframes <check·lint·snapshot·catalog… 읽기 명령> | grep·head·tail·wc·cut·tr·sort·sed -n <구간>p`처럼 보고서를 걸러 읽는 명령은 바로 허용해요(`hyperframesReadPipeline`: `>`·`$(…)`·`;`·`||`·백틱·`sort -o`·`sed -i/w`가 하나라도 있으면 그대로 물어봄).
+  - 앱 MCP 서버(`studio`)는 도구가 끝날 때 한 번에 응답하므로 설정에 `timeout: 900000`(15분)을 준다. 없으면 Claude Code가 60초 넘게 조용한 호출(GPT 이미지 생성 등)을 "The operation timed out."으로 끊는다.
   - `PermissionRequest` 훅은 사람에게 묻기 전에 두 가지를 돌려보내요: 영상 파일을 고치는 셸 스크립트(python·node·sed -i·perl -i·리다이렉션·tee → Edit/Write로만), 설명(description)이 한국어가 아닌 명령.
   - 설정 `language: "Korean"`(Claude Code 응답 언어). 중간 메모까지 한국어로 쓰도록 프롬프트에 예시 문장도 있어요.
   - `--setting-sources ""` (개인 설정, 훅, 플러그인 제외)

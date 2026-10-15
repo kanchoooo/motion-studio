@@ -1,5 +1,5 @@
-// 0.3.1 in the app as shipped (no Claude calls, no AI credits):
-//  - version, 브리프 › 톤앤매너·스타일 (tempo + styles saved and written into BRIEF.md)
+// The app as shipped (no Claude calls, no AI credits):
+//  - version (package.json), studio tools' 15-minute MCP timeout, 브리프 › 톤앤매너·스타일 (tempo + styles saved and written into BRIEF.md)
 //  - the HyperFrames registry copy is inside the app; the `hyperframes` command Claude's
 //    session gets loads it and never copies to the clipboard
 //  - with the network shut off, the app's own CLI searches and installs from the copy
@@ -29,7 +29,9 @@ const win = await app.firstWindow()
 try {
   await toHome(win)
   const info = await win.evaluate(() => window.studio.app.info())
-  check(`version ${info.version} (${exec ? 'the shipped app' : 'dev build'})`, info.version === '0.3.1')
+  // the dev build reports Electron's own version
+  const version = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version
+  if (exec) check(`version ${info.version} (the shipped app)`, info.version === version)
 
   // ---- 템포 · 스타일 ----
   const p = await win.evaluate(() => window.studio.projects.create({ name: '배포 확인', presetId: 'shorts-9x16', duration: 10 }))
@@ -57,6 +59,20 @@ try {
   const shim = join(sandbox, 'userdata', 'cli', 'hyperframes')
   for (let i = 0; i < 60 && !existsSync(shim); i++) await win.waitForTimeout(500)
   const text = existsSync(shim) ? readFileSync(shim, 'utf8') : ''
+  // the Claude process this app started: studio tools may run up to 15 minutes (AI generation)
+  const appPid = app.pid ?? app.process?.().pid
+  let mcp = ''
+  for (let i = 0; i < 40 && !mcp; i++) {
+    const rows = execFileSync('ps', ['-axo', 'pid=,ppid=,command='], { encoding: 'utf8' }).split('\n').map((l) => l.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/)).filter(Boolean)
+    const mine = new Set([String(appPid)])
+    for (let grew = true; grew; ) {
+      grew = false
+      for (const [, pid, ppid] of rows) if (mine.has(ppid) && !mine.has(pid)) (mine.add(pid), (grew = true))
+    }
+    mcp = rows.find(([, pid, , cmd]) => mine.has(pid) && cmd.includes('--mcp-config') && cmd.includes('/mcp/'))?.[3] ?? ''
+    if (!mcp) await win.waitForTimeout(500)
+  }
+  check('studio tools may run 15 minutes (no 60 s cut-off for image generation)', /"timeout":900000/.test(mcp), mcp.slice(0, 200))
   const hook = resources ? join(resources, 'hf-registry', 'offline-fetch.mjs') : join(root, 'resources', 'hf-registry', 'offline-fetch.mjs')
   check('the session command loads the registry copy', text.includes(pathToFileURL(hook).href), text.split('\n').slice(-3).join(' | '))
   check('…and adds --no-clipboard to add', /if \[ "\$1" = add \]; then exec .* "\$@" --no-clipboard; fi/.test(text))

@@ -40,6 +40,8 @@ export const pluginDir = () => (isDev ? join(appRoot(), 'resources', 'claude-plu
 /** project default unless the designer picks another in the chat panel: latest Opus, high effort */
 export const DEFAULT_MODEL = 'opus'
 export const DEFAULT_EFFORT = 'high'
+/** longest a studio tool call may run (AI generation waits included) */
+export const STUDIO_TOOL_TIMEOUT_MS = 15 * 60 * 1000
 /** variation re-layouts running at the same time (each is a Claude session of its own) */
 export const MAX_ADAPTING = 4
 
@@ -284,7 +286,9 @@ export class SessionManager {
     const artlist = aiSettings().artlist
     const mcpConfig = JSON.stringify({
       mcpServers: {
-        studio: { type: 'http', url: `${previewBase()}/mcp/${mcpTokenFor(projectId)}` },
+        // a studio tool answers when it is done (one JSON response): image / video generation can take
+        // minutes, and without a per-server timeout Claude Code gives up on a silent call after ~60 s
+        studio: { type: 'http', url: `${previewBase()}/mcp/${mcpTokenFor(projectId)}`, timeout: STUDIO_TOOL_TIMEOUT_MS },
         ...(artlist ? { artlist: { type: 'http', url: AI_PROVIDERS.artlist.url } } : {}),
       },
     })
