@@ -26,7 +26,7 @@ import { loginBrowsers } from './ai/browser'
 import { refreshThumbnail } from './thumbnail'
 import { patchAccount, publicInfo, removeAccount, setActive } from './ai/accounts'
 import { clearCatalog, listModels, listVoices } from './ai/catalog'
-import { cancelLogin, login, resetConnections } from './ai/connect'
+import { cancelLogin, login, NeedsLoginError, resetConnections } from './ai/connect'
 import { listGenerated, recordGenerated } from './ai/generated'
 import { importUrl } from './ai/media'
 import { aiSettings, saveAiSettings } from './ai/settings'
@@ -454,7 +454,11 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
         if (/[가-힣]/.test(e.message)) problem = e.message
         return null
       }),
-      balanceOf(req.provider).catch(() => null),
+      balanceOf(req.provider).catch((e: Error) => {
+        // the service's own sign-in ran out: said here rather than "모름"
+        if (e instanceof NeedsLoginError) problem = e.message
+        return null
+      }),
     ])
     return { cost: cost?.credits ?? null, certainty: cost?.certainty, adjusted: cost?.adjusted, balance: balance ?? undefined, problem }
   })

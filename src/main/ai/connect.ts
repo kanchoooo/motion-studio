@@ -252,20 +252,35 @@ export interface ToolResult {
   isError?: boolean
 }
 
+// the service still lists tools but its own sign-in behind the token ran out (Magnific, 2026-10-15:
+// "The Magnific sign-in behind this session has expired, so the credits service refused it…")
+const SIGNED_OUT = /sign-?in behind this session has expired|sign (?:out .{0,40})?(?:and )?sign in again|session (?:has )?expired.{0,40}sign in/i
+
+/** a generate call that is not only a price check */
+const makes = (name: string, args: Record<string, unknown>) => /^(generate_|images_generate$|video_generate$|audio_)/.test(name) && (args.params as Record<string, unknown> | undefined)?.get_cost !== true && args.get_cost !== true
+
 export async function callTool(provider: AiConnectProvider, name: string, args: Record<string, unknown>, timeoutMs = 300_000): Promise<ToolResult> {
   const run = async () =>
     (await (await connection(provider)).client.callTool({ name, arguments: args }, undefined, { timeout: timeoutMs, resetTimeoutOnProgress: true, maxTotalTimeout: 20 * 60_000 })) as ToolResult
   try {
-    return await run()
+    const r = await run()
+    if (r.isError && SIGNED_OUT.test((r.content ?? []).map((c) => c.text ?? '').join(' '))) {
+      const acc = activeAccount(provider)
+      if (acc) patchAccount(acc.id, { needsLogin: true })
+      throw new NeedsLoginError(provider)
+    }
+    return r
   } catch (e) {
     if (e instanceof NeedsLoginError || e instanceof UnauthorizedError) {
       const acc = activeAccount(provider)
       if (acc) patchAccount(acc.id, { needsLogin: true })
       throw new NeedsLoginError(provider)
     }
-    // a dropped session: reconnect once
+    // a dropped session: reconnect once — never for a call that makes something (it may have gone
+    // through: sent again it would be made, and paid, twice)
     if (/session|closed|ECONNRESET|socket|fetch failed/i.test(String(e))) {
       conns.delete(provider)
+      if (makes(name, args)) throw new Error('서비스와 연결이 끊겨 결과를 알 수 없어요. 서비스 사이트의 생성 기록을 먼저 확인해 주세요. (다시 누르면 한 번 더 만들어요)')
       return await run()
     }
     throw e

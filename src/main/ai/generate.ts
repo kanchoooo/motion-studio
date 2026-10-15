@@ -14,7 +14,8 @@ import { newId, nowIso, readJson, writeJson } from '../util'
 import { autoHiggsfieldModel, failIfError, listModels, payload } from './catalog'
 import { codexImage } from './codex'
 import { callTool, listTools, type ToolResult } from './connect'
-import { saveResultMedia } from './media'
+import { resultUrl, valueAt } from './jobs'
+import { importUrl } from './media'
 
 export type Schema = { type?: string; properties?: Record<string, Schema>; enum?: unknown[]; description?: string; items?: Schema; anyOf?: Schema[] }
 
@@ -121,70 +122,6 @@ export function pickRatio(s: Schema | undefined, ratio: Ratio): string {
     }
   }
   return best
-}
-
-/** creation / job ids in a queued result */
-export function queued(v: unknown, out: string[] = []): string[] {
-  if (Array.isArray(v)) v.forEach((x) => queued(x, out))
-  else if (v && typeof v === 'object')
-    for (const [k, x] of Object.entries(v)) {
-      if (/^(identifiers?|creationIdentifier|job_?ids?|job_?set_?id|request_?id|task_?id)$/i.test(k)) (Array.isArray(x) ? x : [x]).forEach((i) => (typeof i === 'string' || typeof i === 'number') && !out.includes(String(i)) && out.push(String(i)))
-      else queued(x, out)
-    }
-  return out
-}
-
-const still = (r: ToolResult) => /in[_ -]?progress|queued|pending|processing|running|poll_after|not[_ ]ready/i.test(JSON.stringify(payload(r)) ?? '')
-
-/** waits for a queued generation and returns the result that holds its files */
-export async function waitFor(provider: McpProvider, ids: string[], rounds = 12): Promise<ToolResult | null> {
-  // Higgsfield: a direct generation is followed with job_status (jobs_wait is for batch jobs); sync waits ~25 s a call
-  if (provider === 'higgsfield') {
-    const done: unknown[] = []
-    for (const id of ids) {
-      let last: ToolResult | null = null
-      for (let i = 0; i < rounds * 2; i++) {
-        last = await callTool('higgsfield', 'job_status', { jobId: id, sync: true }, 60_000)
-        failIfError(last)
-        if (!still(last)) break
-      }
-      if (!last || still(last)) return null
-      done.push(payload(last))
-    }
-    return { content: [{ type: 'text', text: JSON.stringify(done) }], structuredContent: { jobs: done } } as ToolResult
-  }
-  for (let i = 0; i < rounds; i++) {
-    if (provider === 'magnific') {
-      const w = await callTool('magnific', 'creations_wait', { identifiers: ids, timeoutSeconds: 25 }, 60_000)
-      failIfError(w)
-      if (still(w)) continue
-      const got = await callTool('magnific', 'creations_get', { identifiers: ids }, 60_000)
-      failIfError(got)
-      return got
-    }
-    const w = await callTool('higgsfield', 'jobs_wait', { jobs: ids }, 120_000)
-    failIfError(w)
-    if (!still(w)) return w
-  }
-  return null
-}
-
-/** reference images in the form the tool takes: base64 when its description says so, else an uploaded URL */
-/** the first string value (searched deeply) whose key matches */
-function valueAt(v: unknown, re: RegExp): string | undefined {
-  if (Array.isArray(v)) {
-    for (const x of v) {
-      const f = valueAt(x, re)
-      if (f) return f
-    }
-  } else if (v && typeof v === 'object') {
-    for (const [k, x] of Object.entries(v)) if (re.test(k) && (typeof x === 'string' || typeof x === 'number')) return String(x)
-    for (const x of Object.values(v)) {
-      const f = valueAt(x, re)
-      if (f) return f
-    }
-  }
-  return undefined
 }
 
 const mimeOfImage = (f: string) => (/\.png$/i.test(f) ? 'image/png' : /\.webp$/i.test(f) ? 'image/webp' : 'image/jpeg')
@@ -296,6 +233,9 @@ async function argumentsFor(req: GenRequest & { provider: McpProvider }, sent: s
   const ratioKey = keyOf(props, /aspect/i) ?? (free ? (req.provider === 'magnific' ? 'aspectRatio' : 'aspect_ratio') : undefined)
   if (ratioKey) a[ratioKey] = info?.aspectRatios?.length ? nearestOf(info.aspectRatios, req.ratio) : pickRatio(props[ratioKey], req.ratio)
   if (opts.cost && keyOf(props, /^get_?cost$/i)) a[keyOf(props, /^get_?cost$/i)!] = true
+  // Higgsfield: paid from credits (left out, an account with free-trial generations gets a question back and nothing is made)
+  const unlimKey = keyOf(props, /^use_?unlim$/i)
+  if (unlimKey) a[unlimKey] = false
   const countKey = keyOf(props, /^(count|num_?images|n|batch_?size|number_?of_?images)$/i)
   if (countKey) a[countKey] = 1
   const negKey = keyOf(props, /negative/i)
@@ -337,19 +277,11 @@ export async function generateCandidate(projectDir: string, req: GenRequest): Pr
     else {
       const mcp = req as GenRequest & { provider: McpProvider }
       const { tool, args } = await argumentsFor(mcp, sent, refs)
-      let r = await callTool(mcp.provider, tool, args, 300_000)
+      const r = await callTool(mcp.provider, tool, args, 300_000)
       failIfError(r)
-      let saved = await saveResultMedia(folder, 'gen', r, 1)
-      if (!saved.length) {
-        const ids = queued(payload(r))
-        const done = ids.length ? await waitFor(mcp.provider, ids.slice(0, 4)) : null
-        if (done) {
-          r = done
-          saved = await saveResultMedia(folder, 'gen', r, 1)
-        }
-      }
-      const img = saved.find((m) => m.kind === 'image')
-      if (!img) throw new Error('이미지를 받지 못했어요. 잠시 뒤 다시 시도해 주세요.')
+      // the job the call queued, followed to its full-size file (~7 minutes at most)
+      const img = await importUrl(folder, await resultUrl(mcp.provider, r, 16), 'gen')
+      if (img.kind !== 'image') throw new Error('서비스가 이미지가 아닌 파일을 돌려줬어요. 다른 모델을 골라 주세요.')
       raw = join(folder, img.file)
     }
     // one format for the next steps (SVG conversion reads it, Claude looks at it)

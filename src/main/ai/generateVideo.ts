@@ -13,12 +13,13 @@ import { join } from 'node:path'
 import { withRevision, type GenCandidate, type VideoGenRequest } from '@shared/assetGen'
 import { probeMedia, thumbnailFromVideo } from '../media'
 import { newId, nowIso } from '../util'
-import { failIfError, payload } from './catalog'
+import { failIfError } from './catalog'
 import { callTool, listTools } from './connect'
-import { costOf, genDir, isCostOnly, keyOf, listCandidates, nearestOf, pickRatio, queued, referenceValues, toolParams, waitFor, writeCandidates, type Schema } from './generate'
+import { costOf, genDir, isCostOnly, keyOf, listCandidates, nearestOf, pickRatio, referenceValues, toolParams, writeCandidates, type Schema } from './generate'
 import { autoHiggsfieldModel, listModels } from './catalog'
 import type { AiModelInfo } from '@shared/ai'
-import { saveResultMedia } from './media'
+import { resultUrl } from './jobs'
+import { importUrl } from './media'
 
 const VIDEO_TOOL: Record<VideoGenRequest['provider'], RegExp> = { higgsfield: /^generate_video$/, magnific: /^videos?_generate$/ }
 const START_RE = /^(start|first)[_ ]?(frame|image)([_ ]?(image|url))?$|^(image|input_?image|init_?image|source_?image)(_?url)?$/i
@@ -55,6 +56,9 @@ export async function videoArguments(req: VideoGenRequest, frames: { start?: str
   if (ratioKey) a[ratioKey] = info?.aspectRatios?.length ? nearestOf(info.aspectRatios, req.ratio) : pickRatio(props[ratioKey], req.ratio)
   const costKey = keyOf(props, /^get_?cost$/i)
   if (opts.cost && costKey) a[costKey] = true
+  // Higgsfield: paid from credits (left out, an account with free-trial generations gets a question back and nothing is made)
+  const unlimKey = keyOf(props, /^use_?unlim$/i)
+  if (unlimKey) a[unlimKey] = false
   const durKey = keyOf(props, /^duration(_?s(ec(onds)?)?)?$/i) ?? (free ? 'duration' : undefined)
   // the length the model allows that is closest to the one wanted
   const allowed = info?.durations?.length ? info.durations : info?.durationRange ? [Math.max(info.durationRange.min, Math.min(info.durationRange.max, req.duration))] : null
@@ -126,20 +130,12 @@ export async function generateVideoCandidate(projectDir: string, req: VideoGenRe
     const tools = (await listTools(req.provider)) as { name: string; inputSchema?: unknown }[]
     const catalog = (await listModels(req.provider, 'video').catch(() => ({ items: [] }))).items
     const { tool, args } = await videoArguments(req, frames, tools, catalog)
-    let r = await callTool(req.provider, tool, args, 600_000)
+    const r = await callTool(req.provider, tool, args, 600_000)
     failIfError(r)
-    let saved = (await saveResultMedia(folder, 'gen', r, 4)).filter((m) => m.kind === 'video')
-    if (!saved.length) {
-      const ids = queued(payload(r))
-      // a clip takes minutes: wait longer than for an image
-      const done = ids.length ? await waitFor(req.provider, ids.slice(0, 4), 40) : null
-      if (done) {
-        r = done
-        saved = (await saveResultMedia(folder, 'gen', r, 4)).filter((m) => m.kind === 'video')
-      }
-    }
-    if (!saved.length) throw new Error('영상을 받지 못했어요. 서비스에서 아직 만드는 중일 수 있어요. 잠시 뒤 다시 시도해 주세요.')
-    renameSync(join(folder, saved[0].file), join(folder, 'video.mp4'))
+    // a clip takes minutes (Magnific lists up to 10): followed for ~20 minutes
+    const clip = await importUrl(folder, await resultUrl(req.provider, r, 48), 'gen')
+    if (clip.kind !== 'video') throw new Error('서비스가 영상이 아닌 파일을 돌려줬어요. 다른 모델을 골라 주세요.')
+    renameSync(join(folder, clip.file), join(folder, 'video.mp4'))
     rmSync(join(folder, 'assets'), { recursive: true, force: true })
     const meta = await probeMedia(join(folder, 'video.mp4'))
     await thumbnailFromVideo(join(folder, 'video.mp4'), join(folder, 'poster.jpg'), Math.min(0.5, (meta.duration ?? 1) / 4), 640)

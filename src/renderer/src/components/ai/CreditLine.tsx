@@ -18,6 +18,8 @@ export function CreditLine({ req, kind }: { req: GenRequest | VideoGenRequest | 
   useEffect(() => {
     if (!req || req.provider === 'codex') return setInfo(null)
     let alive = true
+    // another model or setting: the old price is not shown as this one's
+    setInfo(null)
     setBusy(true)
     const t = setTimeout(() => {
       void studio.ai
