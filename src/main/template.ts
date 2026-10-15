@@ -36,7 +36,12 @@ export const HYPERFRAMES_JSON = {
   media: { autoProxy: true },
 }
 
-/** a composition counts as a video once Claude replaced the empty starter */
+/** a composition counts as a video once Claude replaced the empty starter (named layers or not) */
 export function compositionHasVideo(html: string): boolean {
-  return !html.includes('data-ms-empty="true"') && /data-ms-id=|class="[^"]*\bclip\b/.test(html)
+  if (html.includes('data-ms-empty="true"')) return false
+  const at = html.search(/data-composition-id=/)
+  if (at < 0) return false
+  // anything drawn under the root (scripts and styles do not count)
+  const body = html.slice(at).replace(/<script\b[\s\S]*?<\/script>|<style\b[\s\S]*?<\/style>|<!--[\s\S]*?-->/gi, '')
+  return /<(div|section|span|p|h[1-6]|img|video|svg|canvas|picture|figure|ul|li|article|header|footer|main|template)\b/i.test(body.slice(body.indexOf('>') + 1))
 }

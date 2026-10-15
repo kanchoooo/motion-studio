@@ -1,5 +1,7 @@
-// Motion Studio rules on top of HyperFrames' own checks. Messages are written
-// for Claude (fixable) but phrased so they can also be shown to the designer.
+// Motion Studio checks on top of HyperFrames' own. Since 0.5 only what breaks the video or
+// the designer's work is an error (size, length, missing fonts, duplicate ids, removed locked
+// layers); how editable the video is comes afterwards (the app's 편집 정리), so it is only info.
+// Messages are written for Claude but phrased so they can also be shown to the designer.
 import { CAMERA_ID, isPartId, PART_SEP } from '@shared/overrides'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -56,13 +58,13 @@ export function staticFindings(html: string, brief: Brief, overrides: Overrides,
   let last = -1
   for (const s of REQUIRED_SCRIPTS) {
     const i = head.indexOf(`src="${s}"`)
-    if (i < 0) out.push({ severity: 'error', code: 'ms_script_missing', message: `<head>에 <script src="${s}"></script>가 없어요. 필수 스크립트 3개(gsap → overrides → runtime)를 이 순서로 넣어 주세요.` })
-    else if (i < last) out.push({ severity: 'error', code: 'ms_script_order', message: `필수 스크립트 순서가 바뀌었어요. vendor/gsap.min.js → ms/overrides.js → ms/runtime.js 순서여야 해요.` })
+    if (i < 0) out.push({ severity: 'info', code: 'ms_script_missing', message: `<head>에 <script src="${s}"></script>가 없어요. 턴이 끝나면 앱이 다시 넣어요(지우지 마세요).` })
+    else if (i < last) out.push({ severity: 'info', code: 'ms_script_order', message: `앱 스크립트 순서가 바뀌었어요(vendor/gsap.min.js → ms/overrides.js → ms/runtime.js). 턴이 끝나면 앱이 바로잡아요.` })
     last = Math.max(last, i)
   }
 
   if (!/<link[^>]+href="ms\/fonts\.css"/.test(head)) {
-    out.push({ severity: 'error', code: 'ms_fonts_css_missing', message: '<head>에 <link rel="stylesheet" href="ms/fonts.css" />가 없어요. 시스템 폰트 선언 파일이라 꼭 필요해요.' })
+    out.push({ severity: 'info', code: 'ms_fonts_css_missing', message: '<head>에 <link rel="stylesheet" href="ms/fonts.css" />가 없어요. 턴이 끝나면 앱이 다시 넣어요.' })
   }
   for (const fam of usedFamilies(html, overrides)) {
     if (!findFamily(fam) && !ownFont(fam)) out.push({ severity: 'error', code: 'ms_font_missing', message: `"${fam}" 폰트가 이 컴퓨터에 없고 프로젝트에 받아 둔 웹 폰트도 아니에요. get_fonts의 설치된 폰트를 쓰거나 get_web_font로 받아 주세요.` })
@@ -71,12 +73,13 @@ export function staticFindings(html: string, brief: Brief, overrides: Overrides,
   // 2. offline: no network scripts/styles (company networks, determinism)
   const external = [...html.matchAll(/<(?:script|link)[^>]+(?:src|href)="(https?:\/\/[^"]+)"/gi)].map((m) => m[1])
   for (const url of external) {
-    out.push({ severity: 'warning', code: 'ms_network_dependency', message: `외부 주소를 불러와요(${url}). 오프라인에서도 동작하도록 빼 주세요. GSAP은 vendor/gsap.min.js를 쓰고, 폰트는 시스템 폰트 이름을 쓰세요.` })
+    if (/\bgsap\b/i.test(url)) continue // the app points CDN GSAP at its local copy (headFix)
+    out.push({ severity: 'warning', code: 'ms_network_dependency', message: `외부 주소를 불러와요(${url}). 내보낼 때 인터넷이 필요해요. 파일을 프로젝트에 받아 두면(ai_import, get_web_font) 오프라인에서도 같아요.` })
   }
 
   // 3. references must never end up in the output
   if (/(\.\.\/)+references\/|\/references\//.test(html)) {
-    out.push({ severity: 'error', code: 'ms_reference_leak', message: '레퍼런스 파일을 직접 사용하고 있어요. 레퍼런스는 참고만 하고 결과물에 넣으면 안 돼요.' })
+    out.push({ severity: 'error', code: 'ms_reference_leak', message: '첨부 폴더(references/)의 파일을 직접 쓰고 있어요. 내보내기에는 들어가지 않아요. 영상에 쓰려면 use_as_material로 소재함에 넣고 그 경로를 쓰세요.' })
   }
 
   // 4. editable element ids
@@ -88,10 +91,10 @@ export function staticFindings(html: string, brief: Brief, overrides: Overrides,
   }
   const tags = [...html.matchAll(/<[a-z][^>]*data-ms-id="([^"]+)"[^>]*>/gi)]
   for (const [tag, id] of tags) {
-    if (!/data-ms-label="[^"]+"/.test(tag)) out.push({ severity: 'warning', code: 'ms_label_missing', message: `data-ms-id="${id}"에 data-ms-label(디자이너가 볼 한글 이름)이 없어요.`, elementId: id })
+    if (!/data-ms-label="[^"]+"/.test(tag)) out.push({ severity: 'info', code: 'ms_label_missing', message: `data-ms-id="${id}"에 data-ms-label(디자이너가 볼 한글 이름)이 없어요.`, elementId: id })
   }
   if (!html.includes('data-ms-empty') && ids.length === 0) {
-    out.push({ severity: 'error', code: 'ms_no_editables', message: '디자이너가 수정할 수 있는 요소(data-ms-id)가 하나도 없어요. 텍스트, 이미지, 도형마다 data-ms-id와 data-ms-label을 붙여 주세요.' })
+    out.push({ severity: 'info', code: 'ms_no_editables', message: '아직 편집용 이름(data-ms-id)이 붙은 요소가 없어요. 영상이 완성되면 앱이 편집 정리를 요청해요.' })
   }
   // copies of a layer exist only at run time (ms-runtime.js), with what is inside them ("child@copy")
   const copies = new Set((overrides.duplicates ?? []).map((d) => d.id))
@@ -104,22 +107,10 @@ export function staticFindings(html: string, brief: Brief, overrides: Overrides,
     if (e.locked) out.push({ severity: 'error', code: 'ms_locked_removed', message: `디자이너가 잠근 레이어 "${e.label ?? id}"(${id})가 영상에서 사라졌어요. 잠긴 레이어는 지우거나 바꾸면 안 돼요. 같은 data-ms-id로 원래대로 되돌려 주세요.`, elementId: id })
     else out.push({ severity: 'warning', code: 'ms_override_orphan', message: `디자이너가 직접 수정한 요소 "${id}"가 영상에서 사라졌어요. 같은 data-ms-id로 다시 만들어 주세요.`, elementId: id })
   }
-  for (const e of elements ?? []) {
-    if (!e.movable) out.push({ severity: 'warning', code: 'ms_not_absolute', message: `"${e.label}"(${e.id})가 position:absolute가 아니라서 디자이너가 위치를 옮길 수 없어요. 절대 위치로 배치해 주세요.`, elementId: e.id })
-  }
-  // groups (phone mockups, cards, UI screens): everything inside must be editable on its own
-  // 편집 준비: elements still placed by the layout can only be moved, not scaled / rotated on their own
-  const flow = (audit?.elements ?? []).filter((e) => e.transformable === false)
-  if (flow.length)
-    out.push({
-      severity: 'warning',
-      code: 'ms_not_edit_ready',
-      message: `편집 준비 전이에요: 흐름 배치(flex·grid 등)로 놓인 편집 요소 ${flow.length}개 (${flow.slice(0, 12).map((e) => e.label || e.id).join(', ')}${flow.length > 12 ? ' …' : ''}). 마지막 단계에서 layout_snapshot(before) → measure_layout 값으로 절대 위치 → layout_snapshot(after)로 바꿔 주세요.`,
-    })
   for (const l of audit?.loose ?? []) {
     const what = [l.text && `글자("${l.text}")`, l.images && `이미지 ${l.images}개`].filter(Boolean).join('와 ')
     out.push({
-      severity: 'warning',
+      severity: 'info',
       code: 'ms_group_inner_not_editable',
       message: `"${l.label || l.id}"(${l.id}) 안의 ${what}에 data-ms-id가 없어요. 앱이 임시 이름("${l.id}~…")을 붙여 디자이너가 고칠 수는 있지만, 코드를 바꾸면 그 이름이 달라질 수 있어요. 그룹 안의 문구·이미지·버튼마다 data-ms-id·data-ms-label·data-ms-type을 붙이고, 그룹 안에서 position:absolute로 배치해 주세요.`,
       elementId: l.id,
@@ -147,28 +138,6 @@ export function staticFindings(html: string, brief: Brief, overrides: Overrides,
     if (Math.abs(authored - o.duration) > 0.05 && Math.abs(effective - o.duration) > 0.05) out.push({ severity: 'error', code: 'ms_duration', message: `영상 길이가 브리프(${o.duration}초)와 달라요.` })
   }
 
-  // 6. required texts (verbatim when locked)
-  const body = norm(html.split(/<body[^>]*>/i)[1] ?? html)
-  const edited = Object.values(overrides.elements).map((e) => e.text).filter(Boolean).map((t) => norm(String(t)))
-  for (const t of brief.texts) {
-    if (!t.text.trim()) continue
-    const want = norm(t.text)
-    const present = body.includes(want) || edited.some((e) => e.includes(want))
-    if (!present) {
-      out.push({
-        severity: t.locked ? 'error' : 'warning',
-        code: 'ms_required_text',
-        message: t.locked ? `필수 문구 "${t.text}"가 원문 그대로 들어가 있지 않아요. 한 글자도 바꾸지 말고 넣어 주세요.` : `필수 문구 "${t.text}"가 보이지 않아요.`,
-      })
-    }
-  }
-
-  // 7. required assets
-  for (const a of brief.assets) {
-    if (a.required && !html.includes(a.file)) {
-      out.push({ severity: 'error', code: 'ms_required_asset', message: `필수 소재 "${a.originalName}"(${a.file})를 사용하지 않았어요.` })
-    }
-  }
   return out
 }
 

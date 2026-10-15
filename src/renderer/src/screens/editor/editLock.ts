@@ -1,12 +1,20 @@
-// While Claude is working the designer can look around the editor (play, scrub, select,
-// listen) but not change anything: Claude is rewriting the composition, and an edit made
-// now could land on an element that is about to change or disappear. Every edit path
-// asks blockedEdit() first; the banner over the canvas says why.
+// The designer can look around the editor (play, scrub, select, listen) but not change anything
+//  - while Claude is working: Claude is rewriting the composition, and an edit made now could
+//    land on an element that is about to change or disappear
+//  - before 편집 활성화 (0.5+ projects): the video is still refined in the conversation; the
+//    button makes it editable by hand (Claude names the layers, the picture stays)
+// Every edit path asks blockedEdit() first; the banner over the canvas says why.
 import { create } from 'zustand'
 import { useStore } from '../../store'
 
-export const editLocked = () => useStore.getState().session.status === 'busy'
-export const useEditLocked = () => useStore((s) => s.session.status === 'busy')
+type S = ReturnType<typeof useStore.getState>
+/** a video that waits for 편집 활성화 (older projects have no flag: always editable) */
+const viewOnly = (s: S) => !!s.project?.hasVideo && s.project.meta.editable === false
+const locked = (s: S) => s.session.status === 'busy' || viewOnly(s)
+
+export const editLocked = () => locked(useStore.getState())
+export const useEditLocked = () => useStore(locked)
+export const useViewOnly = () => useStore(viewOnly)
 
 /** when an edit was last refused (the banner flashes) */
 export const useLockNotice = create<{ at: number }>(() => ({ at: 0 }))

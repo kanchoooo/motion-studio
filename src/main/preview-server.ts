@@ -1,13 +1,14 @@
 // Local HTTP server for the in-app preview. Binds to 127.0.0.1 on a random
 // port; each project is reachable only under its own random token.
+import { gsapFileIn, repairHead } from './headFix'
 import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { join, normalize, sep } from 'node:path'
+import { dirname, join, normalize, sep } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { handleMcp } from './agent/mcp-http'
 import { handleHook } from './agent/permissions'
-import { hyperframes } from './paths'
+import { hyperframes, runtimeFiles } from './paths'
 import { mimeOf } from './media'
 
 const roots = new Map<string, string>() // token -> absolute folder
@@ -87,13 +88,18 @@ function serve(req: IncomingMessage, res: ServerResponse): void {
     return
   }
   if (!existsSync(abs) || statSync(abs).isDirectory()) {
+    // a GSAP plugin the head repair points at (vendor/X.min.js) before the turn end copies it in
+    const plugin = rel.match(/^vendor\/([A-Za-z0-9]+\.min\.js)$/)?.[1]
+    if (plugin && gsapFileIn(gsapDist())(plugin)) return sendFile(req, res, join(gsapDist(), plugin))
     res.writeHead(404).end()
     return
   }
   // The editor's iframe is cross-origin to the app shell, so the HyperFrames
   // runtime can't be injected from outside: serve it inside the page instead.
   if (url.searchParams.has('ms-preview') && abs.endsWith('.html')) {
-    const html = readFileSync(abs, 'utf8')
+    // the root composition gets the app's head lines even mid-turn (the file is repaired when the turn ends)
+    const raw = readFileSync(abs, 'utf8')
+    const html = rel === 'index.html' ? (repairHead(raw, gsapFileIn(gsapDist()))?.html ?? raw) : raw
     const tag = '<script src="/__ms/hf-runtime.js"></script>'
     const out = html.includes('</body>') ? html.replace('</body>', `${tag}</body>`) : html + tag
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' })
@@ -102,6 +108,8 @@ function serve(req: IncomingMessage, res: ServerResponse): void {
   }
   sendFile(req, res, abs)
 }
+
+const gsapDist = () => dirname(runtimeFiles.gsap())
 
 export function startPreviewServer(): Promise<string> {
   return new Promise((resolve, reject) => {

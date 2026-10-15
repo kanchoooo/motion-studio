@@ -1,10 +1,10 @@
-import { useEffect } from 'react'
-import { ChevronsLeft, History, Loader2, MessageSquare } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { ChevronsLeft, History, Loader2, MessageSquare, Wand2 } from 'lucide-react'
 import { Splitter } from '../../components/Splitter'
-import { useStore } from '../../store'
+import { cleanError, studio, useStore } from '../../store'
 import { HistoryPanel } from '../history/HistoryPanel'
 import { ChatPanel } from './ChatPanel'
-import { useEditLocked, useLockNotice } from './editLock'
+import { useEditLocked, useLockNotice, useViewOnly } from './editLock'
 import { useEditor } from './editorStore'
 import { Inspector } from './Inspector'
 import { clampSize, fitLayout, LAYOUT_DEFAULTS, useLayout, useWindowSize } from './layout'
@@ -209,17 +209,53 @@ export function EditorTab({ active }: { active: boolean }) {
   )
 }
 
-/** over the canvas while Claude works: look, play and listen, but no edits until the turn ends */
+/**
+ * Over the canvas: while Claude works (look, play and listen; no edits until the turn ends), and
+ * before 편집 활성화 (the video is refined in the conversation; the button opens hand edits).
+ */
 function EditLockBanner() {
   const locked = useEditLocked()
+  const viewOnly = useViewOnly()
   const at = useLockNotice((s) => s.at)
-  const hasVideo = useStore((s) => !!s.project?.hasVideo)
-  if (!locked || !hasVideo) return null
+  const { project, session, toast, setProject } = useStore()
+  const [asking, setAsking] = useState(false)
+  if (!locked || !project?.hasVideo) return null
+  const busy = session.status === 'busy'
+  const flash = at && Date.now() - at < 1500 ? ' flash' : ''
+  if (viewOnly && !busy)
+    return (
+      <div key={at} className={`lock-banner activate${flash}`} data-testid="edit-activate-banner">
+        <span>
+          <b>지금은 보기 모드예요.</b> 마음에 들 때까지 대화로 고치고, 손으로 다듬고 싶어지면 편집을 켜 주세요.
+        </span>
+        <button
+          className="btn primary sm"
+          disabled={asking || session.status !== 'ready'}
+          title={session.status !== 'ready' ? 'Claude가 대기 중일 때 누를 수 있어요' : '레이어를 하나하나 고를 수 있게 정리해요 (화면은 그대로)'}
+          onClick={async () => {
+            setAsking(true)
+            try {
+              const r = await studio.agent.activateEditing(project.meta.id)
+              if (r === 'ready') setProject(await studio.projects.state(project.meta.id))
+              else toast('편집할 수 있게 정리하고 있어요. 끝나면 바로 편집할 수 있어요.', 'info')
+            } catch (e) {
+              toast(cleanError(e instanceof Error ? e.message : String(e)), 'error')
+            } finally {
+              setAsking(false)
+            }
+          }}
+          data-testid="edit-activate"
+        >
+          {asking ? <Loader2 size={13} className="spin" /> : <Wand2 size={13} />}
+          {asking ? '준비하는 중…' : '편집 활성화'}
+        </button>
+      </div>
+    )
   return (
-    <div key={at} className={`lock-banner${at && Date.now() - at < 1500 ? ' flash' : ''}`} data-testid="edit-lock">
+    <div key={at} className={`lock-banner${flash}`} data-testid="edit-lock">
       <Loader2 size={13} className="spin" color="var(--accent)" />
       <span>
-        <b>아직 Claude가 작업 중이에요.</b> 지금은 보기·재생만 되고, 작업이 끝나면 바로 편집할 수 있어요.
+        <b>아직 Claude가 작업 중이에요.</b> 지금은 보기·재생만 되고, 작업이 끝나면 {viewOnly ? '편집을 켤 수 있어요.' : '바로 편집할 수 있어요.'}
       </span>
     </div>
   )

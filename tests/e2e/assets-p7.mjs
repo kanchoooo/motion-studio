@@ -56,10 +56,9 @@ try {
 
   // ---- brief > 소재 ----
   await win.locator('.drag .seg').getByRole('button', { name: '브리프' }).click()
-  await win.getByRole('button', { name: /^소재/ }).first().click()
+  await win.getByTestId('brief-nav-assets').click()
   await win.getByTestId('asset-generator').waitFor()
-  check('AI로 만들기 starts folded', (await win.getByTestId('gen-toggle').getAttribute('aria-expanded')) === 'false')
-  await win.getByTestId('gen-toggle').click()
+  check('AI로 만들기 is open in the 소재 panel', (await win.getByTestId('gen-toggle').getAttribute('aria-expanded')) === 'true')
   const card = win.getByTestId('gen-candidate').filter({ hasText: req.prompt }).first()
   await card.waitFor({ timeout: 10000 })
   check('the candidate shows its SVG quality', /SVG 도형 \d+개 · 차이/.test(await card.innerText()), await card.innerText())
@@ -74,8 +73,8 @@ try {
   check('kept as a brief asset with its character', !!added && brief().assets.length === before + 1, JSON.stringify(brief().assets.map((a) => a.file)))
   check('its files moved into composition/assets', !!added && existsSync(join(proj, 'composition', added.file.replace('/source.png', ''), 'vector.svg')) && !existsSync(gdir))
 
-  // ---- prompt helper (latest Haiku) ----
-  await win.getByTestId('helper-toggle').click()
+  // ---- prompt helper (Haiku 5.5, always beside the 소재 panel) ----
+  await win.getByTestId('gen-prompt').focus()
   await win.getByTestId('helper-input').fill('귀여운 개구장이 초록 모자 소년, 영어로')
   await win.getByTestId('helper-input').press('Enter')
   const use = win.getByTestId('helper-use')

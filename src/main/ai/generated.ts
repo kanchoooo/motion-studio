@@ -12,6 +12,9 @@ export interface GeneratedItem {
   label?: string
   /** the settings it was made with, without the prompt / script (voice id, model …) */
   args?: Record<string, unknown>
+  /** imported from the web: the page it came from and its license (shown before export) */
+  source?: string
+  license?: string
   at: string
 }
 

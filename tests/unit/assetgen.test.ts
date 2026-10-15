@@ -151,27 +151,3 @@ describe('styles and kinds', () => {
     expect(Object.keys(LOOK_TEXT).sort()).toEqual(Object.keys(LOOK_LABELS).sort())
   })
 })
-
-describe('web collection', () => {
-  it('reads the JSON block and keeps only usable items', async () => {
-    const { parseCollect } = await import('../../src/main/ai/webCollect')
-    const text = 'blah\n```json\n' + JSON.stringify({
-      summary: '모션커피는 …',
-      items: [
-        { type: 'logo', title: '로고', url: 'https://example.com/logo.svg', source: 'https://example.com' },
-        { type: 'image', title: '가짜', url: 'http://example.com/a.png' },
-        { type: 'color', title: '브라운', hex: '#6f4e37', source: 'https://example.com/brand' },
-        { type: 'color', title: '잘못', hex: 'brown' },
-        { type: 'copy', title: '슬로건', text: '줄 서지 말고, 톡 주문', source: 'javascript:alert(1)' },
-        { type: 'fact', title: '', text: '' },
-        { type: 'video', title: '?', url: 'https://example.com/v.mp4' },
-      ],
-    }) + '\n```'
-    const r = parseCollect(text)
-    expect(r.summary).toBe('모션커피는 …')
-    expect(r.items.map((x) => x.type)).toEqual(['logo', 'color', 'copy'])
-    expect(r.items[1].hex).toBe('#6F4E37')
-    expect(r.items[2].source).toBeUndefined()
-    expect(() => parseCollect('no json here')).toThrow(/읽지 못했어요/)
-  })
-})

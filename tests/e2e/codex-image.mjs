@@ -38,13 +38,12 @@ try {
   await win.screenshot({ path: join(shots, 'codex-connections.png') })
   await win.keyboard.press('Escape')
 
-  // brief > 소재 > AI로 만들기
+  // 브리프 › 소재 › AI로 만들기
   await win.locator('.card').filter({ hasText: '앱 주문 런칭' }).first().click()
   await win.locator('.drag .seg').getByRole('button', { name: '브리프' }).click({ timeout: 30000 })
-  await win.getByRole('button', { name: /^소재/ }).first().click()
+  await win.getByTestId('brief-nav-assets').click()
   const gen = win.getByTestId('asset-generator')
   await gen.waitFor()
-  await gen.getByTestId('gen-toggle').click() // folded by default
   const select = gen.locator('select').first()
   await select.locator('option', { hasText: 'GPT 이미지 (Codex)' }).waitFor({ state: 'attached', timeout: 30000 })
   check('"GPT 이미지 (Codex)" is in the image model list', (await select.locator('option', { hasText: 'GPT 이미지 (Codex)' }).count()) === 1)

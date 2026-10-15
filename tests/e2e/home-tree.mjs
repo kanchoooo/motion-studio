@@ -7,7 +7,7 @@
 //  - 템플릿 만들기 → 템플릿으로 새 프로젝트: the picked text and image slots change, the motion
 //    (composition) stays; 템플릿 칸 changes them again inside the project
 //  - 결과물 player fits the window for a vertical video; the chat list never squashes a card;
-//    the first request has an optional direction box
+//    a new project opens on the planning chat
 // Works on a copy of the sandbox.
 // MS_SANDBOX=<sandbox with the "앱 주문 런칭" project> node tests/e2e/home-tree.mjs
 import { _electron as electron } from 'playwright-core'
@@ -97,9 +97,10 @@ try {
   await win.getByTestId('create-project').click()
   await win.getByTitle('홈으로').waitFor({ timeout: 20000 })
   check('created inside the folder', existsSync(join(projects, '직방 브랜드 광고', '빈 시안.msproj', 'project.json')))
-  // the empty chat offers a direction box above the first request
+  // a new project opens on the planning chat; the editor's empty chat points there
+  check('a new project opens on the planning chat', await win.getByTestId('plan-empty').isVisible())
   await win.locator('.drag .seg').getByRole('button', { name: '편집' }).click()
-  check('first request has an optional direction box', await win.getByTestId('first-direction').isVisible())
+  check('the editor chat points to the brief tab', await win.getByTestId('go-plan').isVisible())
   await home()
 
   // drag a card onto a folder in the tree

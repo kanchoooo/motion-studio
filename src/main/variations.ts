@@ -151,7 +151,8 @@ export async function createVariations(projectId: string, req: VariationRequest)
     }
     const overrides = adaptOverrides(baseOverrides, baseBrief.output, t, method)
     const family: FamilyInfo = { rootId, parentId: parent.meta.id, label, basedOn, method, status: method === 'claude' ? 'queued' : 'done' }
-    const meta: ProjectMeta = { id: newId(), name, createdAt: nowIso(), updatedAt: nowIso(), appVersion: app.getVersion(), family }
+    // hand edits stay as open (or closed) as in the original
+    const meta: ProjectMeta = { id: newId(), name, createdAt: nowIso(), updatedAt: nowIso(), appVersion: app.getVersion(), family, ...(parent.meta.editable === false ? { editable: false } : {}) }
     writeJson(join(dir, 'project.json'), meta)
     writeJson(join(dir, 'brief.json'), brief)
     writeJson(join(dir, 'overrides.json'), overrides)

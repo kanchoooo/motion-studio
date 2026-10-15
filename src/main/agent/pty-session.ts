@@ -10,17 +10,17 @@
 //  - Resize only when cols/rows actually change (each resize makes the TUI redraw).
 //  - Folder-trust and similar prompts are never auto-answered: the terminal is shown to the user.
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import * as pty from 'node-pty'
-import type { AgentEvent, ChatItem, SendMessageInput, SessionState, Storyboard } from '@shared/api'
+import type { AgentEvent, ChatItem, CurrentStoryboard, SendMessageInput, SessionState, Storyboard } from '@shared/api'
 import type { FeedbackMark } from '@shared/project'
 import { AI_PROVIDERS } from '@shared/ai'
 import { aiSettings } from '../ai/settings'
 import { claudeEnv } from '../claude-env'
 import { claudeBinary } from '../doctor'
 import * as history from '../history'
-import { isDev, appRoot, projectsDir } from '../paths'
+import { isDev, appRoot, projectsDir, runtimeFiles } from '../paths'
 import { previewBase } from '../preview-server'
 import * as projects from '../projects'
 import { newId, nowIso, writeText } from '../util'
@@ -29,8 +29,12 @@ import { refreshThumbnail } from '../thumbnail'
 import { mcpTokenFor, setToolHooks } from './mcp-http'
 import { endPermissions } from './permissions'
 import { sessionPath } from './cliShims'
-import { COMPOSITION_CONTRACT, STUDIO_PROMPT } from './prompt'
-import { writeBriefDoc } from './briefDoc'
+import { COMPOSITION_CONTRACT, STUDIO_PROMPT, TIDY_REQUEST } from './prompt'
+import { listReferences } from '../references'
+import { assignMaterial, carryAssignments, readStoryboard, withMaterialIds, writeStoryboard } from '../storyboard'
+import { repairCompositionHead } from '../headFix'
+import { tidyAfter, tidyBefore, unnamedContent } from '../tidy'
+import { compositionHasVideo } from '../template'
 import { findTranscript, TranscriptTail } from './transcript'
 
 type Emit = (e: AgentEvent) => void
@@ -86,6 +90,16 @@ function markLines(marks: FeedbackMark[]): string {
     .join('\n')
 }
 
+/** BRIEF.md written by Motion Studio before 0.5 (it forced the companion flow): removed; Claude's own stays */
+export function dropAppBriefDoc(projectDir: string) {
+  const file = join(projectDir, 'composition', 'BRIEF.md')
+  try {
+    if (existsSync(file) && /Written by Motion Studio from the designer's brief/.test(readFileSync(file, 'utf8'))) rmSync(file, { force: true })
+  } catch {
+    /* unreadable: leave it */
+  }
+}
+
 export class SessionManager {
   private live = new Map<string, Live>()
   /** variation re-layouts waiting for Claude; up to MAX_ADAPTING run side by side */
@@ -93,6 +107,12 @@ export class SessionManager {
   private adapting = new Set<string>()
   /** projects whose model/effort change waits for the running turn */
   private pendingRestart = new Set<string>()
+  /** 편집 활성화 per project: asked (Claude names the layers), fixing (asked once more to restore the look) */
+  private tidy = new Map<string, 'asked' | 'fixing'>()
+  /** counts the designer's messages per project: a 편집 활성화 started before one of them does not judge its turn */
+  private sent = new Map<string, number>()
+  /** the message count when 편집 활성화 asked Claude */
+  private tidyAt = new Map<string, number>()
 
   constructor(private emit: Emit) {
     setToolHooks({
@@ -102,6 +122,11 @@ export class SessionManager {
         this.emit({ type: 'audio-candidates', projectId, list })
       },
       onGenerated: (projectId, files, label) => this.showGenerated(projectId, files, label),
+      onVoices: (projectId, card) => {
+        const l = this.live.get(projectId)
+        if (l) this.addApp(l, { id: newId(), at: nowIso(), role: 'voices', ...card })
+      },
+      onBuildStart: (projectId) => this.buildStarted(projectId),
     })
   }
 
@@ -156,8 +181,52 @@ export class SessionManager {
   private addStoryboard(projectId: string, storyboard: Storyboard) {
     const l = this.live.get(projectId)
     if (!l) return
-    for (const it of l.appItems) if (it.role === 'storyboard' && it.status === 'pending') this.updateApp(l, { ...it, status: 'superseded' })
-    this.addApp(l, { id: newId(), at: nowIso(), role: 'storyboard', storyboard, status: 'pending' })
+    // a revised storyboard keeps what the designer already assigned
+    const prev = readStoryboard(l.dir)
+    const sb = carryAssignments(withMaterialIds(storyboard), prev?.storyboard)
+    for (const it of l.appItems) if (it.role === 'storyboard' && it.status !== 'superseded') this.updateApp(l, { ...it, status: 'superseded' })
+    const item: ChatItem = { id: newId(), at: nowIso(), role: 'storyboard', storyboard: sb, status: 'pending' }
+    const cur: CurrentStoryboard = { itemId: item.id, status: 'pending', storyboard: sb }
+    writeStoryboard(l.dir, cur)
+    this.addApp(l, item)
+    this.emit({ type: 'storyboard-changed', projectId, current: cur })
+  }
+
+  /** the storyboard the designer works with (also when the session is not running) */
+  storyboard(projectId: string): CurrentStoryboard | null {
+    return readStoryboard(projects.pathOf(projectId))
+  }
+
+  /** the designer put a file into (or took it out of) a material slot of the storyboard */
+  assign(projectId: string, materialId: string, file: string | null): CurrentStoryboard {
+    const dir = projects.pathOf(projectId)
+    const cur = assignMaterial(dir, materialId, file)
+    const l = this.live.get(projectId)
+    const it = l?.appItems.find((x) => x.id === cur.itemId)
+    if (l && it?.role === 'storyboard') this.updateApp(l, { ...it, storyboard: cur.storyboard })
+    else if (!l) {
+      // no session: the chat file still shows the card
+      const items = projects.readChat<ChatItem>(projectId)
+      const i = items.findIndex((x) => x.id === cur.itemId)
+      if (i >= 0 && items[i].role === 'storyboard') {
+        items[i] = { ...(items[i] as Extract<ChatItem, { role: 'storyboard' }>), storyboard: cur.storyboard }
+        projects.writeChat(projectId, items)
+      }
+    }
+    this.emit({ type: 'storyboard-changed', projectId, current: cur })
+    return cur
+  }
+
+  /** the designer picked a voice on a voice card: Claude is told, then the card shows the pick */
+  async pickVoice(projectId: string, itemId: string, voiceId: string) {
+    const l = this.live.get(projectId)
+    const it = l?.appItems.find((x) => x.id === itemId)
+    if (!l || !it || it.role !== 'voices') throw new Error('이 목소리 카드를 찾을 수 없어요.')
+    const v = it.voices.find((x) => x.id === voiceId)
+    if (!v) throw new Error('그 목소리를 찾을 수 없어요.')
+    await this.send({ projectId, text: `내레이션 목소리는 「${v.name}」으로 할게요.`, detail: `고른 목소리: provider ${v.provider}, id ${v.id}${v.voiceType ? `, voice_type ${v.voiceType}` : ''}${v.source ? `, source ${v.source}` : ''}` })
+    const now = this.live.get(projectId)?.appItems.find((x) => x.id === itemId)
+    if (now?.role === 'voices') this.updateApp(this.live.get(projectId)!, { ...now, picked: voiceId })
   }
 
   /**
@@ -276,8 +345,9 @@ export class SessionManager {
 
     const studioDir = join(dir, '.studio')
     mkdirSync(studioDir, { recursive: true })
-    // the brief in the HyperFrames format: the workflows take their "BRIEF.md exists" path
-    writeBriefDoc(dir, projects.state(projectId).brief)
+    // the app no longer writes BRIEF.md (it forced the official workflow's settled-brief path):
+    // the one an older version wrote goes, a BRIEF.md Claude wrote itself stays
+    dropAppBriefDoc(dir)
     const promptFile = join(studioDir, 'system-prompt.md')
     writeText(promptFile, STUDIO_PROMPT)
     // subagents do not get the appended prompt: they read the composition rules from here
@@ -300,17 +370,14 @@ export class SessionManager {
         // WebSearch: researching strong ads for the category before planning (reading a page still asks)
         allow: ['mcp__studio', ...(artlist ? ['mcp__artlist'] : []), 'Skill', 'Agent', 'WebSearch', 'Read(./**)', 'Edit(./composition/**)', 'Bash(hyperframes:*)', 'Bash(npx hyperframes:*)', 'Bash(npx -y hyperframes:*)', 'Bash(npx --yes hyperframes:*)', 'Bash(cd composition && hyperframes:*)', 'Bash(cd composition && npx hyperframes:*)'],
         // files the app manages: denied in every mode, never even asked
-        deny: ['Edit(./composition/BRIEF.md)', 'Edit(./composition/ms/**)', 'Edit(./composition/vendor/**)', 'Edit(./composition/assets/**)', 'Edit(./composition/fonts/**)', 'Edit(./brief.json)', 'Edit(./overrides.json)', 'Edit(./references/**)', 'Edit(./project.json)', 'Edit(./.history/**)', 'Edit(./.studio/**)'],
+        deny: ['Edit(./composition/ms/**)', 'Edit(./composition/vendor/**)', 'Edit(./composition/assets/**)', 'Edit(./composition/fonts/**)', 'Edit(./brief.json)', 'Edit(./overrides.json)', 'Edit(./references/**)', 'Edit(./project.json)', 'Edit(./.history/**)', 'Edit(./.studio/**)'],
       },
       // anything else (a command, a web page, a file outside the project) is asked through the app:
       // a card in the chat ("물어보기") or allowed at once ("모두 허용")
       hooks: {
         PermissionRequest: [{ matcher: '*', hooks: [{ type: 'http', url: `${previewBase()}/hook/${mcpTokenFor(projectId)}/permission`, timeout: 900 }] }],
-        // the first composition write of a conversation waits until the HyperFrames workflow skill was read;
-        // the reviewer agent gets the session's reasoning effort
-        PreToolUse: [{ matcher: 'Write|Edit|MultiEdit|Agent', hooks: [{ type: 'http', url: `${previewBase()}/hook/${mcpTokenFor(projectId)}/pretool`, timeout: 30 }] }],
-        // a turn that changed the video ends only after it was checked, looked at and (a build) reviewed
-        Stop: [{ hooks: [{ type: 'http', url: `${previewBase()}/hook/${mcpTokenFor(projectId)}/stop`, timeout: 30 }] }],
+        // no quality gates: the reviewer agent (when the designer asks for a review) gets the session's reasoning effort
+        PreToolUse: [{ matcher: 'Agent', hooks: [{ type: 'http', url: `${previewBase()}/hook/${mcpTokenFor(projectId)}/pretool`, timeout: 30 }] }],
       },
       // replies and the notes between tool calls in the designer's language
       language: 'Korean',
@@ -502,14 +569,16 @@ export class SessionManager {
       }, 1500)
     }
     try {
-      await this.afterTurn(l, lastText)
+      await this.afterTurn(l, lastText, how)
     } catch {
       /* the project folder was moved or deleted: nothing to record */
     }
   }
 
-  private async afterTurn(l: Live, lastText: string) {
+  private async afterTurn(l: Live, lastText: string, how: 'done' | 'stopped' | 'failed' = 'done') {
     projects.pathOf(l.projectId) // throws when the folder is gone (never recreate it)
+    // the app's head lines (local GSAP, fonts, designer edits, runtime) — Claude writes plain HyperFrames
+    repairCompositionHead(l.dir, dirname(runtimeFiles.gsap()))
     projects.applyAudioEdits(l.dir)
     const m = this.compMtime(l.dir)
     projects.refreshFontCss(l.dir)
@@ -532,6 +601,74 @@ export class SessionManager {
         },
       })
     }
+    await this.tidyStep(l, how)
+  }
+
+  /**
+   * 편집 활성화 (the designer's button, once Claude has built the video and they want to refine it by
+   * hand): content outside named layers → Claude adds names, nothing else; the same moments are
+   * photographed before and after and a changed look is sent back once. Then the editor is open.
+   * Returns 'ready' when nothing needed naming, 'asked' while Claude names the layers.
+   */
+  async activateEditing(projectId: string): Promise<'ready' | 'asked'> {
+    const l = this.live.get(projectId)
+    const dir = projects.pathOf(projectId)
+    if (!projects.state(projectId).hasVideo) throw new Error('먼저 영상을 만들어 주세요.')
+    if (!l || l.state.status !== 'ready') throw new Error('Claude가 작업을 마치고 대기 중일 때 눌러 주세요.')
+    if (this.tidy.has(projectId)) throw new Error('이미 편집할 수 있게 정리하고 있어요.')
+    const out = projects.state(projectId).brief.output
+    const size = { width: out.width, height: out.height, duration: out.duration }
+    const at = this.sent.get(projectId) ?? 0
+    const unnamed = await unnamedContent(dir, size)
+    if (!unnamed.count) {
+      this.markEditable(l)
+      return 'ready'
+    }
+    await tidyBefore(dir, size)
+    // the designer went on talking meanwhile: their request first
+    if ((this.sent.get(projectId) ?? 0) !== at || l.state.status !== 'ready' || this.live.get(projectId) !== l) throw new Error('그사이 Claude가 다른 작업을 시작했어요. 끝나면 다시 눌러 주세요.')
+    this.tidy.set(projectId, 'asked')
+    this.tidyAt.set(projectId, at)
+    try {
+      await this.deliver({ projectId, fromApp: true, text: '편집할 수 있게 레이어 이름을 정리해 주세요.', detail: `${TIDY_REQUEST}\n\n이름이 없는 내용 ${unnamed.count}개 (예: ${unnamed.samples.map((x) => `"${x}"`).join(', ')})` })
+    } catch (e) {
+      this.tidy.delete(projectId)
+      throw e
+    }
+    return 'asked'
+  }
+
+  /** the editor opens for hand edits (project.json editable) */
+  private markEditable(l: Live) {
+    this.tidy.delete(l.projectId)
+    this.tidyAt.delete(l.projectId)
+    projects.touch(l.projectId, { editable: true })
+    projects.notifyChanged(l.projectId)
+    this.addApp(l, { id: newId(), at: nowIso(), role: 'notice', text: '이제 손으로 편집할 수 있어요. 레이어를 골라 에펙처럼 다듬어 보세요.' })
+  }
+
+  /** the end of a turn that 편집 활성화 started: compare, fix once, then open the editor */
+  private async tidyStep(l: Live, how: 'done' | 'stopped' | 'failed') {
+    const id = l.projectId
+    const state = this.tidy.get(id)
+    if (!state || this.live.get(id) !== l) return
+    // the designer sent a message after asking: that turn changes the video on purpose — no comparison
+    if ((this.sent.get(id) ?? 0) !== this.tidyAt.get(id)) return this.markEditable(l)
+    if (how !== 'done') {
+      this.tidy.delete(id)
+      return
+    }
+    const out = projects.state(id).brief.output
+    const changedAt = await tidyAfter(l.dir, { width: out.width, height: out.height, duration: out.duration }).catch(() => [])
+    if (!changedAt.length) return this.markEditable(l)
+    if (state === 'asked') {
+      this.tidy.set(id, 'fixing')
+      const where = changedAt.slice(0, 4).map((c) => `- ${c.t}초: ${c.changedPct}% 달라짐${c.diff ? ` (빨간 곳: ${c.diff})` : ''}`)
+      await this.deliver({ projectId: id, fromApp: true, text: '편집 정리 후 화면이 달라진 곳을 원래대로 돌려 주세요.', detail: ['편집 정리 전후로 같은 순간을 비교했더니 화면이 달라졌어요. 이름(data-ms-*)만 붙여야 해요:', ...where, '', '달라진 곳의 원인(새 id 때문에 감싸진 요소 등)을 찾아, 그 요소의 id를 빼거나 붙인 방식을 바꿔 원래 화면대로 돌려 주세요. 한 줄로만 답해요.'].join('\n') }).catch(() => this.markEditable(l))
+      return
+    }
+    this.markEditable(l)
+    this.addApp(l, { id: newId(), at: nowIso(), role: 'notice', text: '편집 정리 뒤에 화면이 조금 달라졌어요. 작업 이력에서 정리 전 버전으로 되돌릴 수 있어요.' })
   }
 
   /** composition files changed on disk mid-turn: let the preview follow live */
@@ -587,7 +724,13 @@ export class SessionManager {
     this.write(projectId, '\x1b')
   }
 
+  /** a message from the designer: a new request (the app's 편집 정리 may run again after it) */
   async send(input: SendMessageInput): Promise<void> {
+    this.sent.set(input.projectId, (this.sent.get(input.projectId) ?? 0) + 1)
+    return this.deliver(input)
+  }
+
+  private async deliver(input: SendMessageInput): Promise<void> {
     const { projectId } = input
     let l = this.live.get(projectId)
     if (!l || l.state.status === 'exited') {
@@ -605,8 +748,12 @@ export class SessionManager {
     if (now.status === 'starting') throw new Error('Claude가 아직 준비 중이에요. 잠시 뒤 다시 보내 주세요.')
     if (now.status === 'exited') throw new Error('Claude가 종료됐어요. 터미널의 "다시 시작"을 누른 뒤 보내 주세요.')
 
+    // storyboard materials the designer changed after approval go along with this message
+    const sbNow = input.fromApp ? null : readStoryboard(l.dir)
+    const sbChanged = sbNow?.changed?.length ? sbNow.changed : null
+    const refs = (input.references ?? []).map((r) => ({ ...r, item: listReferences(l!.dir).find((x) => x.id === r.id) })).filter((r) => r.item)
     const oneLine = input.text.replace(/\s*\n\s*/g, ' ').replace(/[\x00-\x1f\x7f]/g, '').trim()
-    const rich = !!(input.marks?.length || input.annotatedFrame || input.attachments?.length) || input.text.includes('\n') || oneLine.length > 300
+    const rich = !!(input.marks?.length || input.annotatedFrame || input.attachments?.length || refs.length || input.detail || sbChanged) || input.text.includes('\n') || oneLine.length > 300
     let line = oneLine
     if (rich) {
       const stamp = `${Date.now()}`
@@ -628,9 +775,27 @@ export class SessionManager {
         ...(input.attachments?.length
           ? ['', '## 참고 이미지 (디자이너가 원하는 방향)', ...input.attachments.map((a) => `- ${a}`), '', 'Read 도구로 하나씩 열어 보고 분위기·구성·색·타이포를 참고하세요. 그대로 복사하지는 마세요.']
           : []),
+        ...(refs.length
+          ? [
+              '',
+              '## 첨부 (참고로 볼지 영상에 쓸지는 대화로 정해요)',
+              ...refs.map((r, i) => {
+                const it = r.item!
+                const what = it.kind === 'image' ? '이미지' : it.kind === 'youtube' ? '유튜브 영상(참고 전용)' : '영상'
+                const len = it.meta?.duration ? ` ${it.meta.duration.toFixed(1)}초` : ''
+                const range = r.range ? ` · 디자이너가 고른 구간 ${r.range.from.toFixed(1)}~${r.range.to.toFixed(1)}초` : ''
+                const how = it.kind === 'image' ? `${it.file} (Read로 보기)` : `get_references / look_at_reference(id "${it.id}")로 보기`
+                return `- 첨부 ${i + 1} · ${what} 「${it.title}」${len} (id ${it.id})${range} — ${how}${it.kind !== 'youtube' ? ' · 영상에 쓰려면 use_as_material' : ''}`
+              }),
+            ]
+          : []),
+        ...(sbChanged ? ['', '## 디자이너가 바꾼 콘티 소재', ...sbChanged.map((x) => `- ${x}`)] : []),
+        ...(input.detail ? ['', input.detail] : []),
       ].join('\n')
       writeText(join(fb, `msg-${stamp}.md`), md)
-      writeText(join(fb, `msg-${stamp}.json`), JSON.stringify({ text: input.text, marks: input.marks, frame, time: input.time, attachments: input.attachments }))
+      // what the chat shows: the designer's words and pictures (attached videos show their first frame)
+      const shown = [...(input.attachments ?? []), ...refs.map((r) => r.item!.file ?? r.item!.frames?.[0]?.file).filter((x): x is string => !!x)]
+      writeText(join(fb, `msg-${stamp}.json`), JSON.stringify({ text: input.text, marks: input.marks, frame, time: input.time, attachments: shown.length ? shown : undefined, fromApp: input.fromApp || undefined }))
       line = `[모션스튜디오 메시지] feedback/msg-${stamp}.md 파일을 Read 도구로 읽고 그 내용대로 진행해 주세요.`
     }
     if (!line) return
@@ -642,19 +807,21 @@ export class SessionManager {
     cur.term.write(line)
     await new Promise((r) => setTimeout(r, ENTER_DELAY))
     cur.term.write('\r')
+    // told: the changes are not repeated with the next message (re-read: the designer may have assigned meanwhile)
+    if (sbChanged) {
+      const now = readStoryboard(l.dir)
+      if (now) writeStoryboard(l.dir, { ...now, changed: now.changed?.filter((c) => !sbChanged.includes(c)) })
+    }
   }
 
-  async approveStoryboard(projectId: string, itemId: string) {
-    // approved only once Claude actually got the message
-    await this.send({ projectId, text: '콘티를 승인했어요. 이대로 영상을 만들어 주세요.' })
+  /** Claude starts building what the designer approved (start_build): the card shows it, the editor opens */
+  private buildStarted(projectId: string) {
     const l = this.live.get(projectId)
-    const item = l?.appItems.find((x) => x.id === itemId)
+    const cur = readStoryboard(projects.pathOf(projectId))
+    const item = cur && l?.appItems.find((x) => x.id === cur.itemId)
     if (l && item?.role === 'storyboard') this.updateApp(l, { ...item, status: 'approved' })
-  }
-
-  /** the stop gate sent Claude back to work: the turn is not over */
-  holdTurn(projectId: string) {
-    this.live.get(projectId)?.tail.hold()
+    if (cur) this.emit({ type: 'storyboard-changed', projectId, current: cur })
+    this.emit({ type: 'build-started', projectId })
   }
 
   /** a variation still waiting or being re-laid out in this run */

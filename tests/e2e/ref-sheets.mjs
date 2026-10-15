@@ -1,5 +1,6 @@
-// Reference videos are analysed every 0.1 s: motion sheets (20 frames / 2 s each),
-// a motion curve and cuts; Claude gets them from get_references.
+// An attached video is analysed as an overview (a frame every sheetStep seconds: 1 s up to two
+// minutes, wider for longer videos; 20 per sheet), a motion curve at that step and cuts; Claude
+// gets them from get_references and looks at a part every 0.1 s with look_at_reference (unit test).
 // MS_SANDBOX=<sandbox with "앱 주문 런칭"> REF=<video> node tests/e2e/ref-sheets.mjs
 import { _electron as electron } from 'playwright-core'
 import { copyFileSync, existsSync } from 'node:fs'
@@ -30,8 +31,10 @@ try {
   }
   console.log(`analysed in ${((Date.now() - t0) / 1000).toFixed(1)}s:`, r?.status, r?.error ?? '', `${r?.meta?.duration}s`)
   const dur = r?.meta?.duration ?? 0
-  check(`motion sheets cover the whole video (${r?.sheets?.length} sheets)`, r?.sheets?.length === Math.ceil(Math.round(dur * 10) / 20) && r.sheets.every((s) => existsSync(join(p.path, s.file))), JSON.stringify(r?.sheets?.slice(-1)))
-  check(`motion curve every 0.1 s (${r?.motion?.length} steps)`, Math.abs((r?.motion?.length ?? 0) - Math.round(dur * 10)) <= 2)
+  const step = r?.sheetStep ?? 0
+  check(`overview step for ${dur}s: ${step}s`, step === Math.max(1, Math.ceil(dur / 120)))
+  check(`overview sheets cover the whole video (${r?.sheets?.length} sheets)`, r?.sheets?.length === Math.ceil(Math.round(dur / step) / 20) && r.sheets.every((s) => existsSync(join(p.path, s.file))), JSON.stringify(r?.sheets?.slice(-1)))
+  check(`motion curve at that step (${r?.motion?.length} steps)`, Math.abs((r?.motion?.length ?? 0) - Math.round(dur / step)) <= 2)
   console.log('cuts:', JSON.stringify(r?.cuts), 'max motion:', Math.max(...(r?.motion ?? [0])))
   copyFileSync(join(p.path, r.sheets[Math.min(2, r.sheets.length - 1)].file), join(root, 'tests', 'e2e', 'shots', 'ref-sheet.jpg'))
   await win.evaluate(([id, rid]) => window.studio.references.remove(id, rid), [st.meta.id, added.id])

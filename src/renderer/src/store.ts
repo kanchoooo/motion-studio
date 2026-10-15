@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { AudioCandidateList } from '@shared/ai'
-import type { AgentEvent, ChatItem, DoctorReport, ExportProgress, FontFamily, SessionState, PermissionAsk, TemplateInfo } from '@shared/api'
+import type { AgentEvent, ChatItem, CurrentStoryboard, DoctorReport, ExportProgress, FontFamily, SessionState, PermissionAsk, TemplateInfo } from '@shared/api'
 import type { ProjectState, ProjectSummary } from '@shared/project'
 
 export const studio = window.studio
@@ -41,6 +41,10 @@ interface State {
   aiOpen: boolean
   /** the export dialog is open (otherwise the result is announced with a toast) */
   exportOpen: boolean
+  /** the storyboard (콘티) the designer works with, and its material assignments */
+  storyboard: CurrentStoryboard | null
+  /** attachments in the chat changed (status, title) */
+  refsNonce: number
 
   go(screen: Screen): void
   setTab(tab: ProjectTab): void
@@ -95,6 +99,8 @@ export const useStore = create<State>((set, get) => ({
   asks: [],
   aiOpen: false,
   exportOpen: false,
+  storyboard: null,
+  refsNonce: 0,
 
   go: (screen) => set({ screen }),
   setTab: (tab) => set({ tab }),
@@ -113,16 +119,16 @@ export const useStore = create<State>((set, get) => ({
     await leaveProject()
     const project = await studio.projects.open(path)
     const id = project.meta.id
-    set({ project, screen: 'project', tab: project.hasVideo ? 'editor' : 'brief', chat: [], session: { status: 'starting' }, exportProgress: null, audioCandidates: null, asks: [] })
+    set({ project, screen: 'project', tab: project.hasVideo ? 'editor' : 'brief', chat: [], session: { status: 'starting' }, exportProgress: null, audioCandidates: null, asks: [], storyboard: null })
     const session = await studio.agent.start(id)
-    const [chat, asks] = await Promise.all([studio.agent.transcript(id), studio.agent.permissions(id)])
-    if (get().project?.meta.id === id) set({ session, chat, asks, terminalOpen: session.attention === 'trust' || get().terminalOpen })
+    const [chat, asks, storyboard] = await Promise.all([studio.agent.transcript(id), studio.agent.permissions(id), studio.agent.storyboard(id)])
+    if (get().project?.meta.id === id) set({ session, chat, asks, storyboard, terminalOpen: session.attention === 'trust' || get().terminalOpen })
   },
   setProject: (project) => set({ project }),
   closeProject: () => {
     void (async () => {
       await leaveProject()
-      set({ project: null, screen: 'home', chat: [], audioCandidates: null, asks: [] })
+      set({ project: null, screen: 'home', chat: [], audioCandidates: null, asks: [], storyboard: null })
       void get().refreshProjects()
     })()
   },
@@ -169,6 +175,20 @@ studio.agent.onEvent((e: AgentEvent) => {
     case 'permissions':
       useStore.setState({ asks: e.asks })
       if (e.added) useStore.getState().toast('Claude가 허락을 기다리고 있어요. 대화창에서 확인해 주세요.', 'info')
+      break
+    case 'project-changed':
+      void studio.projects.state(pid!).then((p) => useStore.getState().project?.meta.id === p.meta.id && useStore.setState({ project: p }))
+      break
+    case 'storyboard-changed':
+      useStore.setState({ storyboard: e.current })
+      break
+    case 'build-started':
+      // the designer approved in the conversation: watch the build in the editor
+      useStore.setState({ tab: 'editor' })
+      useStore.getState().toast('제작을 시작했어요. 편집 탭에서 만드는 과정을 볼 수 있어요.', 'success')
+      break
+    case 'references-changed':
+      useStore.setState({ refsNonce: s.refsNonce + 1 })
       break
     case 'audio-candidates':
       useStore.setState({ audioCandidates: e.list })

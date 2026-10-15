@@ -1,9 +1,8 @@
-// 영상 템포 · 스타일 in the brief: only known values, at most two styles (the first leads),
-// and Claude gets them as numbers and rules in BRIEF.md and get_brief.
+// 영상 템포 · 스타일 from briefs made before 0.5: only known values, at most two styles (the
+// first leads); get_brief passes them on as older-brief notes.
 import { describe, expect, it } from 'vitest'
 import { emptyBrief, normalizeBrief } from '../../src/shared/brief'
 import { cleanDirection, directionForClaude, styleLabels } from '../../src/shared/direction'
-import { briefMarkdown } from '../../src/main/agent/briefDoc'
 
 describe('tempo and styles', () => {
   it('keeps known values, two styles at most, in the order chosen', () => {
@@ -23,11 +22,4 @@ describe('tempo and styles', () => {
     expect(d.styles![1]).toMatch(/^ACCENT 팝·컬러풀/)
   })
 
-  it('writes them into BRIEF.md', () => {
-    const b = { ...emptyBrief('봄 신메뉴', 'shorts-9x16', 12), tempo: 'fast' as const, styles: ['product' as const] }
-    const md = briefMarkdown(b)
-    expect(md).toMatch(/- 템포\(디자이너가 고름\): 빠름 \(fast\): shots 1–1\.5 s/)
-    expect(md).toMatch(/- 스타일\(디자이너가 고름, 실사 제품 중심\):\n  - STYLE 실사 제품 중심/)
-    expect(briefMarkdown(emptyBrief('x', 'shorts-9x16', 12))).not.toMatch(/템포|스타일/)
-  })
 })

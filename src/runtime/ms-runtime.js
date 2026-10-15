@@ -341,14 +341,16 @@
   // registered so they never inherit into nested editables (effects and line drawing do: an
   // adjustment layer's backdrop and the strokes inside a layer read them)
   var VARS = PROPDEFS.map(function (d) { return [d[1], syntaxOf(d[2]), initialOf(d[2], d[4]), !!d[5]] }).concat([
-    ['--ms-io', '<number>', '1'], ['--ms-cx', '<length>', '0px'], ['--ms-cy', '<length>', '0px'],
+    ['--ms-io', '<number>', '1'], ['--ms-cx', '<length>', '0px'], ['--ms-cy', '<length>', '0px'], ['--ms-cb', '*', 'normal'],
     ['--ms-wx', '<length>', '0px'], ['--ms-wy', '<length>', '0px'], ['--ms-wr', '<angle>', '0deg'], ['--ms-ws', '<number>', '0'], ['--ms-wo', '<number>', '0'],
   ])
   var BASE = VARS.map(function (v) { return '@property ' + v[0] + '{syntax:"' + v[1] + '";inherits:' + (v[3] ? 'true' : 'false') + ';initial-value:' + v[2] + '}' }).join('\n') +
     // the transform itself is only set on layers the designer moved (a transform makes a
     // stacking context, which would change how an untouched layer overlaps its neighbours)
     '\n[data-ms-wrap-for]{transform-origin:calc(var(--ms-cx) + var(--ms-ax)) calc(var(--ms-cy) + var(--ms-ay));' +
-    'opacity:calc(var(--ms-o) * var(--ms-io))}' +
+    // a blend mode the composition gave the layer itself moves onto its wrapper (--ms-cb), so the
+    // wrapper's stacking context does not cut it off from what is behind; the designer's own wins
+    'opacity:calc(var(--ms-o) * var(--ms-io));mix-blend-mode:var(--ms-cb)}' +
     // a character part turns about its pivot in the drawing's own units
     '\ng[data-ms-wrap-for]{transform-box:view-box}' +
     '\n[data-ms-solo-off]{opacity:0 !important}'
@@ -581,10 +583,13 @@
 
   // ---- 1b. edit wrappers ------------------------------------------------------
   var wrapped = false
+  /** the composition root as a group ("__root": the layers directly in it, set free together) */
+  var ROOT_GROUP = '__root'
+  function groupEl(gid) { return gid === ROOT_GROUP ? document.querySelector('[data-composition-id]') : document.querySelector('[data-ms-id="' + esc(gid) + '"]') }
   /** groups set free by the designer: their editable children placed where they were measured */
   function applyFreeze() {
     Object.keys(FREEZE).forEach(function (gid) {
-      var f = FREEZE[gid] || {}, g = document.querySelector('[data-ms-id="' + esc(gid) + '"]')
+      var f = FREEZE[gid] || {}, g = groupEl(gid)
       if (!g || !f.kids) return
       if (getComputedStyle(g).position === 'static') g.style.setProperty('position', 'relative', 'important')
       if (f.size) {
@@ -601,7 +606,7 @@
   }
   /** where the editable children of a group are laid out now (px in the group), to set them free */
   function measureFlow(gid) {
-    var g = document.querySelector('[data-ms-id="' + esc(gid) + '"]')
+    var g = groupEl(gid)
     if (!g) return { error: 'no group' }
     var was = g.style.getPropertyValue('position'), prio = g.style.getPropertyPriority('position')
     var stat = getComputedStyle(g).position === 'static'
@@ -611,7 +616,9 @@
       var list = g.querySelectorAll('[data-ms-id]')
       for (var i = 0; i < list.length; i++) {
         var k = list[i]
-        if (k.parentElement.closest('[data-ms-id]') !== g || k.closest('svg')) continue
+        // the composition root: only the layers right in it (one inside an unnamed box would leave that box behind)
+        if (gid === ROOT_GROUP ? k.parentElement !== g : k.parentElement.closest('[data-ms-id]') !== g) continue
+        if (k.closest('svg')) continue
         var cs = getComputedStyle(k)
         if (cs.position === 'absolute' || cs.position === 'fixed') continue
         if (k.offsetParent !== g) continue
@@ -646,6 +653,19 @@
       w.setAttribute('data-ms-wrap-for', id)
       w.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;'
       if (cs.zIndex !== 'auto') w.style.zIndex = cs.zIndex
+      // a 3D scene keeps its depth through the wrapper: a parent in preserve-3d passes the 3D space on
+      // (its perspective already reaches the element through the wrapper — copying it would apply it twice);
+      // a flat parent's perspective only reaches its children, so the wrapper takes it over
+      var pcs = getComputedStyle(el.parentNode)
+      if (pcs.transformStyle === 'preserve-3d') w.style.transformStyle = 'preserve-3d'
+      else if (pcs.perspective && pcs.perspective !== 'none') {
+        w.style.perspective = pcs.perspective
+        w.style.perspectiveOrigin = pcs.perspectiveOrigin
+      }
+      if (cs.mixBlendMode && cs.mixBlendMode !== 'normal') {
+        w.style.setProperty('--ms-cb', cs.mixBlendMode)
+        el.style.setProperty('mix-blend-mode', 'normal', 'important')
+      }
       el.parentNode.insertBefore(w, el)
       w.appendChild(el)
       // pivot designer scale/rotate on the element's untransformed centre (+ the designer's anchor)
@@ -2096,7 +2116,7 @@
   }
 
   window.__MS_RUNTIME__ = {
-    version: '2.1.0', overrides: O, listElements: listElements,
+    version: '2.2.0', overrides: O, listElements: listElements,
     mainDuration: function () { return MAIN_DURATION },
     audit: function () { return { elements: listElements(), loose: looseContent(), stale: STALE } },
     // for the app's tests: what the editor asks for over messages

@@ -236,8 +236,8 @@ export class TranscriptTail {
     const m = t.match(MESSAGE_FILE_RE)
     if (!m) return { id, at, role: 'user', text: t }
     try {
-      const data = JSON.parse(readFileSync(join(this.projectDir, `${m[1]}.json`), 'utf8')) as { text: string; marks?: never[]; frame?: string; time?: number; attachments?: string[] }
-      return { id, at, role: 'user', text: data.text, marks: data.marks, frame: data.frame, time: data.time, attachments: data.attachments }
+      const data = JSON.parse(readFileSync(join(this.projectDir, `${m[1]}.json`), 'utf8')) as { text: string; marks?: never[]; frame?: string; time?: number; attachments?: string[]; fromApp?: boolean }
+      return { id, at, role: 'user', text: data.text, marks: data.marks, frame: data.frame, time: data.time, attachments: data.attachments, fromApp: data.fromApp }
     } catch {
       return { id, at, role: 'user', text: '(첨부된 메시지)' }
     }

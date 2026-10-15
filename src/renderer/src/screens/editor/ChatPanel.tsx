@@ -1,22 +1,44 @@
 import { useEffect, useRef, useState } from 'react'
-import { AlertCircle, ArrowUp, Check, ChevronsLeft, Clapperboard, Cpu, ImagePlus, Info, Loader2, MapPin, ShieldCheck, ShieldQuestion, Square, SquareDashed, X } from 'lucide-react'
+import { AlertCircle, ArrowUp, Check, ChevronsLeft, Clapperboard, Cpu, Film, ImagePlus, Info, Loader2, MapPin, Mic, Pause, Play, Scissors, ShieldCheck, ShieldQuestion, Square, SquareDashed, X, Link2 } from 'lucide-react'
 import type { AgentEffort, AgentModel, AgentPermission, ChatItem, PermissionAsk, Storyboard } from '@shared/api'
+import type { ReferenceItem } from '@shared/brief'
 import { Markdown } from '../../components/Markdown'
+import { Modal } from '../../components/ui'
 import { studio, useStore } from '../../store'
+import { useBriefUi } from '../brief/briefUi'
 import { useEditor } from './editorStore'
 import { captureAnnotatedFrame } from './Preview'
 
-// the first request of a new project (edit requests come later, once there is a video)
-const FIRST = '브리프대로 콘티 먼저 보여줘'
+const YT = /https?:\/\/(?:www\.|m\.)?(?:youtube\.com\/(?:watch\?[^\s]+|shorts\/[\w-]+|embed\/[\w-]+)|youtu\.be\/[\w-]+)[^\s]*/gi
+const VIDEO_FILE = /\.(mp4|mov|webm|m4v|mkv)$/i
 
-export function ChatPanel({ onFold }: { onFold?(): void }) {
-  const { project, chat, session, toast, setTerminal, asks } = useStore()
+/** something attached to the next message: an image, a video or a YouTube link (references/<id>) */
+interface Attach {
+  id: string
+  kind: ReferenceItem['kind']
+  title: string
+  status: ReferenceItem['status']
+  file?: string
+  thumb?: string
+  duration?: number
+  error?: string
+  range?: { from: number; to: number }
+}
+const toAttach = (r: ReferenceItem, prev?: Attach): Attach => ({ id: r.id, kind: r.kind, title: r.title, status: r.status, file: r.file, thumb: r.kind === 'image' ? r.file : r.frames?.[0]?.file, duration: r.meta?.duration, error: r.error, range: prev?.range })
+
+/**
+ * The conversation with Claude. mode "plan" (브리프 탭): planning with attachments and the
+ * storyboard; mode "edit" (편집 탭): the same conversation with marks on the video.
+ */
+export function ChatPanel({ onFold, mode = 'edit' }: { onFold?(): void; mode?: 'plan' | 'edit' }) {
+  const { project, chat, session, toast, setTerminal, asks, refsNonce, setTab } = useStore()
   const { marks, markTime, removeMark, updateMark, clearMarks, player } = useEditor()
+  const plan = mode === 'plan'
   const [text, setText] = useState('')
-  // the designer's direction for the very first storyboard (optional)
-  const [direction, setDirection] = useState('')
   const [sending, setSending] = useState(false)
-  const [attachments, setAttachments] = useState<string[]>([])
+  const [attachments, setAttachments] = useState<Attach[]>([])
+  const [ranging, setRanging] = useState<Attach | null>(null)
+  const seenLinks = useRef(new Set<string>())
   const [dropping, setDropping] = useState(false)
   const list = useRef<HTMLDivElement>(null)
   // follow new messages only while the designer is at the bottom (reading older ones is not interrupted)
@@ -38,7 +60,47 @@ export function ChatPanel({ onFold }: { onFold?(): void }) {
     setBehind(false)
   }
 
-  /** copies picked/dropped images into the project and returns their project paths */
+  // attachment status (downloading → analysing → ready) follows the main process
+  useEffect(() => {
+    if (!attachments.length) return
+    void studio.references.list(pid).then((all) => setAttachments((list) => list.map((a) => {
+      const r = all.find((x) => x.id === a.id)
+      return r ? toAttach(r, a) : a
+    })))
+  }, [refsNonce]) // eslint-disable-line react-hooks/exhaustive-deps
+  /** images / videos from the computer → attachments (references/), analysed in the background */
+  const addMedia = async (files: string[]) => {
+    const ok = files.filter((f) => /\.(png|jpe?g|webp|gif|mp4|mov|webm|m4v|mkv)$/i.test(f))
+    if (!ok.length) return toast('이미지나 영상 파일을 넣어 주세요.', 'error')
+    try {
+      const added = await studio.references.addFiles(pid, ok)
+      setAttachments((a) => [...a, ...added.map((r) => toAttach(r))])
+    } catch (e) {
+      toast(errText(e), 'error')
+    }
+  }
+  // a YouTube address typed or pasted into the message is downloaded as an attachment
+  useEffect(() => {
+    const links = [...new Set(text.match(YT) ?? [])].filter((u) => !seenLinks.current.has(u))
+    if (!links.length) return
+    const t = setTimeout(() => {
+      for (const url of links) {
+        seenLinks.current.add(url)
+        void studio.references
+          .addYoutube(pid, url)
+          .then((r) => setAttachments((a) => [...a, toAttach(r)]))
+          .catch((e) => toast(errText(e), 'error'))
+      }
+    }, 500)
+    return () => clearTimeout(t)
+  }, [text]) // eslint-disable-line react-hooks/exhaustive-deps
+  const waiting = attachments.some((a) => a.status === 'pending' || a.status === 'downloading' || a.status === 'analyzing')
+  const removeAttach = (a: Attach) => {
+    setAttachments((l) => l.filter((x) => x.id !== a.id))
+    void studio.references.remove(pid, a.id).catch(() => {})
+  }
+
+  /** copies picked/dropped images into the project and returns their project paths (reference images of marks) */
   const addImages = async (files: string[]): Promise<string[]> => {
     const out: string[] = []
     for (const f of files) {
@@ -55,6 +117,7 @@ export function ChatPanel({ onFold }: { onFold?(): void }) {
   const send = async (override?: string) => {
     const body = (override ?? text).trim()
     if (!body && !marks.length && !attachments.length) return
+    if (waiting) return toast('첨부를 받거나 분석하는 중이에요. 끝나면 보낼 수 있어요.', 'info')
     setSending(true)
     try {
       let annotatedFrame: string | undefined
@@ -64,16 +127,18 @@ export function ChatPanel({ onFold }: { onFold?(): void }) {
         await new Promise((r) => setTimeout(r, 250))
         annotatedFrame = await captureAnnotatedFrame()
       }
+      const refs = attachments.filter((a) => a.status === 'ready')
       await studio.agent.send({
         projectId: pid,
-        text: body || (marks.length ? '표시한 부분을 확인하고 고쳐 주세요.' : '첨부한 이미지를 참고해 주세요.'),
+        text: body || (marks.length ? '표시한 부분을 확인하고 고쳐 주세요.' : '첨부한 자료를 봐 주세요.'),
         marks: marks.length ? marks : undefined,
         annotatedFrame,
         time: markTime ?? undefined,
-        attachments: attachments.length ? attachments : undefined,
+        references: refs.length ? refs.map((a) => ({ id: a.id, range: a.range })) : undefined,
       })
       setText('')
       setAttachments([])
+      seenLinks.current.clear()
       clearMarks()
       toBottom()
       useEditor.setState({ tool: 'select' })
@@ -98,12 +163,11 @@ export function ChatPanel({ onFold }: { onFold?(): void }) {
       onDrop={async (e) => {
         e.preventDefault()
         setDropping(false)
-        const added = await addImages(droppedFiles(e))
-        if (added.length) setAttachments((a) => [...a, ...added])
+        void addMedia(droppedFiles(e))
       }}
     >
-      <div className="row" style={{ height: 40, padding: '0 8px 0 14px', borderBottom: '1px solid var(--border)', flex: 'none' }}>
-        <span style={{ fontWeight: 650 }}>Claude와 대화</span>
+      <div className="row" style={{ height: 40, padding: '0 8px 0 14px', borderBottom: '1px solid var(--border)', flex: 'none', gap: 8 }}>
+        <span style={{ fontWeight: 650 }}>{plan ? 'Claude와 기획' : 'Claude와 대화'}</span>
         <div className="grow" />
         {busy && (
           <button className="btn sm" onClick={() => studio.agent.interrupt(pid)} title="지금 하던 작업을 멈춰요 (Esc)">
@@ -129,29 +193,27 @@ export function ChatPanel({ onFold }: { onFold?(): void }) {
         }}
         style={{ flex: 1, overflow: 'auto', padding: '14px 14px 6px', display: 'flex', flexDirection: 'column', gap: 10 }}
       >
-        {chat.length === 0 && (
-          <div className="col" style={{ gap: 10, padding: '20px 4px' }}>
-            <div className="title">무엇을 만들까요?</div>
-            <div className="small muted">브리프를 정리했다면 아래 버튼으로 시작해 보세요. Claude가 콘티를 먼저 보여 주고, 승인하면 영상을 만들어요.</div>
-            <div className="col" style={{ gap: 4 }}>
-              <label className="tiny muted" htmlFor="first-direction">
-                원하는 방향 (선택)
-              </label>
-              <textarea
-                id="first-direction"
-                className="textarea"
-                rows={3}
-                value={direction}
-                onChange={(e) => setDirection(e.target.value)}
-                placeholder="예) 첫 3초 안에 앱 화면을 크게 보여 주고, 경쾌한 리듬으로 문구를 툭툭 끊어서 등장시켜 줘"
-                data-testid="first-direction"
-              />
+        {chat.length === 0 &&
+          (plan ? (
+            <div className="col" style={{ gap: 10, padding: '24px 6px' }} data-testid="plan-empty">
+              <div className="title">무엇을 만들까요?</div>
+              <div className="small muted" style={{ lineHeight: 1.75 }}>
+                만들고 싶은 영상을 자유롭게 이야기해 주세요. 광고주, 메시지, 분위기, 꼭 들어갈 문구 — 아는 만큼만 말하면 Claude가 물어보며 기획을 채워요.
+                <br />
+                레퍼런스 영상·이미지를 끌어 놓거나 유튜브 주소를 붙여 넣으면, Claude가 무엇이 좋은지 묻고 그 부분을 자세히 봐요.
+                <br />
+                기획이 정해지면 <b>"콘티로 보여줘"</b>라고 해 보세요. 장면별 시안과 필요한 소재가 나와요. 좋으면 <b>"제작해줘"</b>라고 말하면 만들기 시작하고 편집 탭으로 넘어가요.
+              </div>
             </div>
-            <button className="btn sm primary" style={{ justifyContent: 'flex-start', alignSelf: 'flex-start' }} disabled={sending} onClick={() => send(direction.trim() ? `${FIRST}. 원하는 방향: ${direction.trim()}` : FIRST)} data-testid="quick-first">
-              {FIRST}
-            </button>
-          </div>
-        )}
+          ) : (
+            <div className="col" style={{ gap: 10, padding: '20px 4px' }}>
+              <div className="title">아직 영상이 없어요</div>
+              <div className="small muted" style={{ lineHeight: 1.7 }}>브리프 탭에서 Claude와 기획을 나누고 "제작해줘"라고 하면, 여기서 만드는 과정을 보고 바로 다듬을 수 있어요.</div>
+              <button className="btn sm primary" style={{ alignSelf: 'flex-start' }} onClick={() => setTab('brief')} data-testid="go-plan">
+                브리프 탭에서 기획하기
+              </button>
+            </div>
+          ))}
         {collapse(chat).map(({ item, count }) => (
           <ChatRow key={item.id} item={item} count={count} />
         ))}
@@ -172,7 +234,7 @@ export function ChatPanel({ onFold }: { onFold?(): void }) {
             ↓ 최신 메시지
           </button>
         )}
-        {marks.length > 0 && (
+        {!plan && marks.length > 0 && (
           <div className="col" style={{ gap: 6, maxHeight: 260, overflow: 'auto' }}>
             <div className="row tiny muted">
               <span>{markTime?.toFixed(2)}초 화면에 표시 {marks.length}개 · 표시마다 참고 이미지를 끌어 놓을 수 있어요</span>
@@ -233,9 +295,9 @@ export function ChatPanel({ onFold }: { onFold?(): void }) {
         )}
         <div className="card" style={{ padding: 8, background: 'var(--surface-2)', display: 'flex', flexDirection: 'column', gap: 6, outline: dropping ? '2px dashed var(--accent)' : 'none' }}>
           {attachments.length > 0 && (
-            <div className="row" style={{ gap: 4, flexWrap: 'wrap' }}>
-              {attachments.map((r) => (
-                <Thumb key={r} rel={r} size={48} onRemove={() => setAttachments((a) => a.filter((x) => x !== r))} />
+            <div className="row" style={{ gap: 6, flexWrap: 'wrap' }} data-testid="attachments">
+              {attachments.map((a) => (
+                <AttachChip key={a.id} a={a} onRemove={() => removeAttach(a)} onRange={a.kind !== 'image' && a.status === 'ready' ? () => setRanging(a) : undefined} />
               ))}
             </div>
           )}
@@ -252,27 +314,26 @@ export function ChatPanel({ onFold }: { onFold?(): void }) {
               const files = [...e.clipboardData.files].map((f) => studio.app.pathForFile(f)).filter(Boolean)
               if (!files.length) return
               e.preventDefault()
-              const added = await addImages(files)
-              if (added.length) setAttachments((a) => [...a, ...added])
+              await addMedia(files)
             }}
-            placeholder={marks.length ? '표시한 부분을 어떻게 바꿀지 말해 주세요' : 'Claude에게 요청하기 (Shift+Enter 줄바꿈 · 이미지를 끌어 놓아 첨부)'}
+            placeholder={marks.length ? '표시한 부분을 어떻게 바꿀지 말해 주세요' : plan ? '만들고 싶은 영상을 이야기해 주세요 (Shift+Enter 줄바꿈 · 영상·이미지 끌어 놓기 · 유튜브 주소 붙여 넣기)' : 'Claude에게 요청하기 (Shift+Enter 줄바꿈 · 이미지·영상을 끌어 놓아 첨부)'}
+            data-testid="chat-input"
             rows={3}
             style={{ border: 'none', outline: 'none', background: 'transparent', resize: 'none', minHeight: 54 }}
           />
           <div className="row">
-            <ToolButtons />
-            <button
-              className="icon-btn"
-              title="참고 이미지 첨부"
-              onClick={async () => {
-                const added = await addImages(await studio.app.pickFiles('images'))
-                if (added.length) setAttachments((a) => [...a, ...added])
-              }}
-            >
+            {!plan && <ToolButtons />}
+            <button className="icon-btn" title="이미지·영상 첨부 (끌어 놓아도 돼요)" onClick={async () => addMedia(await studio.app.pickFiles('media'))} data-testid="attach-media">
               <ImagePlus size={15} />
             </button>
+            {waiting && (
+              <span className="tiny muted row" style={{ gap: 4 }}>
+                <Loader2 size={11} className="spin" />
+                첨부 준비 중
+              </span>
+            )}
             <div className="grow" />
-            <button className="btn primary sm" disabled={sending || (!text.trim() && !marks.length && !attachments.length)} onClick={() => send()} style={{ width: 32, padding: 0 }} title="보내기 (Enter)">
+            <button className="btn primary sm" disabled={sending || waiting || (!text.trim() && !marks.length && !attachments.length)} onClick={() => send()} style={{ width: 32, padding: 0 }} title={waiting ? '첨부를 준비하는 중이에요' : '보내기 (Enter)'} data-testid="chat-send">
               {sending ? <Loader2 size={14} className="spin" /> : <ArrowUp size={15} />}
             </button>
           </div>
@@ -284,10 +345,90 @@ export function ChatPanel({ onFold }: { onFold?(): void }) {
       </div>
       {dropping && (
         <div style={{ position: 'absolute', inset: 0, background: 'var(--accent-soft)', border: '2px dashed var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', zIndex: 5 }} className="small">
-          참고 이미지를 놓으면 메시지에 첨부돼요
+          이미지·영상을 놓으면 메시지에 첨부돼요
         </div>
       )}
+      {ranging && (
+        <RangeModal
+          a={ranging}
+          onClose={() => setRanging(null)}
+          onSave={(range) => {
+            setAttachments((l) => l.map((x) => (x.id === ranging.id ? { ...x, range } : x)))
+            void studio.references.update(pid, ranging.id, { ranges: range ? [range] : [] }).catch(() => {})
+            setRanging(null)
+          }}
+        />
+      )}
     </div>
+  )
+}
+
+/** an attachment waiting in the composer: picture, title, state, the part chosen (videos) */
+function AttachChip({ a, onRemove, onRange }: { a: Attach; onRemove(): void; onRange?(): void }) {
+  const { project } = useStore()
+  const [url, setUrl] = useState('')
+  useEffect(() => {
+    if (a.thumb) void studio.projects.fileUrl(project!.meta.id, a.thumb).then(setUrl)
+  }, [a.thumb, project])
+  const busy = a.status === 'pending' || a.status === 'downloading' || a.status === 'analyzing'
+  return (
+    <div className="attach-chip" data-testid="attach-chip" title={a.error ?? a.title}>
+      <div style={{ width: 40, height: 40, borderRadius: 5, overflow: 'hidden', background: 'var(--canvas)', flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        {url ? <img src={url} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : a.kind === 'youtube' ? <Link2 size={16} color="var(--text-3)" /> : <Film size={16} color="var(--text-3)" />}
+      </div>
+      <div className="col" style={{ gap: 1, minWidth: 0 }}>
+        <span className="tiny ellipsis" style={{ fontWeight: 600 }}>{a.title}</span>
+        <span className="tiny muted row" style={{ gap: 4 }}>
+          {busy && <Loader2 size={10} className="spin" />}
+          {a.status === 'downloading' ? '받는 중' : a.status === 'analyzing' || a.status === 'pending' ? '분석 중' : a.status === 'error' ? <span style={{ color: 'var(--danger)' }}>못 받았어요</span> : a.kind === 'image' ? '이미지' : `${a.kind === 'youtube' ? '유튜브' : '영상'}${a.duration ? ` ${a.duration.toFixed(1)}초` : ''}`}
+        </span>
+        {onRange && (
+          <button className="btn ghost sm" style={{ height: 18, padding: '0 4px', fontSize: 11, alignSelf: 'flex-start' }} onClick={onRange} data-testid="attach-range">
+            <Scissors size={10} />
+            {a.range ? `${a.range.from.toFixed(1)}~${a.range.to.toFixed(1)}초` : '구간 지정'}
+          </button>
+        )}
+      </div>
+      <button className="icon-btn" title="첨부 빼기" onClick={onRemove} style={{ position: 'absolute', right: 2, top: 2, width: 18, height: 18 }}>
+        <X size={10} />
+      </button>
+    </div>
+  )
+}
+
+/** the part of an attached video to look at: play, then mark the start and the end */
+function RangeModal({ a, onClose, onSave }: { a: Attach; onClose(): void; onSave(r: { from: number; to: number } | undefined): void }) {
+  const { project } = useStore()
+  const [url, setUrl] = useState('')
+  const video = useRef<HTMLVideoElement>(null)
+  const [from, setFrom] = useState(a.range?.from ?? 0)
+  const [to, setTo] = useState(a.range?.to ?? a.duration ?? 0)
+  useEffect(() => {
+    if (a.file) void studio.projects.fileUrl(project!.meta.id, a.file).then(setUrl)
+  }, [a.file, project])
+  const now = () => +(video.current?.currentTime ?? 0).toFixed(2)
+  return (
+    <Modal title={`보여 줄 구간 · ${a.title}`} onClose={onClose} width={640}>
+      {url && <video ref={video} src={url} controls style={{ width: '100%', maxHeight: 360, borderRadius: 8, background: '#000' }} data-testid="range-video" />}
+      <div className="row" style={{ gap: 8 }}>
+        <button className="btn sm" onClick={() => setFrom(now())}>
+          여기서 시작 ({from.toFixed(1)}초)
+        </button>
+        <button className="btn sm" onClick={() => setTo(Math.max(now(), from + 0.1))}>
+          여기서 끝 ({to.toFixed(1)}초)
+        </button>
+        <div className="grow" />
+        {a.range && (
+          <button className="btn ghost sm" onClick={() => onSave(undefined)}>
+            구간 지우기
+          </button>
+        )}
+        <button className="btn primary sm" disabled={to <= from} onClick={() => onSave({ from, to })} data-testid="range-save">
+          이 구간으로
+        </button>
+      </div>
+      <div className="tiny muted">Claude가 이 구간을 0.1초 간격으로 자세히 볼 수 있어요. 무엇이 좋은지도 메시지에 같이 적어 주세요.</div>
+    </Modal>
   )
 }
 
@@ -508,7 +649,7 @@ function Thumb({ rel, size, onRemove }: { rel: string; size: number; onRemove?()
   }, [rel, project])
   return (
     <div style={{ position: 'relative', width: size, height: size, flex: 'none' }}>
-      {url && <img src={url} style={{ width: size, height: size, objectFit: 'cover', borderRadius: 6, border: '1px solid var(--border)' }} />}
+      {url && (VIDEO_FILE.test(rel) ? <video src={url} muted style={{ width: size, height: size, objectFit: 'cover', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--canvas)' }} /> : <img src={url} style={{ width: size, height: size, objectFit: 'cover', borderRadius: 6, border: '1px solid var(--border)' }} />)}
       {onRemove && (
         <button className="icon-btn" title="첨부 빼기" onClick={onRemove} style={{ position: 'absolute', right: -6, top: -6, width: 18, height: 18, borderRadius: 9, background: 'var(--surface-3)' }}>
           <X size={10} />
@@ -556,6 +697,13 @@ function ChatRow({ item, count = 1 }: { item: ChatItem; count?: number }) {
 
   switch (item.role) {
     case 'user':
+      if (item.fromApp)
+        return (
+          <div className="row tiny muted fade-in" style={{ justifyContent: 'center', gap: 6 }} data-testid="app-request">
+            <Info size={12} />
+            앱이 Claude에게: {item.text}
+          </div>
+        )
       return (
         <div className="fade-in" style={{ alignSelf: 'flex-end', maxWidth: '88%' }}>
           <div style={{ background: 'var(--accent)', color: 'var(--accent-text)', padding: '8px 12px', borderRadius: '14px 14px 4px 14px', whiteSpace: 'pre-wrap', userSelect: 'text', opacity: item.queued ? 0.75 : 1 }}>{item.text}</div>
@@ -605,6 +753,8 @@ function ChatRow({ item, count = 1 }: { item: ChatItem; count?: number }) {
       )
     case 'storyboard':
       return <StoryboardCard item={item} />
+    case 'voices':
+      return <VoicesCard item={item} />
     case 'generated':
       return <GeneratedCard item={item} />
     case 'error':
@@ -633,22 +783,50 @@ function ChatRow({ item, count = 1 }: { item: ChatItem; count?: number }) {
 }
 
 function StoryboardCard({ item }: { item: Extract<ChatItem, { role: 'storyboard' }> }) {
-  const { project, toast } = useStore()
-  const [approving, setApproving] = useState(false)
+  const { project, setTab } = useStore()
+  const [base, setBase] = useState('')
+  const pid = project!.meta.id
+  useEffect(() => {
+    void studio.projects.fileUrl(pid, '').then(setBase)
+  }, [pid])
   const sb: Storyboard = item.storyboard
+  const o = project!.brief.output
+  const portrait = o.height > o.width
+  const slots = sb.scenes.flatMap((s) => s.materials ?? [])
+  const filled = slots.filter((m) => m.file).length
+  const openBoard = () => {
+    setTab('brief')
+    useBriefUi.setState({ panel: 'storyboard' })
+  }
   return (
-    <div className="card fade-in" style={{ padding: 0, overflow: 'hidden', opacity: item.status === 'superseded' ? 0.55 : 1 }}>
+    <div className="card fade-in" style={{ padding: 0, overflow: 'hidden', opacity: item.status === 'superseded' ? 0.55 : 1 }} data-testid="storyboard-card">
       <div className="row" style={{ padding: '10px 12px', background: 'var(--surface-2)', borderBottom: '1px solid var(--border)' }}>
         <Clapperboard size={15} color="var(--accent)" />
         <div className="grow col" style={{ gap: 0 }}>
           <div style={{ fontWeight: 650 }}>콘티 · {sb.title}</div>
-          <div className="tiny muted">{sb.duration}초 · 장면 {sb.scenes.length}개</div>
+          <div className="tiny muted">
+            {sb.duration}초 · 장면 {sb.scenes.length}개{slots.length ? ` · 소재 ${filled}/${slots.length}` : ''}
+          </div>
         </div>
-        {item.status === 'approved' && <span className="badge success">승인됨</span>}
+        {item.status === 'approved' && <span className="badge success">제작 승인함</span>}
         {item.status === 'superseded' && <span className="badge">이전 콘티</span>}
       </div>
       <div style={{ padding: '10px 12px' }} className="col">
         <div className="small" style={{ lineHeight: 1.6 }}>{sb.concept}</div>
+        {sb.scenes.some((s) => s.frame) && (
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, minmax(${portrait ? 96 : 150}px, 1fr))`, gap: 8 }} data-testid="storyboard-frames">
+            {sb.scenes.map((s) => (
+              <div key={s.n} className="col" style={{ gap: 3 }}>
+                <div style={{ aspectRatio: `${o.width} / ${o.height}`, borderRadius: 6, overflow: 'hidden', background: 'var(--canvas)', border: '1px solid var(--border)' }}>
+                  {s.frame && base && <img src={base + s.frame} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />}
+                </div>
+                <span className="tiny muted ellipsis">
+                  {s.n}. {s.title}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
         {sb.scenes.map((s) => (
           <div key={s.n} style={{ display: 'grid', gridTemplateColumns: '58px 1fr', gap: 8, padding: '8px 0', borderTop: '1px solid var(--border)' }}>
             <div className="mono tiny muted">
@@ -661,32 +839,91 @@ function StoryboardCard({ item }: { item: Extract<ChatItem, { role: 'storyboard'
               <div className="small muted">{s.description}</div>
               {s.texts.length > 0 && <div className="tiny">문구: {s.texts.map((t) => `“${t}”`).join(' · ')}</div>}
               {s.motion && <div className="tiny" style={{ color: 'var(--accent)' }}>모션: {s.motion}</div>}
+              {!!s.materials?.length && (
+                <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginTop: 2 }}>
+                  {s.materials.map((m) => (
+                    <span key={m.id} className={`badge${m.file ? ' success' : ''}`} title={[m.prompt, m.startPrompt && `시작: ${m.startPrompt}`, m.endPrompt && `끝: ${m.endPrompt}`].filter(Boolean).join('\n')}>
+                      {m.kind === 'video' ? '영상' : '이미지'} · {m.label}
+                      {m.file ? ' ✓' : ''}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         ))}
         {sb.notes && <div className="tiny muted">{sb.notes}</div>}
       </div>
       {item.status === 'pending' && (
-        <div className="row" style={{ padding: '0 12px 12px' }}>
-          <button
-            className="btn primary sm grow"
-            disabled={approving}
-            onClick={async () => {
-              setApproving(true)
-              try {
-                await studio.agent.approveStoryboard(project!.meta.id, item.id)
-              } catch (e) {
-                toast(errText(e), 'error')
-                setApproving(false)
-              }
-            }}
-          >
-            <Check size={13} />
-            이대로 만들기
-          </button>
-          <span className="tiny faint">수정할 점은 아래에 적어 주세요</span>
+        <div className="row" style={{ padding: '0 12px 12px', gap: 6, flexWrap: 'wrap' }}>
+          {slots.length > 0 && (
+            <button className="btn sm" onClick={openBoard} data-testid="storyboard-open">
+              소재 넣기 ({filled}/{slots.length})
+            </button>
+          )}
+          <span className="tiny faint">고칠 점은 대화로, 좋으면 "제작해줘"라고 말해 주세요</span>
         </div>
       )}
+    </div>
+  )
+}
+
+/** narration voices Claude suggests: listen, then pick one (Claude is told) */
+function VoicesCard({ item }: { item: Extract<ChatItem, { role: 'voices' }> }) {
+  const { project, toast } = useStore()
+  const [playing, setPlaying] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const audio = useRef<HTMLAudioElement | null>(null)
+  useEffect(() => () => audio.current?.pause(), [])
+  const play = (id: string, url?: string) => {
+    audio.current?.pause()
+    if (!url || playing === id) return setPlaying(null)
+    const a = new Audio(url)
+    audio.current = a
+    a.onended = () => setPlaying(null)
+    void a.play().catch(() => toast('미리듣기를 재생하지 못했어요.', 'error'))
+    setPlaying(id)
+  }
+  return (
+    <div className="card fade-in" style={{ padding: 10, display: 'flex', flexDirection: 'column', gap: 8 }} data-testid="voices-card">
+      <div className="row small" style={{ gap: 6, fontWeight: 650 }}>
+        <Mic size={14} color="var(--accent)" />
+        <span className="grow">목소리 후보{item.label ? ` · ${item.label}` : ''}</span>
+      </div>
+      {item.script && <div className="tiny muted" style={{ whiteSpace: 'pre-wrap' }}>대본: {item.script}</div>}
+      <div className="col" style={{ gap: 4 }}>
+        {item.voices.map((v) => (
+          <div key={v.id} className="row" style={{ gap: 8, padding: '4px 6px', borderRadius: 8, background: item.picked === v.id ? 'var(--accent-soft)' : 'var(--surface-2)' }}>
+            <button className="icon-btn" disabled={!v.previewUrl} title={v.previewUrl ? '들어 보기' : '미리듣기가 없어요'} onClick={() => play(v.id, v.previewUrl)}>
+              {playing === v.id ? <Pause size={13} /> : <Play size={13} />}
+            </button>
+            <div className="col grow" style={{ gap: 0, minWidth: 0 }}>
+              <span className="small ellipsis">{v.name}</span>
+              {(v.description || v.gender) && <span className="tiny muted ellipsis">{[v.gender, v.description].filter(Boolean).join(' · ')}</span>}
+            </div>
+            {item.picked === v.id ? (
+              <span className="badge success">골랐어요</span>
+            ) : (
+              <button
+                className="btn sm"
+                disabled={busy || !!item.picked}
+                onClick={async () => {
+                  setBusy(true)
+                  try {
+                    await studio.agent.pickVoice(project!.meta.id, item.id, v.id)
+                  } catch (e) {
+                    toast(errText(e), 'error')
+                  } finally {
+                    setBusy(false)
+                  }
+                }}
+              >
+                이 목소리로
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

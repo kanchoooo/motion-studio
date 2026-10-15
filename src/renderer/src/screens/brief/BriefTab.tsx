@@ -1,102 +1,67 @@
-import { useEffect, useRef, useState } from 'react'
-import { Check, Clapperboard, FileText, Film, Image, Loader2, Monitor, Palette, Sparkles } from 'lucide-react'
-import type { Brief } from '@shared/brief'
-import { studio, useStore } from '../../store'
-import { AiSection } from './AiSection'
-import { AssetsSection } from './AssetsSection'
-import { OutputSection } from './OutputSection'
-import { ReferencesSection } from './ReferencesSection'
-import { StoryboardSection } from './StoryboardSection'
-import { TextsSection } from './TextsSection'
-import { ToneSection } from './ToneSection'
-
-const SECTIONS = [
-  { id: 'output', label: '출력 사양', icon: Monitor },
-  { id: 'texts', label: '필수 문구', icon: FileText },
-  { id: 'assets', label: '소재', icon: Image },
-  { id: 'references', label: '레퍼런스', icon: Clapperboard },
-  { id: 'tone', label: '톤앤매너·스타일', icon: Palette },
-  { id: 'storyboard', label: '스토리보드', icon: Film },
-  { id: 'ai', label: 'AI 생성·음성', icon: Sparkles },
-] as const
-type SectionId = (typeof SECTIONS)[number]['id']
+// 브리프 = planning with Claude in conversation. On the left: the output spec (the one thing
+// to set), the storyboard Claude showed (assign materials to it) and the material library
+// (import, generate with AI and the prompt helper); a storyboard or library panel opens between
+// that menu and the chat. The chat is the same conversation the editor shows: when the designer
+// approves in it ("제작해줘"), Claude starts building and the editor opens (start_build).
+import { ChevronRight, Film, Image, Monitor } from 'lucide-react'
+import { FPS_OPTIONS, OUTPUT_PRESETS } from '@shared/brief'
+import { useStore } from '../../store'
+import { ChatPanel } from '../editor/ChatPanel'
+import { AssetsPanel } from './AssetsPanel'
+import { useBriefUi, type BriefPanel } from './briefUi'
+import { OutputPopup } from './OutputPopup'
+import { StoryboardPanel } from './StoryboardPanel'
 
 export function BriefTab() {
-  const { project, setProject, toast, setTab } = useStore()
-  const [brief, setBrief] = useState<Brief>(project!.brief)
-  const [section, setSection] = useState<SectionId>('output')
-  const [saving, setSaving] = useState<'idle' | 'saving' | 'saved'>('idle')
-  const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
-  const pid = project!.meta.id
+  const { project, storyboard, setTab } = useStore()
+  const { panel, open } = useBriefUi()
+  const o = project!.brief.output
+  const preset = OUTPUT_PRESETS.find((p) => p.id === o.preset)
+  const fps = `${FPS_OPTIONS.find((f) => Math.abs(f.value - o.fps) < 0.01)?.label ?? o.fps}fps`
+  const scenes = storyboard?.storyboard.scenes ?? []
+  const slots = scenes.flatMap((s) => s.materials ?? [])
+  const empty = slots.filter((m) => !m.file).length
 
-  useEffect(() => setBrief(project!.brief), [project?.meta.id]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  const update = (next: Brief) => {
-    setBrief(next)
-    setSaving('saving')
-    clearTimeout(timer.current)
-    timer.current = setTimeout(async () => {
-      try {
-        const saved = await studio.projects.saveBrief(pid, next)
-        // the designer may have switched projects meanwhile: never put this one back
-        if (useStore.getState().project?.meta.id === pid) setProject(saved)
-        setSaving('saved')
-      } catch (e) {
-        toast(e instanceof Error ? e.message : String(e), 'error')
-        setSaving('idle')
-      }
-    }, 700)
-  }
-
-  const counts: Partial<Record<SectionId, number>> = { texts: brief.texts.length, assets: brief.assets.length, storyboard: brief.storyboard.length }
+  const item = (id: BriefPanel, icon: React.ReactNode, label: string, sub: string, badge?: string) => (
+    <button key={id} className={`brief-nav${panel === id ? ' on' : ''}`} onClick={() => open(id)} data-testid={`brief-nav-${id}`}>
+      {icon}
+      <span className="col grow" style={{ gap: 1, minWidth: 0, textAlign: 'left' }}>
+        <span style={{ fontWeight: 600 }}>{label}</span>
+        <span className="tiny muted ellipsis">{sub}</span>
+      </span>
+      {badge && <span className="badge">{badge}</span>}
+      <ChevronRight size={14} color="var(--text-3)" />
+    </button>
+  )
 
   return (
-    <div style={{ height: '100%', display: 'flex' }}>
-      <nav style={{ width: 220, borderRight: '1px solid var(--border)', padding: 12, flex: 'none', display: 'flex', flexDirection: 'column', gap: 2 }}>
+    <div style={{ height: '100%', display: 'flex', minWidth: 0 }} data-testid="brief-tab">
+      <nav style={{ width: 236, borderRight: '1px solid var(--border)', padding: 12, flex: 'none', display: 'flex', flexDirection: 'column', gap: 4, position: 'relative' }}>
         <div className="section-label" style={{ padding: '6px 10px' }}>브리프</div>
-        {SECTIONS.map((s) => {
-          const Icon = s.icon
-          const on = s.id === section
-          return (
-            <button
-              key={s.id}
-              onClick={() => setSection(s.id)}
-              className="row"
-              style={{
-                height: 34,
-                padding: '0 10px',
-                border: 'none',
-                borderRadius: 8,
-                cursor: 'pointer',
-                background: on ? 'var(--accent-soft)' : 'transparent',
-                color: on ? 'var(--accent)' : 'var(--text)',
-                fontWeight: on ? 650 : 500,
-              }}
-            >
-              <Icon size={15} />
-              <span className="grow" style={{ textAlign: 'left' }}>{s.label}</span>
-              {counts[s.id] ? <span className="badge">{counts[s.id]}</span> : null}
-            </button>
-          )
-        })}
+        {item('output', <Monitor size={15} />, '출력 사양', `${preset ? preset.ratio : `${o.width}×${o.height}`} · ${o.duration}초 · ${fps}`)}
+        {item('storyboard', <Film size={15} />, '스토리보드', scenes.length ? `장면 ${scenes.length}개${slots.length ? ` · 소재 ${slots.length - empty}/${slots.length}` : ''}` : '대화에서 콘티를 만들면 여기에 모여요', storyboard?.status === 'approved' ? '승인' : undefined)}
+        {item('assets', <Image size={15} />, '소재', project!.brief.assets.length ? `${project!.brief.assets.length}개 · 가져오기·AI로 만들기` : '가져오기 · AI로 만들기')}
         <div className="grow" />
-        <div className="row small muted" style={{ padding: '8px 10px' }}>
-          {saving === 'saving' ? <Loader2 size={13} className="spin" /> : saving === 'saved' ? <Check size={13} color="var(--success)" /> : null}
-          {saving === 'saving' ? '저장 중…' : saving === 'saved' ? '자동 저장됨' : '변경하면 자동 저장돼요'}
+        <div className="tiny muted" style={{ padding: '0 6px 8px', lineHeight: 1.6 }}>
+          기획은 대화로 해요. 레퍼런스 영상·이미지·유튜브 주소를 대화에 바로 넣을 수 있어요. 기획이 정해지면 "제작해줘"라고 말하면 만들기 시작해요.
         </div>
-        <button className="btn primary" onClick={() => setTab('editor')}>
-          편집으로 가기
-        </button>
+        {project!.hasVideo && (
+          <button className="btn ghost sm" onClick={() => setTab('editor')}>
+            편집으로 가기
+          </button>
+        )}
+        {panel === 'output' && <OutputPopup onClose={() => open(null)} />}
       </nav>
-      <div style={{ flex: 1, overflow: 'auto' }}>
-        <div style={{ maxWidth: 820, margin: '0 auto', padding: '28px 32px 80px' }}>
-          {section === 'output' && <OutputSection brief={brief} onChange={update} />}
-          {section === 'texts' && <TextsSection brief={brief} onChange={update} />}
-          {section === 'assets' && <AssetsSection brief={brief} onChange={update} />}
-          {section === 'references' && <ReferencesSection />}
-          {section === 'tone' && <ToneSection brief={brief} onChange={update} />}
-          {section === 'storyboard' && <StoryboardSection brief={brief} onChange={update} />}
-          {section === 'ai' && <AiSection brief={brief} onChange={update} />}
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', background: 'var(--bg)' }}>
+        {(panel === 'storyboard' || panel === 'assets') && (
+          <div className="floating-panel left fade-in" style={{ width: panel === 'assets' ? 'min(1040px, 66%)' : 'min(820px, 56%)' }} data-testid={`brief-panel-${panel}`}>
+            {panel === 'storyboard' ? <StoryboardPanel onClose={() => open(null)} /> : <AssetsPanel onClose={() => open(null)} />}
+          </div>
+        )}
+        <div style={{ flex: 1, minWidth: 380, display: 'flex', justifyContent: 'center' }}>
+          <div style={{ width: '100%', maxWidth: 880, height: '100%' }} data-testid="plan-chat">
+            <ChatPanel mode="plan" />
+          </div>
         </div>
       </div>
     </div>

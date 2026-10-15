@@ -1,7 +1,7 @@
 // Export ("내보내기"): render, post-process, thumbnail, gallery index, history link.
 import { execFile } from 'node:child_process'
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs'
-import { basename, extname, join } from 'node:path'
+import { basename, dirname, extname, join } from 'node:path'
 import { promisify } from 'node:util'
 import type { ExportOptions, ExportProgress } from '@shared/api'
 import { OUTPUT_PRESETS, type Brief } from '@shared/brief'
@@ -9,8 +9,9 @@ import type { RenderRecord } from '@shared/project'
 import * as history from './history'
 import { lastLines, renderComposition, type HfProgress } from './hyperframes'
 import { probeMedia, thumbnailFromVideo } from './media'
-import { bin } from './paths'
+import { bin, runtimeFiles } from './paths'
 import * as projects from './projects'
+import { repairCompositionHead } from './headFix'
 import { formatDate, newId, nowIso, readJson, safeName, uniquePath, writeJson } from './util'
 
 const run = promisify(execFile)
@@ -67,6 +68,7 @@ export async function startExport(projectId: string, opts: ExportOptions, emit: 
       const name = safeName(opts.fileName || defaultFileName(brief, listRenders(dir))).replace(/\s+/g, '-')
       out = uniquePath((n) => join(rendersDir, `${name}${n ? `-${n + 1}` : ''}${EXT[opts.format]}`))
       send({ phase: 'preparing', percent: 1, message: '영상을 준비하고 있어요' })
+      repairCompositionHead(dir, dirname(runtimeFiles.gsap()))
       projects.refreshFontCss(dir)
       projects.applyAudioEdits(dir)
       // save the exact state being exported so the gallery item can be restored later

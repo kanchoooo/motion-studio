@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { AlertCircle, CheckCircle2, FolderOpen, Layers, Loader2, X } from 'lucide-react'
+import { AlertCircle, AlertTriangle, CheckCircle2, ExternalLink, FolderOpen, Layers, Loader2, X } from 'lucide-react'
 import type { AeProgress } from '@shared/api'
 import { FORMAT_LABELS, OUTPUT_PRESETS, type OutputFormat, type OutputQuality } from '@shared/brief'
-import { Field, Modal, Segmented } from '../components/ui'
+import { Field, Modal, Segmented, Toggle } from '../components/ui'
 import { studio, useStore } from '../store'
 
 // the folder chosen last time, remembered on this computer
@@ -41,6 +41,10 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
   const pid = project!.meta.id
   const [format, setFormat] = useState<OutputFormat>(out.format)
   const [quality, setQuality] = useState<OutputQuality>(out.quality)
+  const [audio, setAudio] = useState(out.audio)
+  // a frame almost identical to a reference, media imported from the web (with their license)
+  const [pre, setPre] = useState<Awaited<ReturnType<typeof studio.renders.preflight>> | null>(null)
+  const transparentOk = format === 'mov-prores4444' || format === 'webm-vp9' || format === 'png-sequence'
   const [fileName, setFileName] = useState('')
   const [versionName, setVersionName] = useState('')
   const [saveDir, setSaveDir] = useState<string | null>(savedDir)
@@ -57,6 +61,7 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
 
   useEffect(() => {
     void studio.renders.list(pid).then((r) => setFileName(defaultName(r.length)))
+    void studio.renders.preflight(pid).then(setPre).catch(() => setPre({ copies: [], imports: [] }))
     if (!live) useStore.setState({ exportProgress: null })
     useStore.setState({ exportOpen: true })
     return () => useStore.setState({ exportOpen: false })
@@ -71,6 +76,8 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
     if (starting) return
     setStarting(true)
     try {
+      // the choices become the project's defaults (the brief no longer holds them)
+      if (format !== out.format || quality !== out.quality || audio !== out.audio) useStore.getState().setProject(await studio.projects.saveOutput(pid, { format, quality, audio }))
       const id = await studio.renders.start(pid, { format, quality, fileName, versionName: versionName.trim() || undefined, copyTo: saveDir ?? undefined })
       setRenderId(id)
     } catch (e) {
@@ -147,6 +154,12 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
               ]}
             />
           </Field>
+          <Field label="소리" hint={transparentOk ? '이 형식은 투명 배경도 지원해요 (배경을 투명하게 만들어 달라고 Claude에게 말해 주세요).' : undefined}>
+            <div className="row" style={{ height: 32 }}>
+              <Toggle on={audio} onChange={setAudio} />
+              <span className="muted small">{audio ? '배경음악·효과음·내레이션을 포함해요' : '소리 없이 내보내요'}</span>
+            </div>
+          </Field>
           <Field label="버전 이름 (선택)" hint="예: 광고주 1차 시안 — 이력에서 이 이름으로 찾을 수 있어요.">
             <input className="input" value={versionName} onChange={(e) => setVersionName(e.target.value)} placeholder="이름 없이 저장" />
           </Field>
@@ -178,6 +191,50 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
           <div className="tiny faint">
             {out.width}×{out.height} · {out.fps}fps · {out.duration}초
           </div>
+          {!pre ? (
+            <div className="row tiny muted" style={{ gap: 6 }}>
+              <Loader2 size={11} className="spin" />
+              레퍼런스와 비슷한 장면, 외부 소재를 확인하고 있어요
+            </div>
+          ) : (
+            (pre.copies.length > 0 || pre.imports.length > 0) && (
+              <div className="card col" style={{ padding: 10, gap: 6, borderColor: 'var(--warning)', background: 'color-mix(in srgb, var(--warning) 8%, var(--surface))' }} data-testid="export-preflight">
+                {pre.copies.length > 0 && (
+                  <div className="col" style={{ gap: 3 }}>
+                    <div className="row small" style={{ gap: 6, fontWeight: 650 }}>
+                      <AlertTriangle size={14} color="var(--warning)" />
+                      레퍼런스와 거의 같은 장면이 있어요
+                    </div>
+                    {pre.copies.slice(0, 4).map((c, i) => (
+                      <div key={i} className="tiny muted">
+                        {c.t}초 화면 ↔ 「{c.ref}」 {c.refT}초 — 그대로 베낀 것처럼 보일 수 있어요. 필요하면 Claude에게 바꿔 달라고 하세요.
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {pre.imports.length > 0 && (
+                  <div className="col" style={{ gap: 3 }}>
+                    <div className="row small" style={{ gap: 6, fontWeight: 650 }}>
+                      <AlertTriangle size={14} color="var(--warning)" />
+                      외부에서 가져온 소재 · 사용 조건을 확인해 주세요
+                    </div>
+                    {pre.imports.slice(0, 8).map((g) => (
+                      <div key={g.file} className="row tiny muted" style={{ gap: 6, flexWrap: 'wrap' }}>
+                        <span className="ellipsis" style={{ maxWidth: 220 }}>{g.label || g.file.split('/').pop()}</span>
+                        <span>· {g.license || '라이선스 모름'}</span>
+                        {g.source && /^https?:/.test(g.source) && (
+                          <button className="btn ghost sm" style={{ height: 18, padding: '0 4px', fontSize: 11 }} onClick={() => studio.app.openExternal(g.source!)}>
+                            <ExternalLink size={10} />
+                            출처
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
+          )}
           <AeSection pid={pid} name={fileName} saveDir={saveDir} />
         </>
       ) : (

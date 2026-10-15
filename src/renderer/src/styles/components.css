@@ -830,6 +830,14 @@
 .lock-banner.flash {
   animation: lock-flash 0.9s ease-out;
 }
+/* 보기 모드: the 편집 활성화 button sits at the bottom of the canvas, clear of the view toolbar */
+.lock-banner.activate {
+  top: auto;
+  bottom: 14px;
+  pointer-events: auto;
+  padding: 6px 6px 6px 16px;
+  gap: 12px;
+}
 @keyframes lock-flash {
   0%,
   40% {
@@ -1262,4 +1270,127 @@
 }
 .canvas-tools .badge {
   background: var(--surface);
+}
+
+/* ---- brief: planning in conversation (0.5) ---- */
+.brief-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+.brief-nav:hover {
+  background: var(--surface-2);
+}
+.brief-nav.on {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  color: var(--accent);
+}
+.floating-panel {
+  flex: none;
+  margin: 12px 12px 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+.floating-panel.left {
+  margin: 12px 0 12px 12px;
+}
+.floating-panel .panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 46px;
+  padding: 0 10px 0 16px;
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+.floating-panel .panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.popover {
+  position: absolute;
+  z-index: 30;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  padding: 14px;
+}
+.slot {
+  border: 1.5px dashed var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface-2);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  min-width: 0;
+}
+.slot.filled {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+.slot.over {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.attach-chip {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 22px 4px 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  max-width: 220px;
+}
+.md-table-wrap {
+  overflow-x: auto;
+  margin: 4px 0 8px;
+}
+.md-table {
+  border-collapse: collapse;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.md-table th,
+.md-table td {
+  border: 1px solid var(--border);
+  padding: 5px 9px;
+  text-align: left;
+  vertical-align: top;
+}
+.md-table th {
+  background: var(--surface-2);
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+/* the generator in a side panel: choices wrap instead of running past the panel */
+.gen-card .seg {
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+.gen-card .gen-grid > * {
+  min-width: 0;
+}
+.gen-card .row {
+  flex-wrap: wrap;
 }

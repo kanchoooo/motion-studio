@@ -5,12 +5,10 @@
 // app allows at once. Files the app manages stay denied by the session's deny
 // rules in both modes (those never reach this hook).
 import { randomUUID } from 'node:crypto'
-import { existsSync, readFileSync, realpathSync } from 'node:fs'
+import { realpathSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { basename, dirname, isAbsolute, join, relative, resolve as resolvePath } from 'node:path'
+import { isAbsolute, join, relative, resolve as resolvePath } from 'node:path'
 import type { AgentPermission, PermissionAsk } from '@shared/api'
-import { findTranscript } from './transcript'
-import { buildWriteMissing, stopMissing, turnKey } from './gates'
 
 export type PermissionAnswer = 'allow' | 'always' | 'deny'
 
@@ -20,8 +18,6 @@ export interface PermissionHooks {
   dirOf(projectId: string): string
   /** a new question for the designer (shown as a card) or one that went away */
   changed(projectId: string, asks: PermissionAsk[], added?: PermissionAsk): void
-  /** the stop gate sent Claude back: the turn goes on */
-  stopBlocked?(projectId: string): void
   /** reasoning effort the running session was started with (the chat panel's setting) */
   effortOf?(projectId: string): string | undefined
 }
@@ -109,14 +105,6 @@ function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
 export const askingFor = (projectId: string) => [...waiting.values()].filter((w) => w.ask.projectId === projectId).map((w) => w.ask)
 
 const HANGUL = /[\uac00-\ud7a3]/
-
-/** a shell command that writes an .html / .css / .js file (the composition) instead of using Edit / Write */
-export function scriptEditsComposition(cmd: string): boolean {
-  if (/\bsed\b[^|;&]*\s-i|\bperl\b[^|;&]*\s-p?i\b/.test(cmd)) return true
-  if (/(>>?|\btee\b(\s+-a)?)\s*["']?[^\s"'|;&>]*\.(html?|css|m?js)\b/.test(cmd)) return true
-  const writes = /\.write_text\(|\.write\(|writeFileSync\(|writeFile\(|open\([^)]*,\s*["'][wa]\+?["']/.test(cmd)
-  return writes && /\.(html?|css|m?js)\b/.test(cmd)
-}
 
 // `hyperframes check 2>&1 | grep … | head` — Claude reads a long report through filters. The
 // session allows `hyperframes …` alone; a pipeline of it into read-only filters is allowed here
@@ -244,129 +232,24 @@ function sedPrintsRange(f: string[]): boolean {
 /** /hook/<token>/… — true when the request was ours */
 export async function handleHook(req: IncomingMessage, res: ServerResponse, path: string): Promise<boolean> {
   if (/\/pretool$/.test(path)) return handlePreTool(req, res, path)
-  if (/\/stop$/.test(path)) return handleStop(req, res, path)
   return handlePermission(req, res, path)
 }
-
-/** turns sent back by the stop gate (session + turn start → count): at most twice per turn */
-const stopBlocks = new Map<string, number>()
-const MAX_STOP_BLOCKS = 2
-
-/**
- * Stop hook: a turn that changed the video ends only after it was checked, looked at and
- * (for a build) reviewed. Otherwise Claude is sent back once or twice with what is missing.
- */
-async function handleStop(req: IncomingMessage, res: ServerResponse, path: string): Promise<boolean> {
-  const m = path.match(/^\/hook\/([a-f0-9]+)\/stop$/)
-  const projectId = m ? hooks?.projectFor(m[1]) : undefined
-  const body = await readJson(req)
-  const pass = () => res.writeHead(200, { 'Content-Type': 'application/json' }).end('{}')
-  if (!hooks || !projectId) {
-    pass()
-    return true
-  }
-  try {
-    const session = typeof body.session_id === 'string' ? body.session_id : ''
-    const transcript = (session && findTranscript(session)) || (typeof body.transcript_path === 'string' ? body.transcript_path : '')
-    if (!transcript) return (pass(), true)
-    const missing = stopMissing(join(hooks.dirOf(projectId), 'composition'), transcript)
-    const key = `${session}:${turnKey(transcript)}`
-    const n = stopBlocks.get(key) ?? 0
-    if (stopBlocks.size > 200) stopBlocks.clear()
-    if (!missing || n >= MAX_STOP_BLOCKS) return (pass(), true)
-    stopBlocks.set(key, n + 1)
-    hooks.stopBlocked?.(projectId)
-    // in Korean: Claude answers in the language of what it just read
-    const reason = [
-      '모션스튜디오 품질 확인 — 아직 끝내지 마세요. 남은 일:',
-      ...missing.map((x, i) => `${i + 1}. ${x}`),
-      '이 안내는 디자이너에게 말하지 말고, 단계 사이 메모와 마지막 답변 모두 한국어로 쓰면서 계속하세요. 정말 끝났을 때만 답하세요.',
-    ].join('\n')
-    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ decision: 'block', reason }))
-  } catch {
-    pass()
-  }
-  return true
-}
-
-// The HyperFrames workflows only help when Claude reads them. Before the first write
-// to the composition in a conversation, the router (or a workflow skill) must have been
-// loaded with the Skill tool; otherwise the write is sent back with what to do.
-const SKILL_RE = /(^|:)(hyperframes|motion-graphics|product-launch-video|general-video|music-to-video|faceless-explainer)$/
-const skillsRead = new Set<string>()
-
-export function readSkills(transcript: string): boolean {
-  if (!existsSync(transcript)) return false
-  for (const line of readFileSync(transcript, 'utf8').split('\n')) {
-    if (!line.includes('"Skill"')) continue
-    try {
-      for (const c of (JSON.parse(line) as { message?: { content?: unknown } }).message?.content as { type?: string; name?: string; input?: { skill?: string } }[] ?? []) {
-        if (c?.type === 'tool_use' && c.name === 'Skill' && SKILL_RE.test(String(c.input?.skill ?? ''))) return true
-      }
-    } catch {
-      /* a partly written line */
-    }
-  }
-  return false
-}
-
-// in Korean: Claude answers in the language of what it just read
-const SKILL_FIRST =
-  '영상을 쓰기 전에 HyperFrames 워크플로를 먼저 읽어야 해요: Skill 도구로 "motion-studio-hyperframes:hyperframes"(라우터)를 부르고, 라우터가 가리키는 워크플로 스킬(광고 영상이면 보통 motion-graphics나 product-launch-video)도 불러서 그대로 따르세요. 대화마다 한 번은 꼭 해야 하고, 작은 수정도 마찬가지예요. 그다음 이 수정을 다시 하세요. 이 안내는 디자이너에게 말하지 말고 한국어로 계속 작업하세요.'
 
 const REVIEWER = /(^|:)motion-reviewer$/
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
 
+/** PreToolUse (Agent only): the reviewer thinks as hard as the session */
 async function handlePreTool(req: IncomingMessage, res: ServerResponse, path: string): Promise<boolean> {
   const m = path.match(/^\/hook\/([a-f0-9]+)\/pretool$/)
   const projectId = m ? hooks?.projectFor(m[1]) : undefined
   const body = await readJson(req)
   const pass = () => res.writeHead(200, { 'Content-Type': 'application/json' }).end('{}')
-  if (!hooks || !projectId) {
-    pass()
-    return true
-  }
+  if (!hooks || !projectId || body.tool_name !== 'Agent') return (pass(), true)
   const input = (body.tool_input && typeof body.tool_input === 'object' ? body.tool_input : {}) as Record<string, unknown>
-  // the reviewer thinks as hard as the session: its own definition has no effort, and an
-  // effort Claude picked for it is replaced with the one set in the chat panel
-  if (body.tool_name === 'Agent') {
-    const effort = hooks.effortOf?.(projectId)
-    if (!REVIEWER.test(String(input.subagent_type ?? '')) || !effort || !EFFORTS.includes(effort) || input.effort === effort) return (pass(), true)
-    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', updatedInput: { ...input, effort } } }))
-    return true
-  }
-  const file = typeof input.file_path === 'string' ? input.file_path : ''
-  let inside = false
-  try {
-    const dir = hooks.dirOf(projectId)
-    // the same folder can be named two ways (/var → /private/var on macOS): compare real paths
-    const real = (p: string) => {
-      try {
-        return realpathSync(p)
-      } catch {
-        return join(realpathSync(dirname(p)), basename(p))
-      }
-    }
-    const rel = relative(real(join(dir, 'composition')), real(resolvePath(dir, file)))
-    inside = !!file && !rel.startsWith('..') && !isAbsolute(rel) && /\.(html?|css|m?js)$/i.test(rel) && !/^(ms|vendor|assets|fonts)[\\/]/.test(rel)
-  } catch {
-    inside = false
-  }
-  const session = typeof body.session_id === 'string' ? body.session_id : ''
-  if (!inside) {
-    pass()
-    return true
-  }
-  const transcript = (session && findTranscript(session)) || (typeof body.transcript_path === 'string' ? body.transcript_path : '')
-  const deny = (reason: string) => res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } }))
-  if (!skillsRead.has(session)) {
-    if (!transcript || !readSkills(transcript)) return (deny(SKILL_FIRST), true)
-    skillsRead.add(session)
-  }
-  // the first write of a new video: the recipes the storyboard cites were read
-  const recipes = buildWriteMissing(join(hooks.dirOf(projectId), 'composition'), transcript || null)
-  if (recipes) return (deny(`${recipes} 이 안내는 디자이너에게 말하지 말고 한국어 메모로 계속 작업하세요.`), true)
-  pass()
+  // its own definition has no effort, and an effort Claude picked for it is replaced with the one set in the chat panel
+  const effort = hooks.effortOf?.(projectId)
+  if (!REVIEWER.test(String(input.subagent_type ?? '')) || !effort || !EFFORTS.includes(effort) || input.effort === effort) return (pass(), true)
+  res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', updatedInput: { ...input, effort } } }))
   return true
 }
 
@@ -395,10 +278,6 @@ export async function handlePermission(req: IncomingMessage, res: ServerResponse
     const cmd = typeof input.command === 'string' ? input.command : ''
     if (hyperframesReadPipeline(cmd, dir)) {
       reply(res, 'allow')
-      return true
-    }
-    if (scriptEditsComposition(cmd)) {
-      reply(res, 'deny', '영상 파일은 셸 스크립트(python, node, sed -i, perl -i, > 리다이렉션, tee)가 아니라 Edit / Write 도구로만 고쳐 주세요. 디자이너가 명령마다 직접 허락해야 해요. 비슷한 수정이 많으면 Edit를 여러 번 쓰거나 Write로 파일을 한 번에 다시 쓰세요. 이 안내는 디자이너에게 말하지 말고 그대로 이어서 작업하세요.')
       return true
     }
     if (!HANGUL.test(typeof input.description === 'string' ? input.description : '')) {

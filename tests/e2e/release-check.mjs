@@ -1,5 +1,5 @@
 // The app as shipped (no Claude calls, no AI credits):
-//  - version (package.json), studio tools' 15-minute MCP timeout, 브리프 › 톤앤매너·스타일 (tempo + styles saved and written into BRIEF.md)
+//  - version (package.json), studio tools' 15-minute MCP timeout, the planning brief (출력 사양 saved, no BRIEF.md, 소재 panel)
 //  - the HyperFrames registry copy is inside the app; the `hyperframes` command Claude's
 //    session gets loads it and never copies to the clipboard
 //  - with the network shut off, the app's own CLI searches and installs from the copy
@@ -33,26 +33,26 @@ try {
   const version = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version
   if (exec) check(`version ${info.version} (the shipped app)`, info.version === version)
 
-  // ---- 템포 · 스타일 ----
+  // ---- 브리프 = planning in conversation ----
   const p = await win.evaluate(() => window.studio.projects.create({ name: '배포 확인', presetId: 'shorts-9x16', duration: 10 }))
   await win.reload()
   await toHome(win)
   await win.getByTestId('tree-root').click()
   await win.getByTestId('project-card').filter({ hasText: '배포 확인' }).first().click()
-  await win.locator('.drag .seg').getByRole('button', { name: '브리프' }).click({ timeout: 30000 })
-  await win.getByRole('button', { name: '톤앤매너·스타일' }).click()
-  await win.getByTestId('brief-tempo').getByRole('button', { name: '매우 빠름' }).click()
-  await win.getByTestId('style-retro').click()
-  await win.getByTestId('style-pop').click()
+  await win.getByTestId('brief-tab').waitFor({ timeout: 30000 })
+  check('a new project opens on the planning chat', await win.getByTestId('plan-empty').isVisible())
+  await win.getByTestId('brief-nav-output').click()
+  await win.getByTestId('preset-square-1x1').click()
   let brief
   for (let i = 0; i < 20; i++) {
     brief = JSON.parse(readFileSync(join(p.path, 'brief.json'), 'utf8'))
-    if (brief.tempo && brief.styles?.length === 2) break
+    if (brief.output.width === brief.output.height) break
     await win.waitForTimeout(250)
   }
-  check('tempo and styles saved', brief.tempo === 'very-fast' && JSON.stringify(brief.styles) === '["retro","pop"]', JSON.stringify([brief.tempo, brief.styles]))
-  const md = readFileSync(join(p.path, 'composition', 'BRIEF.md'), 'utf8')
-  check('BRIEF.md carries them for Claude', /템포\(디자이너가 고름\): 매우 빠름/.test(md) && /MAIN 레트로·Y2K/.test(md) && /ACCENT 팝·컬러풀/.test(md))
+  check('출력 사양 saved', brief.output.width === 1080 && brief.output.height === 1080, JSON.stringify(brief.output))
+  check('no BRIEF.md from the app', !existsSync(join(p.path, 'composition', 'BRIEF.md')))
+  await win.getByTestId('brief-nav-assets').click()
+  check('소재 panel with the prompt helper', await win.getByTestId('prompt-helper').isVisible())
 
   // ---- the hyperframes command of a Claude session (opening the editor starts one; this folder is not trusted, so it waits at the trust question) ----
   await win.locator('.drag .seg').getByRole('button', { name: '편집' }).click()

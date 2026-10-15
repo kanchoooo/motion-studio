@@ -1,10 +1,26 @@
-import type { Asset, BrandPreset, Brief, OutputFormat, OutputQuality, ReferenceItem } from './brief'
+import type { Asset, Brief, OutputFormat, OutputQuality, ReferenceItem } from './brief'
 import type { CharacterInfo, Framing, GenCandidate, GenRequest, VideoGenRequest } from './assetGen'
 import type { AiAccountInfo, AiLoginEvent, AiModelInfo, AiModelList, AiSettings, AiVoiceInfo, AudioCandidate, AudioCandidateList, LoginBrowser, LoginWindow, CodexStatus } from './ai'
 import type { Overrides } from './overrides'
 import type { FeedbackMark, HistoryEntry, ProjectState, ProjectSummary, RenderRecord } from './project'
 
 // ---- chat -------------------------------------------------------------------
+
+/** something a scene needs (an image, a video clip); the designer assigns a file to it */
+export interface StoryMaterial {
+  /** unique in the storyboard ("s2-m1") */
+  id: string
+  kind: 'image' | 'video'
+  /** what it is, in Korean ("제품 클로즈업") */
+  label: string
+  /** image: the image prompt · video: the motion prompt */
+  prompt?: string
+  /** video clips that matter: prompts for the first and the last frame image */
+  startPrompt?: string
+  endPrompt?: string
+  /** the file the designer assigned (composition-relative, e.g. assets/x.png) */
+  file?: string
+}
 
 export interface StoryboardScene {
   n: number
@@ -15,6 +31,9 @@ export interface StoryboardScene {
   texts: string[]
   assets: string[]
   motion: string
+  /** the sketch of this scene photographed from storyboard.html (project-relative png) */
+  frame?: string
+  materials?: StoryMaterial[]
 }
 
 export interface Storyboard {
@@ -25,13 +44,24 @@ export interface Storyboard {
   notes?: string
 }
 
+/** the storyboard the designer works with (storyboard.json, written by the app) */
+export interface CurrentStoryboard {
+  itemId: string
+  status: 'pending' | 'approved'
+  storyboard: Storyboard
+  /** assignments changed after approval (told to Claude with the next message) */
+  changed?: string[]
+}
+
 export type ChatItem =
-  | { id: string; at: string; role: 'user'; text: string; marks?: FeedbackMark[]; frame?: string; time?: number; attachments?: string[]; /** sent while Claude was working: delivered when it reaches a stopping point */ queued?: boolean }
+  | { id: string; at: string; role: 'user'; text: string; marks?: FeedbackMark[]; frame?: string; time?: number; attachments?: string[]; /** sent while Claude was working: delivered when it reaches a stopping point */ queued?: boolean; /** the app's own request to Claude (편집 정리), not the designer's words */ fromApp?: boolean }
   | { id: string; at: string; role: 'assistant'; text: string; streaming?: boolean }
   | { id: string; at: string; role: 'status'; text: string; done: boolean }
   | { id: string; at: string; role: 'storyboard'; storyboard: Storyboard; status: 'pending' | 'approved' | 'superseded' }
   | { id: string; at: string; role: 'error'; text: string; detail?: string }
   | { id: string; at: string; role: 'notice'; text: string }
+  /** voices Claude suggests for a narration: the designer listens and picks one */
+  | { id: string; at: string; role: 'voices'; label?: string; script?: string; voices: AiVoiceInfo[]; picked?: string }
   /** images / video clips Claude generated, waiting for the designer: keep in assets, discard, or apply */
   | { id: string; at: string; role: 'generated'; files: { file: string; kind: string }[]; label?: string; status: 'pending' | 'kept' | 'discarded' | 'applied'; note?: string }
 
@@ -68,6 +98,12 @@ export type AgentEvent =
   /** a variation in the open project's family changed status */
   | { type: 'family-changed'; projectId: string }
   | { type: 'references-changed'; projectId: string }
+  /** the brief's library or output spec changed in the main process (e.g. Claude took in an attachment) */
+  | { type: 'project-changed'; projectId: string }
+  /** Claude started building what the designer approved in the conversation (start_build): the editor opens */
+  | { type: 'build-started'; projectId: string }
+  /** the storyboard (콘티) or its assignments changed */
+  | { type: 'storyboard-changed'; projectId: string; current: CurrentStoryboard | null }
   /** Claude found music / sound effects for the designer to audition */
   | { type: 'audio-candidates'; projectId: string; list: AudioCandidateList }
   /** Claude is waiting for the designer's permission (asks: every open question; added: the new one) */
@@ -96,6 +132,12 @@ export interface SendMessageInput {
   time?: number
   /** reference images for the whole message (project-relative, see projects.addFeedbackImage) */
   attachments?: string[]
+  /** images / videos / YouTube links attached in the chat (references/<id>), with the part the designer chose */
+  references?: { id: string; range?: { from: number; to: number } }[]
+  /** for Claude only (written into the message file, not shown in the chat) */
+  detail?: string
+  /** the app asks (편집 정리): shown as the app's note, not as the designer's words */
+  fromApp?: boolean
 }
 
 export type AgentModel = '' | 'fable' | 'opus' | 'sonnet' | 'haiku'
@@ -292,7 +334,7 @@ export interface StudioApi {
     installBrowser(): Promise<{ ok: boolean; message: string }>
     openExternal(url: string): Promise<void>
     reveal(path: string): Promise<void>
-    pickFiles(kind: 'assets' | 'images' | 'any'): Promise<string[]>
+    pickFiles(kind: 'assets' | 'images' | 'media' | 'any'): Promise<string[]>
     pickFolder(): Promise<string | null>
     /** opens Claude Code once in the projects folder so the designer can trust it (covers every project) */
     trustWorkspace(): Promise<SessionState>
@@ -333,6 +375,13 @@ export interface StudioApi {
     fileUrl(projectId: string, rel: string): Promise<string>
     /** copies a reference image for chat/mark feedback into the project, returns its project-relative path */
     addFeedbackImage(projectId: string, file: string): Promise<string>
+    /** the asset library (소재함), merged into brief.json in the main process */
+    addToLibrary(projectId: string, files: string[], opts?: { psd?: 'flat' | 'layers' }): Promise<ProjectState>
+    addAssets(projectId: string, assets: Asset[]): Promise<ProjectState>
+    removeAsset(projectId: string, assetId: string): Promise<ProjectState>
+    replaceAsset(projectId: string, oldId: string, asset: Asset): Promise<ProjectState>
+    /** changes only the output spec of the brief */
+    saveOutput(projectId: string, patch: Partial<Brief['output']>): Promise<ProjectState>
     diskUsage(projectId: string): Promise<Record<'renders' | 'assets' | 'references' | 'history' | 'cache' | 'total', number>>
     clearCache(projectId: string): Promise<void>
   }
@@ -367,7 +416,15 @@ export interface StudioApi {
     /** Esc: interrupt the current turn */
     interrupt(projectId: string): Promise<void>
     transcript(projectId: string): Promise<ChatItem[]>
-    approveStoryboard(projectId: string, itemId: string): Promise<void>
+    storyboard(projectId: string): Promise<CurrentStoryboard | null>
+    /** puts a library file (composition-relative) into a storyboard material slot; null empties it */
+    assign(projectId: string, materialId: string, file: string | null): Promise<CurrentStoryboard>
+    /** files from the computer into a slot (they join the library) */
+    assignFiles(projectId: string, materialId: string, files: string[]): Promise<CurrentStoryboard>
+    /** the designer picked a voice on a voice card (Claude is told) */
+    pickVoice(projectId: string, itemId: string, voiceId: string): Promise<void>
+    /** 편집 활성화: makes the video editable by hand ('asked': Claude is naming the layers now) */
+    activateEditing(projectId: string): Promise<'ready' | 'asked'>
     /** switches model / reasoning effort (restarts the session with --resume; waits for a running turn) */
     setModel(projectId: string, opts: { model: AgentModel; effort: AgentEffort }): Promise<SessionState>
     /** permission mode for this project (takes effect at once, no restart) */
@@ -388,12 +445,6 @@ export interface StudioApi {
     snapshot(projectId: string): Promise<string>
     write(projectId: string, data: string): void
     resize(projectId: string, cols: number, rows: number): void
-  }
-  brands: {
-    list(): Promise<BrandPreset[]>
-    /** logoSource: a file to copy in as the brand logo */
-    save(brand: Omit<BrandPreset, 'id'> & { id?: string }, logoSource?: string): Promise<BrandPreset>
-    remove(id: string): Promise<void>
   }
   references: {
     list(projectId: string): Promise<ReferenceItem[]>
@@ -417,6 +468,8 @@ export interface StudioApi {
     star(projectId: string, entryId: string, starred: boolean): Promise<void>
   }
   renders: {
+    /** before export: frames almost identical to a reference, imported media with source / license */
+    preflight(projectId: string): Promise<{ copies: { t: number; ref: string; refT: number }[]; imports: { file: string; label?: string; source?: string; license?: string; provider: string }[] }>
     list(projectId: string): Promise<RenderRecord[]>
     start(projectId: string, opts: ExportOptions): Promise<string>
     cancel(projectId: string, renderId: string): Promise<void>
@@ -463,14 +516,6 @@ export interface StudioApi {
     artlistLoginDone(): Promise<void>
     /** 소재 > AI로 만들기: one image (characters are converted to SVG before it returns) */
     generate(projectId: string, req: GenRequest): Promise<GenCandidate>
-    /** AI 웹 수집: Claude looks the brand up on the web (progress through onCollect) */
-    collect(projectId: string, query: { brand: string; focus: string }): Promise<CollectResultInfo>
-    cancelCollect(): Promise<void>
-    collected(projectId: string): Promise<CollectResultInfo | null>
-    dropCollected(projectId: string, ids: string[]): Promise<CollectResultInfo | null>
-    /** the kept items → new assets, brand colours and brand notes for the brief (they leave the list) */
-    keepCollected(projectId: string, ids: string[]): Promise<{ assets: Asset[]; colors: { name: string; hex: string }[]; notes: string[]; left: CollectResultInfo | null }>
-    onCollect(cb: (e: { projectId: string; line: string }) => void): () => void
     /** a clip from a video model, optionally between a first and a last frame */
     generateVideo(projectId: string, req: VideoGenRequest): Promise<GenCandidate>
     candidates(projectId: string): Promise<GenCandidate[]>
@@ -486,27 +531,6 @@ export interface StudioApi {
   }
 }
 
-/** something AI 웹 수집 found (images are already downloaded into the project) */
-export interface CollectItem {
-  id: string
-  type: 'logo' | 'image' | 'color' | 'fact' | 'copy'
-  title: string
-  /** logo / image: the web address it came from, and the downloaded file (project-relative) */
-  url?: string
-  file?: string
-  hex?: string
-  text?: string
-  /** the page it was found on */
-  source?: string
-}
-
-export interface CollectResultInfo {
-  summary: string
-  items: CollectItem[]
-  at: string
-  query: { brand: string; focus: string }
-}
-
 export interface HelperContext {
   /** '이미지' | '영상' */
   media?: string
@@ -519,6 +543,8 @@ export interface HelperContext {
   prompt: string
   /** reference images picked for the generation (absolute paths, filled in by the main process) */
   references?: string[]
+  /** opened from a storyboard material: the scene and what it needs, and the video's aspect */
+  scene?: string
 }
 
 export interface HelperReply {

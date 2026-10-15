@@ -40,10 +40,16 @@ try {
   // ---- guide ----
   const dashed = () => win.locator('[data-capture-frame] div').evaluateAll((els) => els.some((e) => e.style.border.includes('dashed')))
   check('safe-zone guide starts hidden', !(await dashed()))
-  await win.getByTestId('guide-toggle').click()
-  check('guide button shows it', await dashed())
-  await win.getByTestId('guide-toggle').click()
+  // (0.5: a menu of platforms; picking one shows it, 가이드 끄기 hides it)
+  const guide = win.getByTestId('guide-toggle').locator('select')
+  const zone = (await win.evaluate((p) => window.studio.projects.list().then((l) => window.studio.projects.state(l.find((x) => x.path === p).id)), path)).brief.output.safeZone
+  await guide.selectOption(zone !== 'none' ? zone : 'shorts')
+  await win.waitForTimeout(600)
+  check('guide menu shows it', await dashed())
+  await guide.selectOption('off')
   check('and hides it again', !(await dashed()))
+  // the sandbox keeps its own setting
+  if (zone === 'none') await win.evaluate((p) => window.studio.projects.list().then((l) => window.studio.projects.saveOutput(l.find((x) => x.path === p).id, { safeZone: 'none' })), path)
 
   // ---- multi-select ----
   await win.locator('[data-layer="app-title"]').click()

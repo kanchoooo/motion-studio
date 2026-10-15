@@ -28,12 +28,20 @@ describe('staticFindings', () => {
     expect(codes).toContain('ms_fonts_css_missing')
   })
 
-  it('requires locked texts verbatim', () => {
+  it('since 0.5 only the video and the designer\'s work are errors: brief texts, assets and editability are not', () => {
     const b = { ...brief, texts: [{ id: '1', text: '※ 매장별 판매 시기가 다를 수 있습니다', locked: true, timing: { mode: 'any' as const }, minDuration: 1, position: 'any' as const, style: { mode: 'auto' as const }, note: '' }] }
-    const missing = staticFindings(page('<p data-ms-id="d" data-ms-label="고지">※ 매장별 판매 시기가 다를 수 있어요</p>'), b, emptyOverrides())
-    expect(missing.find((x) => x.code === 'ms_required_text')?.severity).toBe('error')
-    const ok = staticFindings(page('<p data-ms-id="d" data-ms-label="고지">※ 매장별 판매 시기가<br>다를 수 있습니다</p>'), b, emptyOverrides())
-    expect(ok.find((x) => x.code === 'ms_required_text')).toBeUndefined()
+    // no required-text check any more (planning happens in the conversation)
+    const f = staticFindings(page('<p>※ 매장별 판매 시기가 다를 수 있어요</p>'), b, emptyOverrides())
+    expect(f.find((x) => x.code === 'ms_required_text')).toBeUndefined()
+    // a video without any named layer yet is fine (the app's 편집 정리 names them afterwards)
+    expect(f.find((x) => x.code === 'ms_no_editables')?.severity).toBe('info')
+    expect(f.filter((x) => x.severity === 'error')).toEqual([])
+    // the app puts its head lines back itself: missing ones are only a note
+    const g = staticFindings(page('<h1>x</h1>', '<head><style>h1{}</style></head>'), b, emptyOverrides())
+    expect(g.find((x) => x.code === 'ms_script_missing')?.severity).toBe('info')
+    // CDN GSAP is pointed at the local copy: no network warning for it
+    const h = staticFindings(page('<h1>x</h1><script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>'), b, emptyOverrides())
+    expect(h.find((x) => x.code === 'ms_network_dependency')).toBeUndefined()
   })
 
   it('flags duplicate ids, missing labels, reference leaks, network deps and missing fonts', () => {
@@ -54,8 +62,8 @@ describe('staticFindings', () => {
       stale: ['title#2'],
     })
     const g = f.find((x) => x.code === 'ms_group_inner_not_editable')
-    // the app names them itself ("phone~…"), so the designer can edit them: a warning for Claude
-    expect(g?.severity).toBe('warning')
+    // the app names them itself ("phone~…"), so the designer can edit them: a note for Claude
+    expect(g?.severity).toBe('info')
     expect(g?.message).toContain('폰 목업')
     expect(g?.message).toContain('이미지 1개')
     expect(f.find((x) => x.code === 'ms_motion_edit_stale')?.severity).toBe('info')

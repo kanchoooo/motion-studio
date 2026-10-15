@@ -2,7 +2,6 @@
 //  - Artlist sign-in terminal opens from AI 연결 (also without a project) and /mcp lists artlist
 //  - a message sent while Claude works shows at once ("전달 대기"), then is delivered
 //  - the chat keeps the designer's scroll position while Claude adds messages
-//  - an applied brand preset can be removed again
 // MS_SANDBOX=<sandbox with the "앱 주문 런칭" project> node tests/e2e/feedback-021.mjs
 import { _electron as electron } from 'playwright-core'
 import { join, dirname } from 'node:path'
@@ -57,20 +56,8 @@ try {
   const browsers = await win.evaluate(() => window.studio.ai.browsers())
   log('sign-in browsers:', browsers.map((b) => `${b.name}${b.canPrivate ? '' : ' (no private window)'}`).join(', ') || '(none)')
 
-  // ---- brand preset can be removed again ----
-  await win.evaluate(async () => {
-    for (const b of await window.studio.brands.list()) if (b.name === '테스트 브랜드') await window.studio.brands.remove(b.id)
-    await window.studio.brands.save({ name: '테스트 브랜드', colors: [{ name: '메인', hex: '#FF7A2F' }], fonts: {}, notes: '' })
-  })
   await win.locator('.card').filter({ hasText: '앱 주문 런칭' }).first().click()
   await win.getByText('Claude와 대화').waitFor()
-  await win.locator('.drag .seg').getByRole('button', { name: '브리프' }).click()
-  await win.getByRole('button', { name: /톤앤매너/ }).click()
-  await win.locator('.card').filter({ hasText: '테스트 브랜드' }).getByRole('button', { name: '적용', exact: true }).click()
-  await win.getByText('적용됨: 테스트 브랜드').waitFor()
-  await win.locator('.card').filter({ hasText: '테스트 브랜드' }).getByRole('button', { name: '적용됨', exact: true }).click()
-  await win.waitForTimeout(500)
-  check('applied brand can be removed with a second click', !(await win.getByText('적용됨: 테스트 브랜드').count()))
 
   // ---- chat while Claude works ----
   await win.locator('.drag .seg').getByRole('button', { name: '편집' }).click()

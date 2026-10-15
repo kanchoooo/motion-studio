@@ -1,4 +1,4 @@
-// Reviews references, brand kits, timeline bars, compare, storage and partial restore
+// Reviews references (chat attachments), timeline bars, compare, storage and partial restore
 // on an existing project. Run: MS_SANDBOX=<dir> node tests/e2e/features.mjs
 import { grantAccess } from './access.mjs'
 import { _electron as electron } from 'playwright-core'
@@ -38,8 +38,7 @@ try {
     const yt = await win.evaluate((id) => window.studio.references.addYoutube(id, 'https://www.youtube.com/watch?v=jNQXAC9IVRw').then((r) => r.status, (e) => 'ERR ' + e.message), original.id)
     log('youtube add:', yt)
   }
-  await win.getByRole('button', { name: '브리프', exact: true }).click()
-  await win.getByRole('button', { name: /레퍼런스/ }).click()
+  // (0.5: attachments live in the chat; the brief has no reference page any more)
   for (let i = 0; i < 120; i++) {
     const refs = await win.evaluate((id) => window.studio.references.list(id), original.id)
     if (refs.every((r) => r.status === 'ready' || r.status === 'error')) {
@@ -49,11 +48,6 @@ try {
     await win.waitForTimeout(1000)
   }
   await shot('01-references')
-
-  // brand kit
-  await win.getByRole('button', { name: /톤앤매너/ }).click()
-  await win.waitForTimeout(800)
-  await shot('03-brand-applied')
 
   // timeline element bars
   await win.locator('.drag .seg').getByRole('button', { name: '편집' }).click()

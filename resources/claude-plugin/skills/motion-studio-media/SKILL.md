@@ -1,25 +1,33 @@
 ---
 name: motion-studio-media
 description: >
-  Motion Studio's media tools: generating images, video clips and narration (text-to-speech) with the designer's
-  Higgsfield / Magnific accounts or Codex (ai_status, ai_tools, ai_call, ai_import, codex_image), Artlist music and
-  sound-effect candidates (mcp__artlist__*, show_audio_candidates), and acting SVG characters (character_info,
-  character_tag, character_check, character_embed). Load before using any of them in Motion Studio.
+  Motion Studio's media tools: generating images, video clips (also from a start and an end frame) and narration
+  (text-to-speech) with the designer's Higgsfield / Magnific accounts or Codex (ai_status, ai_tools, ai_call,
+  codex_image, make_video, show_voice_candidates), music and sound effects (Artlist: mcp__artlist__*,
+  show_audio_candidates; built-in effects; free music via ai_import), and acting SVG characters (character_*).
+  Reference notes for using them in Motion Studio.
 ---
 
 # Motion Studio media
 
 ## AI generation (images, video clips, narration)
-- Only when it helps: a background, product scene, texture, b-roll clip, or narration the brief / storyboard asks for, or the designer requests in chat. Call ai_status first.
+- When it helps: a background, product scene, texture, b-roll clip or narration the plan needs, or the designer asks for. Call ai_status first.
 - Model choice: what the designer said in the chat wins; else the brief default (brief.ai); else pick a suitable model and say which one you used.
 - Codex CLI (images only): when the brief's image model is provider "codex" or the designer asks for Codex / GPT 이미지, use codex_image (it runs on the designer's own ChatGPT quota; ai_status shows whether it can be used now).
 - Use ai_tools(provider, filter) to learn the exact tool and parameters, then ai_call. Generation can take a while; if a tool returns a job id, use the service's status / wait tool through ai_call until the file is ready. Files come back as composition paths (assets/generated/…): use those paths, never remote URLs. Read generated images to check them before using.
 - It spends the designer's credits: one or two candidates, the right size / aspect for the canvas, no repeated retries without telling the designer.
-- Review first: every image or video clip you generate is shown to the designer in the chat as a card (버리기 / 소재함에 추가 / 적용). Unless the designer explicitly asked you to put it straight into the video, generate, Read it to check it, say in one Korean line what you made, and END YOUR TURN. Do not place it before they choose. When they apply it, their message tells you where (a selected element, or "알아서").
+- Every image or video clip you generate is also shown to the designer in the chat as a card (버리기 / 소재함에 추가 / 적용). Read images to check them. While planning, show what you made and let the designer react; while building an approved plan, use it where the plan needs it.
+- Video clips: make_video makes one clip in one call (motion prompt, optionally start_image / end_image made first with ai_call or codex_image). For a clip that matters, make the first and last frame images first so the look is under control; a simple clip can go straight from the prompt.
 - The designer's prompt for an image is theirs: when they give one, send it exactly as written (only add what the brief's style requires).
 - Video clips: <video data-ms-id … data-ms-type="video" id="…" src="assets/generated/…" muted playsinline data-start data-duration> (every media element needs an id).
-- Narration (TTS): use the brief voice (brief.ai.narration) or the one asked in chat; write the script in natural Korean unless given. Save each take, then place it as <audio id="…" data-ms-id="voice-…" data-ms-type="voice" data-ms-label="내레이션 · 첫 문장" src="assets/generated/…" data-start data-duration data-volume="1"> directly under the root, timed to the picture; lower BGM under narration.
+- Narration (TTS): decide the script, voice and pace with the designer in the conversation. List voices with the service's voice tool and call show_voice_candidates so the designer can listen and pick (their pick comes back as a message). Write the script in natural Korean unless given. Save each take, then place it as <audio id="…" data-ms-id="voice-…" data-ms-type="voice" data-ms-label="내레이션 · 첫 문장" src="assets/generated/…" data-start data-duration data-volume="1"> directly under the root, timed to the picture; lower BGM under narration.
 - A project made from a template may ask you to re-record a narration with "the same voice": call the same tool with the recorded settings (voice id etc.) and only the script changed.
+
+## Music and sound effects
+- With Artlist connected (ai_status → artlist enabled): search it first (below).
+- Without Artlist: the built-in sound effects (list_sound_effects / use_sound_effect), or free music and effects that allow commercial use WITHOUT attribution. Download the file with ai_import and give page_url and license — the designer sees them before export. Never use music that needs attribution, is non-commercial, or whose license you cannot name.
+  - Mixkit (Mixkit License: commercial use, no attribution) works best: its pages (e.g. https://mixkit.co/free-stock-music/tag/upbeat/, https://mixkit.co/free-sound-effects/whoosh/) list direct file links (https://assets.mixkit.co/music/<n>/<n>.mp3, …/sfx/<n>/<n>-preview.mp3) that ai_import downloads. Reading a page asks the designer first (WebFetch).
+  - Pixabay pages refuse automated reading (its file links work when you already have one); Freesound needs an account — skip both unless the designer gives you a file link.
 
 ## Artlist (when the designer turned it on and signed in)
 - Search with the mcp__artlist__* tools. When the designer asks for candidates ("후보 찾아줘", Sound panel search), call show_audio_candidates with preview_url (and download_url if offered) and end your turn; the designer auditions and picks.

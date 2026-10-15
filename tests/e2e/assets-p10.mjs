@@ -3,7 +3,7 @@
 //    only as 인물·캐릭터
 //  - 영상: video models need a Higgsfield / Magnific account (said so when there is none);
 //    an image candidate becomes the start / end frame from its card; the frames can be swapped
-//  - AI 웹 수집 is there, folded, with the brief's client as the brand
+//  - 시작·끝 프레임 먼저 shows the three steps (AI 웹 수집 is gone in 0.5)
 // MS_SANDBOX=<sandbox with the "앱 주문 런칭" project and some image candidates> node tests/e2e/assets-p10.mjs
 import { _electron as electron } from 'playwright-core'
 import { join, dirname } from 'node:path'
@@ -27,11 +27,10 @@ try {
   await toHome(win)
   await win.locator('.card').filter({ hasText: '앱 주문 런칭' }).first().click()
   await win.locator('.drag .seg').getByRole('button', { name: '브리프' }).click({ timeout: 30000 })
-  await win.getByRole('button', { name: /^소재/ }).first().click()
+  await win.getByTestId('brief-nav-assets').click()
   const gen = win.getByTestId('asset-generator')
   await gen.waitFor()
-  check('AI로 만들기 starts folded', (await win.getByTestId('gen-toggle').getAttribute('aria-expanded')) === 'false')
-  await win.getByTestId('gen-toggle').click()
+  check('AI로 만들기 is open in the 소재 panel', (await win.getByTestId('gen-toggle').getAttribute('aria-expanded')) === 'true')
 
   // ---- looks and kinds ----
   const style = gen.getByTestId('gen-style')
@@ -70,15 +69,11 @@ try {
   await gen.getByTestId('frame-start').scrollIntoViewIfNeeded()
   await win.screenshot({ path: join(shots, 'p10-video.png') })
 
-  // ---- web collection ----
-  const wc = win.getByTestId('web-collector')
-  await wc.scrollIntoViewIfNeeded()
-  check('AI 웹 수집 is there', await wc.isVisible())
-  if ((await win.getByTestId('collect-toggle').getAttribute('aria-expanded')) === 'false') await win.getByTestId('collect-toggle').click()
-  const brief = await win.evaluate(() => window.studio.projects.list())
-  check('brand starts as the brief client', (await win.getByTestId('collect-brand').inputValue()).length > 0, await win.getByTestId('collect-brand').inputValue())
-  await win.screenshot({ path: join(shots, 'p10-collect.png') })
-  void brief
+  // ---- 시작·끝 프레임 먼저: the three steps ----
+  await gen.getByRole('button', { name: '시작·끝 프레임 먼저' }).click()
+  check('frames first shows ① start ② end ③ clip', (await gen.getByTestId('frame-steps').isVisible()) && (await gen.getByTestId('start-make').isVisible()) && (await gen.getByTestId('end-make').isVisible()))
+  check('web collection is gone', (await win.getByTestId('web-collector').count()) === 0)
+  await win.screenshot({ path: join(shots, 'p10-frames-first.png') })
 } catch (e) {
   failed++
   console.log('✗', e.message)

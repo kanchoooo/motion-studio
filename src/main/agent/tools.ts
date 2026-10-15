@@ -1,14 +1,14 @@
 // Studio tools for Claude, served over local HTTP MCP (one endpoint per project).
 import { execFile } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import sharp from 'sharp'
-import { join } from 'node:path'
+import { isAbsolute, join, relative, resolve as resolvePath } from 'node:path'
 import { promisify } from 'node:util'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
-import type { Storyboard } from '@shared/api'
-import { AI_PROVIDERS, type AiConnectProvider, type AudioCandidateList } from '@shared/ai'
-import { describeTiming, SECTION_LABELS } from '@shared/brief'
+import type { Storyboard, StoryMaterial } from '@shared/api'
+import { AI_PROVIDERS, type AiConnectProvider, type AiVoiceInfo, type AudioCandidateList } from '@shared/ai'
+import { describeTiming } from '@shared/brief'
 import { directionForClaude } from '@shared/direction'
 import { activeAccount } from '../ai/accounts'
 import { codexImage, codexStatus } from '../ai/codex'
@@ -17,7 +17,7 @@ import { importUrl, saveResultMedia } from '../ai/media'
 import { aiSettings } from '../ai/settings'
 import { keptArgs, recordGenerated } from '../ai/generated'
 import { sfxLibrary, useBuiltinSfx } from '../audio'
-import { listReferences, nearDuplicates, referenceFramesAt } from '../references'
+import { listReferences, MAX_RANGE_FRAMES, rangeSheets, referenceFramesAt, referenceSource } from '../references'
 import { auditComposition } from '../audit'
 import { isKeyProp, PROPS, unsetStatic } from '@shared/overrides'
 import { mergeDesignerPatch } from '../designerEdits'
@@ -31,14 +31,19 @@ import * as projects from '../projects'
 import { characterParts, checkCharacterFolder, embedCharacter, readCharacter, tagCharacter } from '../character/convert'
 import { addWebFont, listWebFonts } from '../webfonts'
 import { layoutSnapshot, measureLayout } from '../editReady'
-import { storyboardMissing } from './gates'
-import { findTranscript } from './transcript'
+import { generateVideoCandidate } from '../ai/generateVideo'
+import { discardCandidate } from '../ai/generate'
+import { assignmentLines, readStoryboard, shootCells, writeStoryboard } from '../storyboard'
 
 const run = promisify(execFile)
 const text = (t: string) => ({ content: [{ type: 'text' as const, text: t }] })
 
 export interface ToolHooks {
   onStoryboard(projectId: string, sb: Storyboard): void
+  /** voices for a narration: the designer listens and picks one */
+  onVoices(projectId: string, card: { label?: string; script?: string; voices: AiVoiceInfo[] }): void
+  /** Claude starts building what the designer approved in the conversation: the editor opens */
+  onBuildStart(projectId: string): void
   onAudioCandidates(projectId: string, list: AudioCandidateList): void
   /** images / video clips Claude generated: shown to the designer to keep or discard */
   onGenerated(projectId: string, files: { file: string; kind: string }[], label?: string): void
@@ -63,8 +68,9 @@ function shotLengths(cuts: number[], duration: number): number[] {
   return marks.slice(1).map((t, i) => +(t - marks[i]).toFixed(2))
 }
 
-/** stretches where the picture changes a lot between 0.1 s frames (motion), strongest first */
-function movesOf(motion: number[]): { from: number; to: number; peak: number }[] {
+/** stretches where the picture changes a lot between frames `step` seconds apart (motion), strongest first */
+function movesOf(motion: number[], step = 0.1, from = 0): { from: number; to: number; peak: number }[] {
+  const t = (k: number) => +(from + k * step).toFixed(2)
   const sorted = [...motion].sort((a, b) => a - b)
   const median = sorted[Math.floor(sorted.length / 2)] ?? 0
   const on = Math.max(1.5, median * 2)
@@ -76,12 +82,12 @@ function movesOf(motion: number[]): { from: number; to: number; peak: number }[]
       if (start < 0) start = i
       peak = Math.max(peak, v)
     } else if (start >= 0) {
-      out.push({ from: +(start * 0.1).toFixed(1), to: +((i + 1) * 0.1).toFixed(1), peak })
+      out.push({ from: t(start), to: t(i + 1), peak })
       start = -1
       peak = 0
     }
   })
-  if (start >= 0) out.push({ from: +(start * 0.1).toFixed(1), to: +((motion.length + 1) * 0.1).toFixed(1), peak })
+  if (start >= 0) out.push({ from: t(start), to: t(motion.length + 1), peak })
   return out.sort((a, b) => b.peak - a.peak).slice(0, 24).sort((a, b) => a.from - b.from)
 }
 
@@ -92,59 +98,37 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
 
   server.registerTool(
     'get_brief',
-    { description: 'Read the project brief: output spec, required texts, advertiser assets (with sizes), tone & manner, the tempo and styles the designer chose (direction), and whether a video already exists.' },
+    { description: "The video's output spec (size, length, fps — set by the designer in the app), the designer's material library (소재함: files you may use), whether a video exists, and notes from an older brief if the project has one. Everything else is planned in conversation." },
     async () => {
       const { brief, hasVideo } = st()
+      const o = brief.output
+      const older = [
+        brief.tone.trim() ? `톤앤매너: ${brief.tone.trim()}` : '',
+        ...brief.texts.map((t) => `문구${t.locked ? '(글자 그대로)' : ''}: "${t.text}"${t.timing.mode !== 'any' ? ` · ${describeTiming(t.timing)}` : ''}${t.note ? ` · ${t.note}` : ''}`),
+        ...(directionForClaude(brief.tempo, brief.styles) ? [`템포·스타일: ${[directionForClaude(brief.tempo, brief.styles)!.tempo, ...(directionForClaude(brief.tempo, brief.styles)!.styles ?? [])].filter(Boolean).join(' / ')}`] : []),
+        ...brief.storyboard.map((s, i) => `디자이너 장면 ${i + 1}: ${[s.title, s.description, ...s.texts.map((t) => `"${t.text}"`)].filter(Boolean).join(' · ')}`),
+        brief.brand ? `브랜드: ${brief.brand.name} · 색 ${brief.brand.colors.map((c) => `${c.name} ${c.hex}`).join(', ') || '-'} · 글꼴 ${[brief.brand.fonts.headline, brief.brand.fonts.body].filter(Boolean).join(' / ') || '-'}` : '',
+        brief.ai.narration.enabled ? `내레이션: ${brief.ai.narration.voiceName ?? '목소리 미정'}${brief.ai.narration.script ? ` · 대본 "${brief.ai.narration.script}"` : ''}` : '',
+        o.background === 'color' ? `배경색: ${o.backgroundColor}` : o.background === 'transparent' ? '배경: 투명(투명 형식으로 내보냄)' : '',
+      ].filter(Boolean)
       return text(
         JSON.stringify(
           {
             hasVideo,
-            title: brief.title,
-            client: brief.client,
-            campaign: brief.campaign,
-            output: { ...brief.output, dataFpsAttribute: Math.round(brief.output.fps), fpsNote: 'Write data-fps as the integer dataFpsAttribute; the app renders at the exact rate (e.g. 29.97).' },
-            tone: brief.tone,
-            direction: directionForClaude(brief.tempo, brief.styles) ?? 'not set: choose the tempo and style yourself from the tone, the brand and your research',
-            background:
-              brief.output.background === 'auto'
-                ? 'AI 자율: design the background yourself (colour, gradient, texture, shapes or a generated image) to fit the tone and each scene.'
-                : brief.output.background === 'transparent'
-                  ? 'transparent'
-                  : `solid colour ${brief.output.backgroundColor}`,
-            storyboard: brief.storyboard.length
-              ? {
-                  note: 'The designer planned these scenes. Follow their order, timing (seconds; missing = you decide), copy and images. Texts with locked=true must appear verbatim. Images with mode "file" are files to use (required=true: must appear). Images with mode "describe" must be found among the assets or generated with AI (see ai_status; use the image\'s model if set, else the brief default).',
-                  totalSeconds: brief.storyboard.reduce((a, s) => a + (s.duration ?? 0), 0) || undefined,
-                  scenes: brief.storyboard.map((s, i) => ({ n: i + 1, ...s })),
-                }
-              : undefined,
-            ai: { ...brief.ai, note: 'Defaults for AI generation (null = you choose). What the designer asks in the chat always wins over these.' },
-            brand: brief.brand ? { ...brief.brand, note: 'Brand kit: use these colours and fonts as the base palette/typography.' } : undefined,
-            requiredTexts: brief.texts.map((t) => ({ ...t, timingLabel: describeTiming(t.timing) })),
-            assets: brief.assets.map((a) => ({
+            output: { width: o.width, height: o.height, duration: o.duration, fps: o.fps, dataFpsAttribute: Math.round(o.fps), fpsNote: 'Write data-fps as the integer dataFpsAttribute; the app renders at the exact rate (e.g. 29.97).', safeZone: o.safeZone !== 'none' ? o.safeZone : undefined },
+            library: brief.assets.map((a) => ({
               file: a.file,
-              originalName: a.originalName,
+              name: a.originalName,
               kind: a.kind,
-              required: a.required,
-              timing: a.timing,
-              timingLabel: describeTiming(a.timing),
-              position: a.position,
-              transform: a.transform,
-              note: a.note,
               size: a.meta.width ? `${a.meta.width}x${a.meta.height}` : undefined,
               duration: a.meta.duration,
+              note: a.note || undefined,
               generated: a.generated ? { prompt: a.generated.prompt, style: a.generated.style } : undefined,
               character: a.character
-                ? {
-                    folder: a.character.dir.replace(/^composition\//, ''),
-                    svg: a.character.status === 'done',
-                    shapes: a.character.shapes,
-                    tagged: !!a.character.tagged,
-                    note: 'An SVG character that can act part by part: load the skill svg-character-motion and use character_info / character_tag / character_check / character_embed.',
-                  }
+                ? { folder: a.character.dir.replace(/^composition\//, ''), svg: a.character.status === 'done', shapes: a.character.shapes, tagged: !!a.character.tagged, note: 'An SVG character that can act part by part: skill svg-character-motion, tools character_*.' }
                 : undefined,
             })),
-            sections: SECTION_LABELS,
+            olderBrief: older.length ? { note: 'Written in an older version of the app, before planning moved into the conversation: background for you, not rules.', lines: older } : undefined,
           },
           null,
           1,
@@ -297,14 +281,25 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
     },
   )
 
+  const MATERIAL = z.object({
+    id: z.string().optional().describe('stable id within the storyboard, e.g. "s2-product"'),
+    kind: z.enum(['image', 'video']),
+    label: z.string().describe('what it is, in Korean'),
+    prompt: z.string().optional().describe('image: the image prompt · video: the motion prompt'),
+    start_prompt: z.string().optional().describe('video clips that matter: prompt for the first frame image'),
+    end_prompt: z.string().optional().describe('video clips that matter: prompt for the last frame image'),
+    file: z.string().optional().describe('a file already in the library (assets/…) when one fits'),
+  })
   server.registerTool(
-    'propose_storyboard',
+    'show_storyboard',
     {
-      description: 'Show a storyboard (콘티) to the designer for approval. After calling this, END YOUR TURN and wait.',
+      description:
+        'Show a storyboard (콘티) to the designer as a card in the chat and in the app\'s storyboard panel. Sketch composition/storyboard.html first — one cell per scene with id="frame-NN" (frame-01 …) at the video\'s aspect ratio, real fonts, colours and copy, image/video spots as plain labelled boxes — the app photographs each cell. List per scene the materials it needs (images, video clips with their prompts); the designer can assign files, generate them in the 소재 panel, or leave them to you, then approves with 제작 승인. Showing it again replaces the card (assignments with the same id or label are kept).',
       inputSchema: {
         title: z.string(),
         concept: z.string().describe('one or two sentences in Korean: the idea and mood'),
         duration: z.number(),
+        html: z.string().default('storyboard.html').describe('the sketch file inside composition/'),
         scenes: z
           .array(
             z.object({
@@ -312,9 +307,9 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
               to: z.number(),
               title: z.string(),
               description: z.string().describe('what we see, in Korean'),
-              texts: z.array(z.string()).describe('on-screen copy in this scene'),
-              assets: z.array(z.string()).describe('asset files used, e.g. assets/logo.png'),
-              motion: z.string().describe('motion / transition idea in Korean'),
+              texts: z.array(z.string()).default([]).describe('on-screen copy in this scene'),
+              motion: z.string().default('').describe('motion / transition idea in Korean'),
+              materials: z.array(MATERIAL).default([]),
             }),
           )
           .min(1),
@@ -322,42 +317,88 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
       },
     },
     async (sb) => {
-      // a new video's plan comes from the workflow's references and its own design / storyboard files
-      const sid = projects.state(projectId).meta.agentSessionId
-      const missing = storyboardMissing(join(dir(), 'composition'), sid ? findTranscript(sid) : null)
-      if (missing.length)
-        return {
-          isError: true,
-          content: [{ type: 'text' as const, text: ['아직 콘티를 보여 주지 않았어요. general-video 방식으로 먼저 기획한 뒤 propose_storyboard를 다시 부르세요:', ...missing.map((m, i) => `${i + 1}. ${m}`), '콘티는 STORYBOARD.md를 장면마다 그대로 옮기고, 모션 줄에는 인용한 처리를 쉬운 한국어 디자인 말로 적어요. 이 안내는 디자이너에게 말하지 말고 한국어 메모로 계속하세요.'].join('\n') }],
-        }
-      hooks.onStoryboard(projectId, { ...sb, scenes: sb.scenes.map((s, i) => ({ ...s, n: i + 1 })) })
-      return text('콘티를 디자이너에게 보여줬어요. 이번 턴을 여기서 끝내고 승인이나 수정 요청을 기다리세요.')
+      const shots = await shootCells(dir(), sb.html)
+      const storyboard: Storyboard = {
+        title: sb.title,
+        concept: sb.concept,
+        duration: sb.duration,
+        notes: sb.notes,
+        scenes: sb.scenes.map((s, i) => ({
+          n: i + 1,
+          from: s.from,
+          to: s.to,
+          title: s.title,
+          description: s.description,
+          texts: s.texts,
+          motion: s.motion,
+          assets: s.materials.flatMap((m) => (m.file ? [m.file] : [])),
+          frame: shots[i + 1],
+          materials: s.materials.map((m): StoryMaterial => ({ id: m.id ?? '', kind: m.kind, label: m.label, prompt: m.prompt, startPrompt: m.start_prompt, endPrompt: m.end_prompt, file: m.file })),
+        })),
+      }
+      hooks.onStoryboard(projectId, storyboard)
+      const pictured = Object.keys(shots).length
+      return text(
+        `콘티를 디자이너에게 보여줬어요 (장면 ${storyboard.scenes.length}개, 시안 그림 ${pictured}장${pictured ? '' : ' — storyboard.html에 id="frame-NN" 칸이 없거나 열리지 않아 글로만 보여요'}). 디자이너가 소재 칸을 채우거나 의견을 줘요. 대화로 제작을 승인하면(제작해줘·진행해 등) start_build를 부르고 만드세요. 이번 턴은 여기서 마무리하세요.`,
+      )
+    },
+  )
+
+  server.registerTool(
+    'start_build',
+    {
+      description:
+        'Call this when the designer agrees to build in the conversation ("제작해줘", "승인", "진행해", "이대로 만들어 줘", "좋아요 시작해요" …), right before you start writing the video. Returns the storyboard\'s materials with the files the designer assigned (empty ones are yours to make or generate), marks the storyboard approved and opens the editor, where the designer watches you build. Not needed for later changes to a finished video.',
+    },
+    async () => {
+      const cur = readStoryboard(dir())
+      if (cur) writeStoryboard(dir(), { ...cur, status: 'approved', changed: undefined })
+      hooks.onBuildStart(projectId)
+      if (!cur) return text('콘티 없이 대화에서 정한 기획대로 만드세요. 디자이너에게 편집 화면이 열렸어요.')
+      return text(
+        [`승인한 콘티: ${cur.storyboard.title} — ${cur.storyboard.concept}`, '', '장면별 소재:', ...(assignmentLines(cur.storyboard).length ? assignmentLines(cur.storyboard) : ['- (소재 칸 없음)']), '', '이 콘티대로 만드세요. 비어 있는 소재는 직접 만들거나 생성해서 채워요. 디자이너에게 편집 화면이 열렸어요.'].join('\n'),
+      )
+    },
+  )
+
+  server.registerTool(
+    'get_storyboard',
+    { description: 'The storyboard the designer is working with: scenes, the materials each scene needs, the files the designer assigned to them, and whether it was approved.' },
+    async () => {
+      const cur = readStoryboard(dir())
+      if (!cur) return text('아직 콘티가 없어요.')
+      return text(JSON.stringify({ status: cur.status, title: cur.storyboard.title, concept: cur.storyboard.concept, duration: cur.storyboard.duration, scenes: cur.storyboard.scenes.map((s) => ({ n: s.n, from: s.from, to: s.to, title: s.title, description: s.description, texts: s.texts, motion: s.motion, materials: s.materials })) }, null, 1))
     },
   )
 
   server.registerTool(
     'get_references',
-    { description: 'List the reference videos/images the designer attached: title, note, ranges to focus on, keyframes, and for videos the MOTION SHEETS — the whole video every 0.1 s, 20 frames (2 s) per sheet with seconds under each frame (project-relative jpgs to open with Read) — plus scene cuts, shot lengths and the moments where the picture moves most.' },
+    { description: "The images, videos and YouTube links the designer attached in the chat (references/<id>): kind, title, size, the part they chose, keyframes at scene cuts, an overview of each video (frames every sheetStep seconds, 20 per sheet with seconds under each frame — project-relative jpgs to open with Read), cuts, shot lengths and where the picture moves most. Study a part closely with look_at_reference." },
     async () => {
       const refs = listReferences(dir())
-      if (!refs.length) return text('레퍼런스가 없어요.')
+      if (!refs.length) return text('첨부가 없어요.')
       return text(
         JSON.stringify(
-          refs.map((r) => ({
-            id: r.id,
-            kind: r.kind,
-            title: r.title,
-            status: r.status,
-            note: r.note || undefined,
-            focusRanges: r.ranges.length ? r.ranges : 'none — find 2-3 kick points yourself',
-            duration: r.meta?.duration,
-            size: r.meta?.width ? `${r.meta.width}x${r.meta.height}` : undefined,
-            keyframes: r.frames?.map((f) => ({ t: f.t, file: f.file })),
-            motionSheets: r.sheets?.length ? { every: '0.1s', perSheet: '2s (20 frames, 5×4, read left→right, top→bottom)', sheets: r.sheets } : undefined,
-            cuts: r.cuts?.length ? r.cuts : undefined,
-            shotLengths: r.cuts?.length ? shotLengths(r.cuts, r.meta?.duration ?? 0) : undefined,
-            moves: r.motion?.length ? movesOf(r.motion) : undefined,
-          })),
+          refs.map((r) => {
+            const step = r.sheetStep ?? 0.1
+            return {
+              id: r.id,
+              kind: r.kind,
+              title: r.title,
+              status: r.status,
+              file: r.kind === 'image' ? r.file : undefined,
+              note: r.note || undefined,
+              ranges: r.ranges.length ? r.ranges : undefined,
+              duration: r.meta?.duration,
+              size: r.meta?.width ? `${r.meta.width}x${r.meta.height}` : undefined,
+              keyframes: r.kind === 'image' ? undefined : r.frames?.map((f) => ({ t: f.t, file: f.file })),
+              overview: r.sheets?.length ? { every: `${step}s`, perSheet: '20 frames, 5×4, read left→right, top→bottom', sheets: r.sheets } : undefined,
+              cuts: r.cuts?.length ? r.cuts : undefined,
+              shotLengths: r.cuts?.length ? shotLengths(r.cuts, r.meta?.duration ?? 0) : undefined,
+              moves: r.motion?.length ? movesOf(r.motion, step) : undefined,
+              useInVideo: r.kind === 'youtube' ? 'reference only (YouTube)' : 'use_as_material copies it into the library when the designer wants it in the video',
+            }
+          }),
           null,
           1,
         ),
@@ -368,18 +409,50 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
   server.registerTool(
     'look_at_reference',
     {
-      description: 'See frames of a reference at the given seconds (max 8). Use it to study motion, rhythm and transitions around a moment.',
-      inputSchema: { id: z.string(), times: z.array(z.number().min(0)).min(1).max(8) },
+      description: `Look closely at a reference video. With from/to: frames from \`from\` to \`to\` seconds, one every \`every\` seconds (default 0.1 — read a motion: how far things travel per frame, easing, staggers, holds), as sheets of 20 with the second under each frame (at most ${MAX_RANGE_FRAMES} frames per call). With times: single large frames at those seconds (max 8).`,
+      inputSchema: {
+        id: z.string(),
+        from: z.number().min(0).optional(),
+        to: z.number().min(0).optional(),
+        every: z.number().min(0.04).max(5).optional(),
+        times: z.array(z.number().min(0)).min(1).max(8).optional(),
+      },
     },
-    async ({ id, times }) => {
-      const frames = await referenceFramesAt(dir(), id, times)
-      if (!frames.length) return text('그 레퍼런스를 찾지 못했어요.')
+    async ({ id, from, to, every, times }) => {
       const content: ({ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string })[] = []
+      if (from != null && to != null) {
+        const r = await rangeSheets(dir(), id, from, to, every ?? 0.1)
+        content.push({ type: 'text', text: `${r.from}~${r.to}초, ${r.step}초 간격 ${r.sheets.length}장${r.clipped ? ` (한 번에 ${MAX_RANGE_FRAMES}프레임까지라 ${r.to}초에서 끊었어요 — 나머지는 다시 부르세요)` : ''}. 움직임이 큰 곳: ${JSON.stringify(movesOf(r.motion, r.step, r.from).slice(0, 8))}` })
+        for (const sh of r.sheets.slice(0, 4)) {
+          content.push({ type: 'text', text: `${sh.from}~${sh.to}초 (${sh.file})` })
+          content.push({ type: 'image', data: readFileSync(join(dir(), sh.file)).toString('base64'), mimeType: 'image/jpeg' })
+        }
+        if (r.sheets.length > 4) content.push({ type: 'text', text: `나머지 시트는 Read로 열어 보세요: ${r.sheets.slice(4).map((x) => x.file).join(', ')}` })
+        return { content }
+      }
+      const frames = await referenceFramesAt(dir(), id, times ?? [from ?? 0])
+      if (!frames.length) return text('그 레퍼런스를 찾지 못했어요.')
       for (const f of frames) {
         content.push({ type: 'text', text: `${f.t}초` })
         content.push({ type: 'image', data: readFileSync(f.file).toString('base64'), mimeType: 'image/jpeg' })
       }
       return { content }
+    },
+  )
+
+  server.registerTool(
+    'use_as_material',
+    {
+      description: "Copy an attachment (an image or video the designer attached in the chat) into the material library (composition/assets) to use it in the video. Returns its composition path. YouTube videos are reference-only.",
+      inputSchema: { id: z.string(), name: z.string().optional().describe('a short Korean name for the library') },
+    },
+    async ({ id, name }) => {
+      const { path, item } = referenceSource(dir(), id)
+      const { added } = await projects.addToLibrary(projectId, [path])
+      if (!added.length) return text('이 파일은 소재로 넣을 수 없는 형식이에요.')
+      const a = { ...added[0], originalName: name || item.title || added[0].originalName }
+      projects.replaceAsset(projectId, added[0].id, a)
+      return text(`소재함에 넣었어요: ${a.file} (${a.meta.width ? `${a.meta.width}x${a.meta.height}` : ''}${a.meta.duration ? ` ${a.meta.duration.toFixed(1)}s` : ''}). 영상에서는 이 경로를 쓰세요.`)
     },
   )
 
@@ -430,7 +503,7 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
 
   server.registerTool(
     'check_video',
-    { description: 'Run HyperFrames checks plus Motion Studio rules and brief compliance on composition/. Fix all errors.' },
+    { description: 'Run HyperFrames checks plus the app\'s checks (size and length, fonts, ids, the designer\'s locked layers) on composition/. Errors break the video or the designer\'s work; info lines are notes.' },
     async () => {
       projects.refreshFontCss(dir())
       const { brief, overrides, hasVideo } = st()
@@ -438,16 +511,6 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
       const audit = hasVideo ? await auditComposition(dir(), brief.output) : null
       const elements = audit ? audit.elements : lastElements.get(projectId)
       const findings = await fullCheck(dir(), brief, overrides, elements, true, audit ?? undefined)
-      // near-identical frames vs. references (inspiration is fine, copies are not)
-      if (listReferences(dir()).some((r) => r.status === 'ready')) {
-        const d = brief.output.duration
-        const times = [0.15, 0.3, 0.45, 0.6, 0.75, 0.9].map((k) => +(d * k).toFixed(2))
-        const frames = await snapshot(join(dir(), 'composition'), times, join(dir(), '.cache', 'similarity')).catch(() => [])
-        const hits = await nearDuplicates(dir(), frames.map((file, i) => ({ t: times[i], file }))).catch(() => [])
-        for (const h of hits) {
-          findings.push({ severity: 'error', code: 'ms_reference_copy', message: `${h.t}초 화면이 레퍼런스 "${h.ref}"의 ${h.refT}초 장면과 거의 똑같아요. 참고는 좋지만 그대로 베끼면 안 돼요 — 레이아웃·그래픽·카피를 브랜드에 맞게 새로 구성해 주세요.`, time: h.t })
-        }
-      }
       if (!findings.length) return text('통과: 문제가 없어요.')
       const order = { error: 0, warning: 1, info: 2 }
       findings.sort((a, b) => order[a.severity] - order[b.severity])
@@ -594,7 +657,7 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
     'measure_layout',
     {
       description:
-        "편집 준비 (last step): every editable element's box relative to its PARENT element at second `at`, read with transforms switched off — the layout your CSS produces. Use these numbers to place each element with position:absolute; left/top/width/height (and make the parent position:relative/absolute with its parentSize if it was sized by its content), so nothing moves. inFlow=true marks the ones still placed by flex/grid/flow.",
+        "Every named element's box (data-ms-id) relative to its PARENT element at second `at`, read with transforms switched off — the layout your CSS produces. inFlow=true marks the ones placed by flex/grid/flow. Only needed if you choose to convert a layout to absolute positions yourself (the app sets groups free when the designer moves them).",
       inputSchema: { at: z.number().min(0).optional().describe('seconds (default: the middle of the video)') },
     },
     async ({ at }) => {
@@ -608,7 +671,7 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
     'layout_snapshot',
     {
       description:
-        "편집 준비 check: call with label 'before' BEFORE changing the layout to absolute (photographs moments of the video), then with label 'after' when done: it photographs the same moments and reports how many pixels changed per moment (aim for ≈0%; a changed moment comes with a red-marked image you can Read).",
+        "Before / after check of a change that must not alter the picture: call with label 'before' first (photographs moments of the video), then with label 'after' when done — it photographs the same moments and reports how many pixels changed per moment (a changed moment comes with a red-marked image you can Read).",
       inputSchema: { label: z.enum(['before', 'after']), times: z.array(z.number().min(0)).max(16).optional() },
     },
     async ({ label, times }) => {
@@ -646,7 +709,9 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
     },
     async ({ prompt, ratio, references, label }) => {
       const work = join(dir(), '.studio', 'codex', `${Date.now()}`)
-      const made = await codexImage({ prompt, ratio, references: references.map((r) => join(dir(), 'composition', r)), workDir: work })
+      // only pictures inside the composition go to Codex
+      const refs = references.map((r) => resolvePath(dir(), 'composition', r)).filter((f) => !relative(join(dir(), 'composition'), f).startsWith('..') && /\.(png|jpe?g|webp)$/i.test(f) && existsSync(f))
+      const made = await codexImage({ prompt, ratio, references: refs, workDir: work })
       const name = `codex-${Date.now().toString(36)}.png`
       mkdirSync(join(dir(), 'composition', 'assets', 'generated'), { recursive: true })
       const meta = await sharp(made).rotate().png().toFile(join(dir(), 'composition', 'assets', 'generated', name))
@@ -655,6 +720,61 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
       recordGenerated(dir(), [{ file, kind: 'image', provider: 'codex', tool: 'image_gen', label: label ?? prompt.slice(0, 80) }])
       hooks.onGenerated(projectId, [{ file, kind: 'image' }], label)
       return text(`Saved: ${file} (${meta.width}x${meta.height}). Read it to check it. It is shown to the designer as a card; unless they asked you to place it straight away, say in one Korean line what you made and end your turn.`)
+    },
+  )
+
+  server.registerTool(
+    'make_video',
+    {
+      description:
+        "Make one video clip with the designer's Higgsfield / Magnific account in one call: a motion prompt, optionally from a start frame to an end frame (composition paths of images, e.g. assets/generated/… made first with ai_call or codex_image). The app picks the right parameters for the model. The clip is saved into composition/assets/generated/ and shown to the designer as a card. Takes a few minutes; spends credits.",
+      inputSchema: {
+        prompt: z.string().describe('the motion: camera, action and order, pace, mood'),
+        start_image: z.string().optional(),
+        end_image: z.string().optional().describe('only models that take an end frame (e.g. Kling); needs start_image'),
+        duration: z.number().min(1).max(20).default(5),
+        ratio: z.enum(['16:9', '9:16', '1:1']).optional(),
+        provider: PROVIDER.optional(),
+        model: z.string().optional().describe('model id / slug (ai_tools lists them); empty = the brief default or the service default'),
+        label: z.string().optional().describe('short Korean description (shown on the card)'),
+      },
+    },
+    async ({ prompt, start_image, end_image, duration, ratio, provider, model, label }) => {
+      if (end_image && !start_image) return text('끝 프레임을 쓰려면 시작 프레임도 주세요.')
+      const frame = (f?: string) => (f ? (f.startsWith('composition/') || f.startsWith('.studio/') ? f : `composition/${f.replace(/^\.\//, '')}`) : undefined)
+      for (const f of [start_image, end_image]) {
+        if (!f) continue
+        // only an image inside the project goes to the service
+        const abs = resolvePath(dir(), frame(f)!)
+        const rel = relative(dir(), abs)
+        if (rel.startsWith('..') || isAbsolute(rel) || !/\.(png|jpe?g|webp)$/i.test(rel)) return text(`프로젝트 안의 이미지(png·jpg·webp)만 프레임으로 쓸 수 있어요: ${f}`)
+        if (!existsSync(abs)) return text(`이미지를 찾지 못했어요: ${f}`)
+      }
+      const { brief } = st()
+      const connected = connectedProviders().filter((p) => p === 'higgsfield' || p === 'magnific') as ('higgsfield' | 'magnific')[]
+      const def = brief.ai.video && (brief.ai.video.provider === 'higgsfield' || brief.ai.video.provider === 'magnific') ? brief.ai.video : null
+      const p = provider ?? def?.provider ?? connected[0]
+      if (!p || !connected.includes(p as never)) return text('영상을 만들 서비스(힉스필드·매그니픽)가 연결돼 있지 않아요. 디자이너에게 AI 연결을 부탁하세요.')
+      const o = brief.output
+      const c = await generateVideoCandidate(dir(), {
+        provider: p as 'higgsfield' | 'magnific',
+        model: model ?? (def?.provider === p ? def.model : ''),
+        modelLabel: model ?? (def?.provider === p ? def.label : undefined),
+        lang: 'en',
+        prompt,
+        ratio: ratio ?? (o.width > o.height * 1.2 ? '16:9' : o.height > o.width * 1.2 ? '9:16' : '1:1'),
+        duration,
+        start: frame(start_image),
+        end: frame(end_image),
+      })
+      const name = `video-${Date.now().toString(36)}.mp4`
+      mkdirSync(join(dir(), 'composition', 'assets', 'generated'), { recursive: true })
+      copyFileSync(join(dir(), c.file), join(dir(), 'composition', 'assets', 'generated', name))
+      discardCandidate(dir(), c.id)
+      const file = `assets/generated/${name}`
+      recordGenerated(dir(), [{ file, kind: 'video', provider: p, tool: 'make_video', label: label ?? prompt.slice(0, 80) }])
+      hooks.onGenerated(projectId, [{ file, kind: 'video' }], label)
+      return text(`Saved: ${file}${c.video?.duration ? ` (${c.video.duration.toFixed(1)}s)` : ''}. It is shown to the designer as a card.`)
     },
   )
 
@@ -708,13 +828,14 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
   server.registerTool(
     'ai_import',
     {
-      description: 'Download one media URL (an image, video or audio file, e.g. a track or sound effect found with the Artlist tools) into composition/assets/generated/ and return its composition path.',
-      inputSchema: { url: z.string().url(), label: z.string().optional(), source: z.string().default('import') },
+      description:
+        'Download one media URL (an image, video or audio file — a track or sound effect found on Artlist or a free music site) into composition/assets/generated/ and return its composition path. For anything not made by the designer\'s own AI accounts give page_url (where it was found) and license (e.g. "Pixabay Content License", "CC0", "Artlist"): it is shown to the designer before export. Free music must allow commercial use without attribution.',
+      inputSchema: { url: z.string().url(), label: z.string().optional(), source: z.string().default('import'), page_url: z.string().optional(), license: z.string().optional() },
     },
-    async ({ url, label, source }) => {
+    async ({ url, label, source, page_url, license }) => {
       const m = await importUrl(join(dir(), 'composition'), url, source.replace(/[^a-z0-9-]/gi, '').slice(0, 20) || 'import')
-      recordGenerated(dir(), [{ file: m.file, kind: m.kind, provider: source, tool: 'import', label }])
-      return text(`Saved: ${m.file} (${m.kind}, ${Math.round(m.bytes / 1024)}KB)`)
+      recordGenerated(dir(), [{ file: m.file, kind: m.kind, provider: source, tool: 'import', label, source: page_url ?? url, license }])
+      return text(`Saved: ${m.file} (${m.kind}, ${Math.round(m.bytes / 1024)}KB)${license ? '' : ' — 출처·라이선스를 모르면 디자이너에게 알려 주세요.'}`)
     },
   )
 
@@ -765,7 +886,7 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
       // the brief remembers that this character is tagged
       const { brief } = st()
       const mine = (x: (typeof brief.assets)[number]) => x.character?.dir === `composition/${f.rel}`
-      if (brief.assets.some(mine)) await projects.saveBrief(projectId, { ...brief, assets: brief.assets.map((x) => (mine(x) && x.character ? { ...x, character: { ...x.character, tagged: true } } : x)) })
+      for (const x of brief.assets.filter((a) => mine(a) && a.character)) projects.replaceAsset(projectId, x.id, { ...x, character: { ...x.character!, tagged: true } })
       return text(JSON.stringify({ report: r.report, differencePct: r.diffPct, ok: r.diffPct <= 0.1, parts: characterParts(f.abs), next: 'Run character_check before character_embed.' }, null, 1))
     },
   )
@@ -848,6 +969,41 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
     },
   )
 
+  server.registerTool(
+    'show_voice_candidates',
+    {
+      description:
+        "Show narration voices to the designer as a card in the chat: they listen (preview_url) and pick one; their pick comes back as a message. Get voices with the service's voice list (ai_call: Higgsfield list_voices / Magnific audio_voices_list).",
+      inputSchema: {
+        label: z.string().optional().describe('what the narration is for, in Korean'),
+        script: z.string().optional().describe('the narration script so far'),
+        voices: z
+          .array(
+            z.object({
+              provider: PROVIDER,
+              id: z.string(),
+              name: z.string(),
+              description: z.string().optional(),
+              gender: z.string().optional(),
+              preview_url: z.string().optional(),
+              voice_type: z.string().optional(),
+              source: z.string().optional(),
+            }),
+          )
+          .min(1)
+          .max(12),
+      },
+    },
+    async ({ label, script, voices }) => {
+      hooks.onVoices(projectId, {
+        label,
+        script,
+        voices: voices.map((v) => ({ provider: v.provider, id: v.id, name: v.name, description: v.description, gender: v.gender, previewUrl: v.preview_url, voiceType: v.voice_type, source: v.source })),
+      })
+      return text('목소리 후보를 디자이너에게 보여줬어요. 들어 보고 고르면 메시지로 알려 줘요. 이번 턴은 여기서 마무리하세요.')
+    },
+  )
+
   return server
 }
 
@@ -857,12 +1013,18 @@ export const STUDIO_TOOL_LABELS: Record<string, string> = {
   mcp__studio__clear_designer_edits: '직접 수정한 레이어를 넘겨받고 있어요',
   mcp__studio__update_designer_edits: '직접 수정한 값을 고치고 있어요',
   mcp__studio__get_fonts: '사용할 수 있는 폰트를 살펴보고 있어요',
-  mcp__studio__propose_storyboard: '콘티를 정리하고 있어요',
+  mcp__studio__show_storyboard: '콘티를 정리하고 있어요',
+  mcp__studio__get_storyboard: '콘티를 확인하고 있어요',
+  mcp__studio__start_build: '제작을 시작하고 있어요',
+  mcp__studio__use_as_material: '첨부를 소재함에 넣고 있어요',
+  mcp__studio__make_video: 'AI로 영상을 만들고 있어요',
+  mcp__studio__show_voice_candidates: '목소리 후보를 정리하고 있어요',
+  mcp__studio__codex_image: 'AI로 이미지를 만들고 있어요',
   mcp__studio__check_video: '결과를 점검하고 있어요',
   mcp__studio__get_history: '작업 이력을 살펴보고 있어요',
   mcp__studio__list_sound_effects: '효과음을 고르고 있어요',
-  mcp__studio__get_references: '레퍼런스를 살펴보고 있어요',
-  mcp__studio__look_at_reference: '레퍼런스 장면을 보고 있어요',
+  mcp__studio__get_references: '첨부를 살펴보고 있어요',
+  mcp__studio__look_at_reference: '첨부 영상을 자세히 보고 있어요',
   mcp__studio__use_sound_effect: '효과음을 넣고 있어요',
   mcp__studio__get_version: '이전 버전을 살펴보고 있어요',
   mcp__studio__look_at_frames: '장면을 직접 확인하고 있어요',
@@ -879,12 +1041,12 @@ export const STUDIO_TOOL_LABELS: Record<string, string> = {
   Glob: '자료를 살펴보고 있어요',
   Grep: '자료를 살펴보고 있어요',
   Skill: '제작 가이드를 참고하고 있어요',
-  Agent: '검수·제작을 따로 맡기고 있어요',
-  Task: '검수·제작을 따로 맡기고 있어요',
-  WebSearch: '비슷한 광고를 찾아보고 있어요',
+  Agent: '일을 나눠 맡기고 있어요',
+  Task: '일을 나눠 맡기고 있어요',
+  WebSearch: '웹에서 찾아보고 있어요',
   WebFetch: '웹 자료를 읽고 있어요',
-  mcp__studio__layout_snapshot: '편집 준비를 하고 있어요',
-  mcp__studio__measure_layout: '편집 준비를 하고 있어요',
+  mcp__studio__layout_snapshot: '화면을 비교하고 있어요',
+  mcp__studio__measure_layout: '배치를 재고 있어요',
   mcp__studio__character_info: '캐릭터를 살펴보고 있어요',
   mcp__studio__character_tag: '캐릭터를 부위별로 나누고 있어요',
   mcp__studio__character_check: '캐릭터 움직임을 점검하고 있어요',

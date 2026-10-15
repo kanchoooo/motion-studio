@@ -1,17 +1,16 @@
-// "편집 준비" — the last step of building a video. Claude designs freely (flex, grid,
-// transforms), then turns every editable element into an absolutely placed one so the
-// designer can move / scale / rotate each on its own. Two helpers make that exact:
-//  - measureLayout: each editable element's box relative to its parent element, read
-//    with transforms switched off (the layout the CSS produces, not a moment of a move)
-//  - layoutSnapshot: frames at the same moments before and after the change, compared
-//    pixel by pixel, so a conversion that shifts anything is caught.
+// Layout measuring and before/after photographs of the composition as the editor shows it:
+//  - measureLayout: each named element's box relative to its parent element, read with
+//    transforms switched off (the layout the CSS produces, not a moment of a move)
+//  - layoutSnapshot: frames at the same moments before and after a change, compared pixel by
+//    pixel, so a change that shifts anything is caught (Claude's tool, and the app's 편집 정리)
 import { BrowserWindow } from 'electron'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import sharp from 'sharp'
 import { serveFolder } from './preview-server'
 
-async function open(projectDir: string, size: { width: number; height: number }) {
+/** the composition as the editor shows it (runtime, designer edits), in a hidden window */
+export async function openComposition(projectDir: string, size: { width: number; height: number }) {
   const win = new BrowserWindow({
     show: false,
     width: size.width,
@@ -57,7 +56,7 @@ export interface MeasuredBox {
 
 /** every editable element's box relative to its parent, at time `at`, transforms off */
 export async function measureLayout(projectDir: string, size: { width: number; height: number }, at: number): Promise<MeasuredBox[]> {
-  const h = await open(projectDir, size)
+  const h = await openComposition(projectDir, size)
   try {
     await h.seek(at)
     return await h.js<MeasuredBox[]>(`(() => {
@@ -98,7 +97,7 @@ export async function measureLayout(projectDir: string, size: { width: number; h
   }
 }
 
-const checkDir = (projectDir: string) => join(projectDir, '.studio', 'layout-check')
+const checkDir = (projectDir: string, set = 'layout-check') => join(projectDir, '.studio', set)
 
 /**
  * label 'before': photographs the moments and keeps them. label 'after': photographs the
@@ -110,15 +109,17 @@ export async function layoutSnapshot(
   size: { width: number; height: number; duration: number },
   label: 'before' | 'after',
   times?: number[],
+  /** another folder for the same comparison (the app's 편집 정리 check runs beside Claude's own) */
+  set = 'layout-check',
 ): Promise<{ times: number[]; results?: { t: number; changedPct: number; diff?: string }[] }> {
-  const dir = checkDir(projectDir)
+  const dir = checkDir(projectDir, set)
   mkdirSync(dir, { recursive: true })
   const metaFile = join(dir, 'times.json')
   const ts =
     label === 'after' && existsSync(metaFile)
       ? (JSON.parse(readFileSync(metaFile, 'utf8')) as number[])
       : (times?.length ? times : Array.from({ length: 8 }, (_, i) => +(((i + 0.5) * size.duration) / 8).toFixed(2))).slice(0, 16)
-  const h = await open(projectDir, size)
+  const h = await openComposition(projectDir, size)
   const shots: Buffer[] = []
   try {
     for (const t of ts) {
@@ -154,7 +155,7 @@ export async function layoutSnapshot(
     const pct = +((changed / (a.data.length / 3)) * 100).toFixed(2)
     let diff: string | undefined
     if (pct > 0.05) {
-      diff = `.studio/layout-check/diff-${i}.png`
+      diff = `.studio/${set}/diff-${i}.png`
       await sharp(marked, { raw: { width: a.info.width, height: a.info.height, channels: 3 } }).png().toFile(join(projectDir, diff))
     }
     results.push({ t: ts[i], changedPct: pct, diff })

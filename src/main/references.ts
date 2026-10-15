@@ -3,7 +3,7 @@
 // so they can never end up in an exported video. Each one is analysed into
 // keyframes (scene changes + the designer's ranges) that Claude can look at.
 import { execFile, spawn } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { extname, join } from 'node:path'
 import { promisify } from 'node:util'
 import type { ReferenceItem } from '@shared/brief'
@@ -163,34 +163,39 @@ export async function analyze(dir: string, id: string, notify: Notify) {
       await run(bin.ffmpeg(), ['-v', 'error', '-y', '-ss', String(t), '-i', src, '-frames:v', '1', '-vf', 'scale=960:-2', '-q:v', '4', join(folder, name)])
       if (existsSync(join(folder, name))) frames.push({ t, file: `references/${id}/frames/${name}` })
     }
-    // the motion itself: every 0.1 s, as sheets Claude can look at, plus how much changes per step
-    const { sheets, motion } = await motionSheets(dir, id, src, duration)
-    patch(dir, id, { status: 'ready', error: undefined, meta: { duration, width: meta.width, height: meta.height }, frames, sheets, motion, cuts: cuts.map((t) => +t.toFixed(2)) }, notify)
+    // an overview of the whole video (1 s apart; longer videos wider) — Claude asks the designer which
+    // part matters and looks at that part frame by frame with rangeSheets (look_at_reference)
+    const step = overviewStep(duration)
+    const { sheets, motion } = await makeSheets(src, join(dir, 'references', id), 'sheets', `references/${id}/sheets`, { from: 0, to: duration, step })
+    patch(dir, id, { status: 'ready', error: undefined, meta: { duration, width: meta.width, height: meta.height }, frames, sheets, sheetStep: step, motion, cuts: cuts.map((t) => +t.toFixed(2)) }, notify)
   } catch (e) {
     patch(dir, id, { status: 'error', error: '분석하지 못했어요.' + (e instanceof Error ? ` (${e.message.slice(0, 120)})` : '') }, notify)
   }
 }
 
-const STEP = 0.1
 const PER_SHEET = 20
 const COLS = 5
 
+/** seconds between overview frames: 1 s up to two minutes, then wider (≤ 120 frames, 6 sheets) */
+export const overviewStep = (duration: number) => Math.max(1, Math.ceil(duration / 120))
+
 /**
- * The whole reference every 0.1 s (10 frames a second): sheets of 20 frames (5×4,
- * 2 s each, with their seconds written under them) and, for every step, how much
- * of the picture changed (0–100) so the moves and the still moments are easy to find.
+ * Sheets of frames between from and to, one every `step` seconds: 20 per sheet (5×4) with the
+ * second written under each frame, plus how much of the picture changed per step (0–100), so the
+ * moves and the still moments are easy to find.
  */
-async function motionSheets(dir: string, id: string, src: string, duration: number): Promise<{ sheets: { from: number; to: number; file: string }[]; motion: number[] }> {
-  const seq = join(dir, 'references', id, 'seq')
-  const out = join(dir, 'references', id, 'sheets')
+async function makeSheets(src: string, base: string, sub: string, relBase: string, o: { from: number; to: number; step: number }): Promise<{ sheets: { from: number; to: number; file: string }[]; motion: number[] }> {
+  const seq = join(base, `${sub}-seq`)
+  const out = join(base, sub)
   rmSync(seq, { recursive: true, force: true })
   rmSync(out, { recursive: true, force: true })
   mkdirSync(seq, { recursive: true })
   mkdirSync(out, { recursive: true })
-  await run(bin.ffmpeg(), ['-v', 'error', '-y', '-i', src, '-vf', `fps=${1 / STEP},scale=320:-2`, '-q:v', '5', join(seq, 'f%05d.jpg')], { maxBuffer: 16 * 1024 * 1024 })
+  const span = ['-ss', String(o.from), '-t', String(Math.max(0.05, o.to - o.from))]
+  await run(bin.ffmpeg(), ['-v', 'error', '-y', ...span, '-i', src, '-vf', `fps=${1 / o.step},scale=320:-2`, '-q:v', '5', join(seq, 'f%05d.jpg')], { maxBuffer: 16 * 1024 * 1024 })
   const files = readdirSync(seq).filter((f) => f.endsWith('.jpg')).sort()
   // change per step, from small grey thumbnails (32×18)
-  const raw = (await run(bin.ffmpeg(), ['-v', 'error', '-i', src, '-vf', `fps=${1 / STEP},scale=32:18,format=gray`, '-f', 'rawvideo', '-'], { encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 })) as unknown as { stdout: Buffer }
+  const raw = (await run(bin.ffmpeg(), ['-v', 'error', ...span, '-i', src, '-vf', `fps=${1 / o.step},scale=32:18,format=gray`, '-f', 'rawvideo', '-'], { encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 })) as unknown as { stdout: Buffer }
   const px = 32 * 18
   const motion: number[] = []
   for (let k = 1; k * px + px <= raw.stdout.length; k++) {
@@ -204,11 +209,12 @@ async function motionSheets(dir: string, id: string, src: string, duration: numb
   const w = first.width ?? 320
   const h = first.height ?? 180
   const label = 22
+  const at = (k: number) => +(o.from + k * o.step).toFixed(2)
   for (let s = 0; s * PER_SHEET < files.length; s++) {
     const part = files.slice(s * PER_SHEET, (s + 1) * PER_SHEET)
     const rows = Math.ceil(part.length / COLS)
     const tiles = part.map((f, i) => {
-      const t = ((s * PER_SHEET + i) * STEP).toFixed(1)
+      const t = at(s * PER_SHEET + i).toFixed(o.step < 1 ? 1 : 0)
       const x = (i % COLS) * (w + 4)
       const y = Math.floor(i / COLS) * (h + label + 4)
       return [
@@ -221,10 +227,52 @@ async function motionSheets(dir: string, id: string, src: string, duration: numb
       .composite(tiles.flat())
       .jpeg({ quality: 78 })
       .toFile(join(out, name))
-    sheets.push({ from: +(s * PER_SHEET * STEP).toFixed(1), to: +Math.min(duration, ((s + 1) * PER_SHEET - 1) * STEP).toFixed(1), file: `references/${id}/sheets/${name}` })
+    sheets.push({ from: at(s * PER_SHEET), to: +Math.min(o.to, at((s + 1) * PER_SHEET - 1)).toFixed(2), file: `${relBase}/${name}` })
   }
   rmSync(seq, { recursive: true, force: true })
   return { sheets, motion }
+}
+
+/** most frames one look_at_reference call turns into sheets (10 sheets) */
+export const MAX_RANGE_FRAMES = 200
+
+/**
+ * A part of a reference frame by frame (e.g. every 0.1 s to read a motion), made when Claude asks
+ * and kept for the next time. Returns the sheets (project-relative jpgs) and the change per step.
+ */
+export async function rangeSheets(dir: string, id: string, from: number, to: number, step = 0.1): Promise<{ from: number; to: number; step: number; sheets: { from: number; to: number; file: string }[]; motion: number[]; clipped: boolean }> {
+  const item = listReferences(dir).find((x) => x.id === id)
+  if (!item?.file) throw new Error('그 첨부를 찾지 못했어요.')
+  if (item.kind === 'image') throw new Error('이미지는 그대로 Read로 보면 돼요.')
+  if (item.status !== 'ready') throw new Error('아직 분석 중이에요. 잠시 뒤 다시 보세요.')
+  const duration = item.meta?.duration ?? to
+  step = Math.min(5, Math.max(0.04, step))
+  from = Math.max(0, Math.min(from, duration))
+  to = Math.max(from + step, Math.min(to, duration))
+  let clipped = false
+  if ((to - from) / step > MAX_RANGE_FRAMES) {
+    to = +(from + MAX_RANGE_FRAMES * step).toFixed(2)
+    clipped = true
+  }
+  const sub = `range-${Math.round(from * 100)}-${Math.round(to * 100)}-${Math.round(step * 100)}`
+  const base = join(dir, 'references', id)
+  const cache = join(base, `${sub}.json`)
+  if (existsSync(cache)) {
+    const kept = JSON.parse(readFileSync(cache, 'utf8')) as { sheets: { from: number; to: number; file: string }[]; motion: number[] }
+    if (kept.sheets.every((x) => existsSync(join(dir, x.file)))) return { from, to, step, ...kept, clipped }
+  }
+  const made = await makeSheets(join(dir, item.file), base, sub, `references/${id}/${sub}`, { from, to, step })
+  writeFileSync(cache, JSON.stringify(made))
+  return { from, to, step, ...made, clipped }
+}
+
+/** the file of an attachment the designer wants in the video (YouTube stays reference-only) */
+export function referenceSource(dir: string, id: string): { path: string; item: ReferenceItem } {
+  const item = listReferences(dir).find((x) => x.id === id)
+  if (!item) throw new Error('그 첨부를 찾지 못했어요.')
+  if (item.kind === 'youtube') throw new Error('유튜브 영상은 참고용으로만 쓸 수 있어요(저작권). 비슷한 소재를 만들거나 디자이너에게 원본 파일을 받아 주세요.')
+  if (!item.file || !existsSync(join(dir, item.file))) throw new Error('첨부 파일이 아직 준비되지 않았어요.')
+  return { path: join(dir, item.file), item }
 }
 
 /** frames of a reference at given seconds, as JPEG files (for Claude) */

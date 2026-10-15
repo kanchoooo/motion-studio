@@ -106,8 +106,10 @@ export interface ReferenceItem {
   meta?: { duration?: number; width?: number; height?: number }
   /** keyframes found by scene detection (project-relative jpgs, with seconds) */
   frames?: { t: number; file: string }[]
-  /** the whole video every 0.1 s: sheets of 20 frames (2 s each) for studying motion */
+  /** frames of the whole video as sheets of 20 (every sheetStep seconds; 0.1 s before 0.5) */
   sheets?: { from: number; to: number; file: string }[]
+  /** seconds between the frames of sheets (missing = 0.1) */
+  sheetStep?: number
   /** how much the picture changes from one 0.1 s frame to the next (0–100), for finding the moves */
   motion?: number[]
   /** scene cuts in seconds */

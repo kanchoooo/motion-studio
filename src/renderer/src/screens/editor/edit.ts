@@ -402,10 +402,12 @@ export function paste() {
  */
 export async function freeLayout(id: string): Promise<boolean> {
   const e = el(id)
-  if (!e?.parent) return false
+  if (!e) return false
+  // a layer straight in the composition frees the composition's own layout ("__root")
+  const group = e.parent ?? '__root'
   const { ask } = await import('./player')
-  const r = await ask<{ group: string; size: { w: number; h: number }; kids: Record<string, { l: number; t: number; w: number; h: number }> } | { error: string }>(useEditor.getState().player, { ms: 'measure-flow', id: e.parent }, 3000)
-  if (!r || 'error' in r) return false
-  useOverrides.getState().setFree(r.group, labelOf(r.group), { size: r.size, kids: r.kids })
+  const r = await ask<{ group: string; size: { w: number; h: number }; kids: Record<string, { l: number; t: number; w: number; h: number }> } | { error: string }>(useEditor.getState().player, { ms: 'measure-flow', id: group }, 3000)
+  if (!r || 'error' in r || !Object.keys(r.kids).length) return false
+  useOverrides.getState().setFree(r.group, r.group === '__root' ? '화면 전체' : labelOf(r.group), { size: r.size, kids: r.kids })
   return true
 }

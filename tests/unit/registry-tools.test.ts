@@ -17,7 +17,7 @@ describe.runIf(haveCopy)('registry tools', async () => {
   const projects = await import('../../src/main/projects')
   const { buildStudioServer } = await import('../../src/main/agent/tools')
   const p = await projects.createProject({ name: '레지스트리', presetId: 'shorts-9x16', duration: 10 })
-  const server = buildStudioServer(p.meta.id, { onStoryboard() {}, onAudioCandidates() {}, onGenerated() {} })
+  const server = buildStudioServer(p.meta.id, { onStoryboard() {}, onAudioCandidates() {}, onGenerated() {}, onVoices() {}, onBuildStart() {} })
   const [a, b] = InMemoryTransport.createLinkedPair()
   await server.connect(a)
   const client = new Client({ name: 'test', version: '1' })

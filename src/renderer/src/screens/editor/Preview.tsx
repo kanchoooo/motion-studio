@@ -6,7 +6,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { Clapperboard, Loader2, Magnet, Maximize, Ruler, Smartphone } from 'lucide-react'
 import { isSpatial, sortedKeys, valueAt, type LayerMask } from '@shared/overrides'
 import { studio, useStore } from '../../store'
-import { isKeyed, isLocked, labelOf, ov, setProps, valueNow } from './edit'
+import { freeLayout, isKeyed, isLocked, labelOf, ov, setProps, valueNow } from './edit'
 import { elementsForMark, elementsUnder, useEditor } from './editorStore'
 import { useLayout } from './layout'
 import { useOverrides } from './overrides'
@@ -19,6 +19,48 @@ const SAFE: Record<string, { top: number; right: number; bottom: number; left: n
   reels: { top: 0.13, right: 0.12, bottom: 0.3, left: 0.06 },
   tiktok: { top: 0.13, right: 0.17, bottom: 0.27, left: 0.06 },
 }
+const SAFE_LABELS: { id: string; label: string }[] = [
+  { id: 'youtube', label: '유튜브·TV (가장자리 5%)' },
+  { id: 'shorts', label: '유튜브 쇼츠' },
+  { id: 'reels', label: '인스타그램 릴스' },
+  { id: 'tiktok', label: '틱톡' },
+]
+
+/** the platform safe-zone guide (where Shorts / Reels buttons sit): which platform, on or off */
+function SafeZoneMenu({ zone, on, onChange }: { zone: string; on: boolean; onChange(zone: string, on: boolean): void }) {
+  const { project, setProject, toast } = useStore()
+  const value = on && zone !== 'none' ? zone : 'off'
+  return (
+    <span className="row" style={{ gap: 4 }} title="쇼츠·릴스에서 버튼·글자가 덮는 영역을 점선으로 보여줘요. Claude도 중요한 내용을 이 안에 둬요." data-testid="guide-toggle">
+      <Smartphone size={13} color={value === 'off' ? 'var(--text-3)' : 'var(--accent)'} />
+      <select
+        className="select"
+        style={{ height: 24, fontSize: 11, padding: '0 6px', width: 'auto' }}
+        value={value}
+        onChange={async (e) => {
+          const next = e.target.value
+          if (next === 'off') return onChange(zone, false)
+          onChange(next, true)
+          if (next !== zone) {
+            try {
+              setProject(await studio.projects.saveOutput(project!.meta.id, { safeZone: next as never }))
+            } catch (err) {
+              toast(err instanceof Error ? err.message : String(err), 'error')
+            }
+          }
+        }}
+      >
+        <option value="off">가이드 끄기</option>
+        {SAFE_LABELS.map((z) => (
+          <option key={z.id} value={z.id}>
+            {z.label}
+          </option>
+        ))}
+      </select>
+    </span>
+  )
+}
+
 const RULER = 20
 type Pt = { x: number; y: number }
 type Box = { x: number; y: number; w: number; h: number }
@@ -36,7 +78,7 @@ type Gesture =
   | { kind: 'mask'; id: string; p0: Pt; p1: Pt }
 
 export function Preview({ active }: { active: boolean }) {
-  const { project, previewNonce, session } = useStore()
+  const { project, previewNonce, session, toast } = useStore()
   const ed = useEditor()
   const host = useRef<HTMLDivElement>(null)
   const playerRef = useRef<MsPlayer | null>(null)
@@ -453,6 +495,12 @@ export function Preview({ active }: { active: boolean }) {
 
   const startHandle = (e: React.PointerEvent, el: RuntimeElement, handle: string) => {
     e.stopPropagation()
+    // a layer placed by the composition's layout (flex, grid, flow): its group is set free first —
+    // nothing moves on screen, and from then on it scales, turns and takes effects like any layer
+    if (!el.transformable) {
+      void freeLayout(el.id).then((ok) => toast(ok ? '이 묶음을 자유 배치로 바꿨어요. 화면이 다시 열리면 크기·회전을 조절해 주세요.' : '이 레이어는 자유 배치로 바꿀 수 없어요.', ok ? 'success' : 'error'))
+      return
+    }
     if (!el.pivot) return
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
     playerRef.current?.pause()
@@ -495,7 +543,7 @@ export function Preview({ active }: { active: boolean }) {
   const visibleMarks = ed.marks.filter((m) => ed.markTime == null || Math.abs(m.time - ed.time) < 0.05 || !ed.ready)
   const S = (v: number) => v * scale
   const moving = g?.kind === 'move' && g.moved ? g : null
-  const showHandles = !markMode && !ed.playing && single && single.transformable && single.pivot && !ed.maskDraw
+  const showHandles = !markMode && !ed.playing && single && (single.transformable ? !!single.pivot : single.movable && !isLocked(single.id)) && !ed.maskDraw
 
   // the motion path of keyframed position (pivot now + offset between then and now)
   const pathEl = !markMode && !ed.playing && single && (isKeyed(single.id, 'x') || isKeyed(single.id, 'y')) && single.pivot ? single : null
@@ -550,18 +598,7 @@ export function Preview({ active }: { active: boolean }) {
         <button className={`icon-btn${snap ? ' active' : ''}`} title="스냅: 캔버스·가이드·다른 레이어에 맞춰 붙어요 (끌면서 ⌘를 누르면 잠시 끔)" onClick={() => setLayout({ snap: !snap })}>
           <Magnet size={13} />
         </button>
-        {safe && (
-          <button
-            className={`btn sm${safeOn ? ' primary' : ''}`}
-            style={{ height: 24, opacity: safeOn ? 1 : 0.8 }}
-            title="쇼츠·릴스에서 버튼·글자가 덮는 영역을 점선으로 보여줘요"
-            onClick={() => setLayout({ guides: !safeOn })}
-            data-testid="guide-toggle"
-          >
-            <Smartphone size={13} />
-            가이드 {safeOn ? '끄기' : '켜기'}
-          </button>
-        )}
+        <SafeZoneMenu zone={out.safeZone} on={!!safe && safeOn} onChange={(_zone, on) => setLayout({ guides: on })} />
       </div>
       {ed.maskDraw && (
         <div className="lock-banner" style={{ top: 10 + pad }}>
@@ -811,7 +848,8 @@ function SelectionHandles({ el, S, gesture, onHandle, onMove, onUp }: { el: Runt
     ['w', r.x, r.y + r.h / 2],
   ]
   const cursor: Record<string, string> = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize' }
-  const piv = gesture?.kind === 'anchor' && gesture.id === el.id ? { x: el.pivot!.x + gesture.d.x, y: el.pivot!.y + gesture.d.y } : el.pivot!
+  const center = el.pivot ?? { x: r.x + r.w / 2, y: r.y + r.h / 2 }
+  const piv = gesture?.kind === 'anchor' && gesture.id === el.id ? { x: center.x + gesture.d.x, y: center.y + gesture.d.y } : center
   const common = { onPointerMove: onMove, onPointerUp: onUp }
   return (
     <>

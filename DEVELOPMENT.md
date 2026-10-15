@@ -77,15 +77,17 @@ src/
                    - pty-session: 대화형 Claude Code를 PTY로 실행, 리모트 컨트롤
                    - transcript: 대화 기록 파일 추적
                    - mcp-http / tools: 앱 전용 도구
-                   - prompt: 작업 규칙
-    projects.ts    프로젝트 폴더, 브리프, 직접 수정값, 소재
+                   - prompt: 짧은 안내(쓸 수 있는 것) + 편집 정리 요청
+    storyboard.ts  콘티(storyboard.json): 장면·소재 칸·할당, storyboard.html 칸 찍기
+    headFix.ts     index.html <head>의 앱 줄 보정(CDN GSAP → vendor/)
+    tidy.ts        편집 정리: 이름 없는 내용 찾기, 전후 화면 비교
+    projects.ts    프로젝트 폴더, 브리프(출력 사양·소재함), 직접 수정값
     history.ts     이력 (isomorphic-git, 저장할 때마다 내용 해시)
     renders.ts     내보내기, 결과물 보관함
     audio.ts       BGM/효과음, 길이 변경을 index.html에 반영, 기본 효과음
     variations.ts  베리에이션 (크기·길이, Claude 재구성 대기열은 pty-session)
-    references.ts  레퍼런스 (파일·유튜브, 장면 분석, dHash 복제 감지)
+    references.ts  대화 첨부 (파일·유튜브, 개요 시트, 구간 0.1초 시트, dHash 복제 감지)
     psd.ts         PSD → PNG (합치기 / 레이어별 + 위치)
-    brands.ts      브랜드 프리셋 (앱 전체 공유)
     trust.ts       Claude 폴더 신뢰 여부 읽기 (쓰지 않음)
     checks.ts      모션스튜디오 규칙 검사 + HyperFrames check
     fontcss.ts     시스템 폰트 @font-face local() 생성
@@ -123,17 +125,20 @@ poc/               Phase 0 기술 검증 기록 (RESULTS.md)
   - PATH 맨 앞에 `userData/cli/`: `hyperframes`·`npx hyperframes`가 앱 안 HyperFrames CLI(앱의 노드)로 간다(`agent/cliShims.ts`). 이 명령들은 미리 허용. `add`에는 항상 `--no-clipboard`를 붙인다(CLI는 기본으로 클립보드에 복사함).
   - **레지스트리 사본**(`resources/hf-registry/`, 5-4장): CLI는 늘 `--import offline-fetch.mjs`로 실행(`registry.nodeArgs()`, 세션 명령과 `runHf` 모두) → 레지스트리 요청을 앱 안 사본에서 답한다. Claude 도구 `find_blocks`(검색 + 움직임 미리보기)·`add_block`(설치).
   - 하위 에이전트는 덧붙인 시스템 프롬프트를 못 받으므로 `.studio/motion-studio-rules.md`(컴포지션 규칙)를 읽게 한다.
-  - `PreToolUse` **HTTP 훅**(`/hook/<토큰>/pretool`): 대화에서 처음 영상 파일(composition/의 .html·.css·.js)을 쓰기 전에 대화 기록에 HyperFrames 라우터나 작업 흐름 스킬(`hyperframes`, `general-video` …)을 읽은 흔적이 있는지 확인하고, 없으면 돌려보내요(이유는 한국어로). 새 영상(`data-ms-empty`)에 STORYBOARD.md가 있으면 인용한 모션 레시피 본문(`hyperframes-animation/blueprints|rules/*.md`)을 읽기 전의 첫 쓰기도 돌려보내요.
-  - **품질 관문**(`agent/gates.ts`, 대화 기록 + 하위 에이전트 기록을 읽음):
-    - `propose_storyboard`: 새 영상이면 house-style·video-composition·typography·blueprints/rules-index를 읽고 composition/DESIGN.md·STORYBOARD.md를 쓴 뒤에만 콘티를 보여 줌(아니면 도구 오류로 무엇이 빠졌는지 알려 줌).
-    - `Stop` **HTTP 훅**(`/hook/<토큰>/stop`): 이번 차례에 영상 파일이 바뀌었으면 마지막 변경 뒤에 `hyperframes check`(또는 check_video)와 스냅샷 시트 Read(또는 look_at_frames)가 있어야 하고, check_video에 `ms_not_edit_ready`가 없어야 하고, 제작 차례(콘티 승인·고도화·전체 Write)면 `motion-studio-hyperframes:motion-reviewer` 검수 에이전트를 돌려야 끝낼 수 있음. 한 차례에 최대 2번 돌려보냄(`decision: block`). 베리에이션·템플릿 메시지는 검수 에이전트 없이 확인만.
-    - Stop 훅이 돌려보내면 대화 기록에 end_turn이 먼저 찍히므로 `TranscriptTail`은 차례 끝을 2.5초 미뤘다가, 그사이 훅 메시지(isMeta)나 앱 알림(`holdTurn`)이 오면 계속 작업 중으로 둔다.
-  - `composition/BRIEF.md`(`agent/briefDoc.ts`): 브리프를 HyperFrames 브리프 형식(workflow: general-video, flow: companion, storyboard: yes)으로 세션 시작·브리프 저장 때마다 앱이 다시 씀. Claude는 고칠 수 없음(거부 규칙).
-  - 플러그인 에이전트 `resources/claude-plugin/agents/motion-reviewer.md`(opus, 추론 강도는 세션과 같음 — PreToolUse 훅이 Agent 호출에 세션의 `effort`를 넣음, 읽기 전용 + snapshot/look_at_frames): 장면별 [꼭]/[권장] 수정 목록. 플러그인 스킬 `motion-studio-media`: AI 생성·아트리스트·SVG 캐릭터 안내(시스템 프롬프트에서 분리).
+  - **하네스 없음 (0.5)**: Claude는 일반 Claude Code처럼 대화로 기획하고 만든다. 관문(콘티 전 필수 읽기, 첫 쓰기 전 레시피, 턴 종료 검사·검수 강제, 편집 준비)과 앱이 쓰던 BRIEF.md는 없앴다. 예전 버전이 쓴 BRIEF.md는 세션 시작 때 지운다(`dropAppBriefDoc`, 앱 표시 문구가 있을 때만).
+  - 시스템 프롬프트(`agent/prompt.ts`)는 역할·한국어·작업 폴더·**쓸 수 있는 것** 목록·디자이너 수정 존중·컴포지션 읽는 법만 담는다. 순서를 강제하지 않는다.
+  - `PreToolUse` **HTTP 훅**(`/hook/<토큰>/pretool`)은 Agent만 본다: 검수 에이전트(`motion-reviewer`, 디자이너가 "검수해줘"라고 할 때)에 세션의 `effort`를 넣는다.
+  - **head 보정**(`headFix.ts`): 턴이 끝날 때·프로젝트를 열 때·내보내기 전에 index.html의 앱 줄(vendor/gsap → ms/fonts.css → ms/overrides.js → ms/runtime.js)을 `<head>` 맨 위로 되돌리고, CDN GSAP(플러그인 포함)은 vendor/ 사본으로 바꾼다. 미리보기 서버는 턴 중에도 메모리에서 같은 보정을 해서 보여준다.
+  - **콘티**: Claude가 `composition/storyboard.html`(장면마다 `id="frame-NN"` 칸)을 쓰고 `show_storyboard`를 부르면, 앱이 숨은 창에서 칸마다 찍어(`storyboard.shootCells`) 대화 카드와 스토리보드 패널에 보여준다. 장면마다 소재 칸(이미지 프롬프트, 영상 프롬프트 + 중요한 영상은 시작·끝 프롬프트). 디자이너 할당은 `storyboard.json`(앱 파일), Claude는 `get_storyboard`로 읽는다.
+  - **승인은 대화로**: 버튼이 없다. 디자이너가 "제작해줘·진행해·승인"이라고 하면 Claude가 `start_build`를 부른다 → 장면별 소재 파일을 받고, 콘티가 승인 상태가 되고, 앱이 `build-started` 이벤트로 편집 탭을 연다. 승인 뒤 바뀐 할당은 디자이너의 다음 메시지에 붙는다(앱 메시지에는 안 붙음).
+  - **첨부**: 대화에 넣은 이미지·영상·유튜브는 references/에 저장(내보내기 폴더 밖). 영상은 컷 + 개요 시트(1초, 2분 넘으면 더 넓게)만 바로 만들고, `look_at_reference(id, from, to, every)`가 구간을 0.1초 시트로 그때 만든다(캐시, 한 번에 200프레임). 영상에 쓰기로 하면 `use_as_material`이 소재함으로 복사(유튜브는 거절).
+  - **보기 모드 → 편집 활성화**: 0.5부터 새 프로젝트는 `project.json`의 `editable: false`로 시작한다(이전 프로젝트는 값이 없어 항상 편집 가능, 베리에이션은 원본을 따름). 영상이 있고 `editable === false`면 `editLock`이 모든 손 편집을 막고(보기·재생·선택·표시는 됨), 캔버스 아래 **편집 활성화** 버튼(`agent.activateEditing`)을 보여준다. 누르면(`tidy.ts`, `pty-session.activateEditing`): 숨은 창에서 `[data-ms-id]` 밖의 글자·그림·영상·SVG를 센다 → 없으면 바로 편집 가능 → 있으면 같은 순간 12장을 찍고 Claude에게 이름(data-ms-*)만 붙이게 요청(`TIDY_REQUEST`, 앱 메시지로 표시) → 턴이 끝나면 다시 찍어 비교, 달라졌으면 한 번 고치게 하고 → `editable: true`. 그사이 디자이너가 메시지를 보냈으면(세대 카운터) 비교 없이 연다.
+  - 흐름 배치(flex·grid) 레이어는 처음엔 위치만 옮긴다. 크기·회전 손잡이를 잡으면 그 묶음을 자유 배치로 바꾼다(최상위는 `__root` 묶음). 런타임 감싸기는 부모의 `preserve-3d`·`perspective`를 이어받고, 레이어 자체의 혼합 모드는 감싸기로 옮긴다(`--ms-cb`, 디자이너 값이 이김).
+  - 소리·내레이션: `show_voice_candidates`(목소리 카드 → 고르면 메시지), 아트리스트 / 내장 효과음 / 상업 사용·출처 표기 불필요 무료 음원(Mixkit은 자동으로 받아짐). `ai_import`에 `page_url`·`license`를 남기고 내보내기 창이 보여준다(`renders:preflight`, 레퍼런스와 거의 같은 장면 경고도 여기서).
   - 기본 추론 강도는 `high`(DEFAULT_EFFORT, 채팅 패널에서 프로젝트별로 바꿀 수 있음). WebSearch는 미리 허용(비슷한 광고 조사), WebFetch는 질문.
   - `PermissionRequest` 훅은 `[cd <프로젝트|composition> &&] hyperframes <check·lint·snapshot·catalog… 읽기 명령> | grep·head·tail·wc·cut·tr·sort·sed -n <구간>p`처럼 보고서를 걸러 읽는 명령은 바로 허용해요(`hyperframesReadPipeline`: `>`·`$(…)`·`;`·`||`·백틱·`sort -o`·`sed -i/w`가 하나라도 있으면 그대로 물어봄).
   - 앱 MCP 서버(`studio`)는 도구가 끝날 때 한 번에 응답하므로 설정에 `timeout: 900000`(15분)을 준다. 없으면 Claude Code가 60초 넘게 조용한 호출(GPT 이미지 생성 등)을 "The operation timed out."으로 끊는다.
-  - `PermissionRequest` 훅은 사람에게 묻기 전에 두 가지를 돌려보내요: 영상 파일을 고치는 셸 스크립트(python·node·sed -i·perl -i·리다이렉션·tee → Edit/Write로만), 설명(description)이 한국어가 아닌 명령.
+  - `PermissionRequest` 훅은 설명(description)이 한국어가 아닌 명령만 사람에게 묻기 전에 돌려보내요. 셸로 영상 파일을 고치는 것도 다른 명령처럼 승인 카드로 물어봐요(0.5).
   - 설정 `language: "Korean"`(Claude Code 응답 언어). 중간 메모까지 한국어로 쓰도록 프롬프트에 예시 문장도 있어요.
   - `--setting-sources ""` (개인 설정, 훅, 플러그인 제외)
   - `--strict-mcp-config` + 앱 MCP 서버만 연결
@@ -164,11 +169,9 @@ poc/               Phase 0 기술 검증 기록 (RESULTS.md)
 - `src/main/registry.ts`: 사본 목록(`registryItems`), 검색(`searchRegistry`: 단어 끝 맞추기, 이름·제목 4 > 태그 3 > 설명 1, 맞춘 단어 비율을 곱함, 1점 미만 버림), 설치(`addRegistryItem` = `hyperframes add --no-clipboard --json`).
 - 앱 크기: 패키지 안 약 150MB(압축 설치 파일 기준 약 +45~60MB).
 
-## 5-5. 영상 템포·스타일 (0.3.1)
+## 5-5. 영상 템포·스타일 (0.3.1, 0.5에서 화면 제거)
 
-- `src/shared/direction.ts`: `TEMPOS`(느림 3~4초·80~90 BPM … 매우 빠름 0.5~1초·140~150 BPM, 움직임 설명), `STYLES` 14가지(라벨·설명·Claude용 규칙·visual-styles.md 시작점·find_blocks 검색어), `MAX_STYLES = 2`(첫 번째가 주 스타일). `brief.tempo`·`brief.styles`는 선택(없으면 Claude가 정함), `normalizeBrief`가 모르는 값을 버림.
-- Claude에게: BRIEF.md Customizations와 get_brief `direction`(`directionForClaude`)에 숫자·규칙으로. 프롬프트 4단계: 고른 값은 결정이라 박자·장면 길이·DESIGN.md를 거기에 맞춤. 검수 에이전트 7번 항목에서 확인.
-- 화면: 브리프 › 톤앤매너·스타일(`ToneSection.tsx`의 `DirectionFields`).
+- `src/shared/direction.ts`는 예전 브리프의 값을 읽기 위해 남겨 두었다. get_brief의 `olderBrief`(이전 브리프 메모)로만 Claude에게 간다. 0.5부터 템포·스타일은 대화로 정한다.
 
 ## 5-6. 에펙처럼 편집 (Claude가 만들고, 디자이너가 손으로 다듬기)
 
@@ -209,7 +212,8 @@ poc/               Phase 0 기술 검증 기록 (RESULTS.md)
   - 힉스필드: `start_image`/`end_image`, 또는 `medias: [{role, value}]`. 매그니픽: `keyframes: {start, end}`, 각각 `{type: "image", url}`(카탈로그 안내문 기준).
   - 이미지는 base64(설명에 있을 때) 또는 서비스의 업로드 도구로 올린 주소·id를 넣어요. 서명된 업로드 주소를 주면 PUT으로 올려요.
   - 결과는 `.studio/generations/<id>/video.mp4` + `poster.jpg` 후보예요. ⚠ 실제 계정으로는 아직 확인 전(이 개발 맥에 연결된 계정 없음).
-- **AI 웹 수집**(`ai/webCollect.ts`): `claude -p --model sonnet --tools WebSearch,WebFetch --output-format stream-json --no-session-persistence`. 도구 사용(검색어·읽은 사이트)을 진행 줄로 보여주고, 결과 JSON(로고·이미지·색·사실·카피 + 출처)에서 이미지는 앱이 직접 받아요(https, 이미지 형식, 15MB 이하, 120px 이상). `.studio/collect/items.json`에 남고, 남은 것을 넣으면 이미지·로고 → 소재, 색 → 브랜드 색, 사실·카피 → 브랜드 메모.
+- **프롬프트 도우미**(`ai/promptHelper.ts`): Haiku 5.5(`claude-haiku-5-5`로 고정) `-p` 세션, Read만. 소재 패널 오른쪽에 늘 있고 생성기 상태(`useGenHelper`)를 읽어 마지막으로 누른 프롬프트 칸(이미지·움직임·시작·끝)에 넣는다. 끌어 놓은 참고 이미지는 feedback/refs/로 복사해 읽게 한다.
+- **영상 생성 도구**(`make_video`): Claude가 `generateVideoCandidate`를 한 번에 부른다(시작·끝 프레임 = composition 경로). 결과는 assets/generated/로 복사하고 대화 카드로 보여준다.
 - **캐릭터 SVG**(`character/`, ms-svg-character)
   - `img2svg/*.cjs`는 원본 그대로의 CommonJS예요. 설치본에 파일로 들어가서(`electron-builder.yml`) `sharp`·`@visioncortex/vtracer`(WASM, 버전 고정)를 node_modules에서 불러요. 변환은 `worker.cjs` 워커 스레드에서 해요.
   - Claude 도구: `character_info`, `character_tag`(tag.js + 차이 검사), `character_embed`(index.html의 호스트 요소 안에 인라인). 스킬은 `resources/claude-plugin/skills/svg-character-motion/`, 런타임은 `ms/svgrig.js`예요.

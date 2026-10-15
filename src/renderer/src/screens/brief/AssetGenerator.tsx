@@ -1,11 +1,14 @@
 // 소재 > AI로 만들기:
 //  - 이미지: model + style (look) + kind + framing + ratio + the designer's own prompt (sent
 //    as written; only the style / kind sentences are put in front), optional reference
-//    assets, and a small prompt helper chat. Flat characters become SVG right away.
-//  - 영상: video model + length + ratio + a motion prompt, optionally from a start frame to
-//    an end frame (an image candidate or a brief image).
-// Results wait as candidates to be added to the brief's assets or discarded.
+//    assets. Flat characters become SVG right away.
+//  - 영상: video model + length + ratio + a motion prompt — made at once, or from a start frame
+//    to an end frame made first (① start image → ② end image → ③ clip).
+// A storyboard material ("만들기" on a slot) opens it with Claude's prompts; its result can go
+// straight into that slot. The prompt helper beside the panel reads this form (useGenHelper).
+// Results wait as candidates to be added to the library or discarded.
 import { useEffect, useRef, useState } from 'react'
+import { create } from 'zustand'
 import { ArrowLeftRight, Check, ChevronDown, ChevronRight, Film, Image as ImageIcon, ImagePlus, Loader2, MessageCircle, RefreshCw, Send, Sparkles, Trash2, Wand2, X } from 'lucide-react'
 import {
   defaultPromptLang,
@@ -30,6 +33,7 @@ import {
 import { KIND_HINTS, KIND_LABELS, LOOK_HINTS } from '@shared/genStyles'
 import type { AiModelRef, Asset, Brief } from '@shared/brief'
 import type { HelperReply } from '@shared/api'
+import type { GenIntent } from './briefUi'
 import { ModelSelect } from '../../components/ai/ModelSelect'
 import { Modal, Segmented } from '../../components/ui'
 import { studio, useStore } from '../../store'
@@ -54,6 +58,25 @@ const remember = (v: { style: GenStyle; kind: GenKind }) => {
     /* private window */
   }
 }
+
+/** which prompt box the helper fills ("프롬프트 칸에 넣기") */
+export type PromptTarget = 'image' | 'video' | 'start' | 'end'
+export interface HelperCtx {
+  media: string
+  model: string
+  lang: string
+  style: string
+  kind: string
+  framing: string
+  prompt: string
+  projectId: string
+  referenceFiles: string[]
+  scene?: string
+}
+/** the generator's state the resident helper reads, and how its prompt goes back into the form */
+export const useGenHelper = create<{ ctx: HelperCtx | null; target: PromptTarget; use: ((p: string) => void) | null }>(() => ({ ctx: null, target: 'image', use: null }))
+const TARGET_LABEL: Record<PromptTarget, string> = { image: '이미지 프롬프트', video: '움직임 프롬프트', start: '시작 프레임 프롬프트', end: '끝 프레임 프롬프트' }
+export const targetLabel = (t: PromptTarget) => TARGET_LABEL[t]
 
 /** an AI-made asset of the brief the designer wants changed (수정해서 다시 만들기) */
 export interface ReviseTarget {
@@ -87,13 +110,30 @@ export function assetRequest(a: Asset): { image?: GenRequest; video?: VideoGenRe
   }
 }
 
-export function AssetGenerator({ brief, onAdd, onReplace, revise }: { brief: Brief; onAdd(a: Asset): void; onReplace?(oldId: string, a: Asset): void; revise?: ReviseTarget | null }) {
+export function AssetGenerator({
+  brief,
+  onAdd,
+  onReplace,
+  revise,
+  intent,
+  onApply,
+  onIntentDone,
+}: {
+  brief: Brief
+  onAdd(a: Asset): void
+  onReplace?(oldId: string, a: Asset): void
+  revise?: ReviseTarget | null
+  /** a storyboard material to make */
+  intent?: GenIntent | null
+  /** a kept result goes into that material's slot */
+  onApply?(a: Asset): Promise<void>
+  onIntentDone?(): void
+}) {
   const { project, toast } = useStore()
   const pid = project!.meta.id
   const box = useRef<HTMLDivElement>(null)
   const [revising, setRevising] = useState<Asset | null>(null)
-  // folded until the designer wants it (the brief's own assets come first)
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(true)
   const [media, setMedia] = useState<Media>('image')
   const [model, setModel] = useState<AiModelRef | null>(brief.ai.image ?? null)
   const [style, setStyle] = useState<GenStyle>(remembered.style && remembered.style in STYLE_LABELS ? remembered.style : 'flat-character')
@@ -105,7 +145,7 @@ export function AssetGenerator({ brief, onAdd, onReplace, revise }: { brief: Bri
   const [refs, setRefs] = useState<string[]>([])
   const [busy, setBusy] = useState<Media | null>(null)
   const [candidates, setCandidates] = useState<GenCandidate[]>([])
-  const [helper, setHelper] = useState(false)
+  const [target, setTarget] = useState<PromptTarget>('image')
   const [providers, setProviders] = useState<string[]>([])
   const [codexUsable, setCodexUsable] = useState(false)
   const [base, setBase] = useState('')
@@ -115,7 +155,13 @@ export function AssetGenerator({ brief, onAdd, onReplace, revise }: { brief: Bri
   const [frames, setFrames] = useState<{ start?: string; end?: string }>({})
   const [duration, setDuration] = useState<number>(5)
   const out = brief.output
-  const [vRatio, setVRatio] = useState<VideoRatio>(out.width > out.height * 1.2 ? '16:9' : out.height > out.width * 1.2 ? '9:16' : '1:1')
+  const outRatio: VideoRatio = out.width > out.height * 1.2 ? '16:9' : out.height > out.width * 1.2 ? '9:16' : '1:1'
+  const [vRatio, setVRatio] = useState<VideoRatio>(outRatio)
+  // ① start image → ② end image → ③ clip, or the clip at once
+  const [vMode, setVMode] = useState<'direct' | 'frames'>('direct')
+  const [startPrompt, setStartPrompt] = useState('')
+  const [endPrompt, setEndPrompt] = useState('')
+  const [making, setMaking] = useState<'start' | 'end' | null>(null)
 
   useEffect(() => {
     void studio.ai.candidates(pid).then(setCandidates)
@@ -131,6 +177,31 @@ export function AssetGenerator({ brief, onAdd, onReplace, revise }: { brief: Bri
     setOpen(true)
     setTimeout(() => box.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
   }, [revise])
+  // a storyboard slot's "만들기": Claude's prompts, the video's proportions
+  useEffect(() => {
+    if (!intent) return
+    const m = intent.material
+    setOpen(true)
+    setRevising(null)
+    if (m.kind === 'image') {
+      setMedia('image')
+      setStyle('none')
+      setKind('free')
+      setRatio(nearestRatio(out.width, out.height))
+      setPrompt(m.prompt ?? '')
+      setTarget('image')
+    } else {
+      setMedia('video')
+      setVPrompt(m.prompt ?? '')
+      setStartPrompt(m.startPrompt ?? '')
+      setEndPrompt(m.endPrompt ?? '')
+      setVMode(m.startPrompt || m.endPrompt ? 'frames' : 'direct')
+      setFrames({})
+      setVRatio(outRatio)
+      setTarget(m.startPrompt ? 'start' : 'video')
+    }
+    setTimeout(() => box.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
+  }, [intent?.nonce]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const flat = style === 'flat-character'
   const showFraming = flat || kind === 'character'
@@ -185,6 +256,23 @@ export function AssetGenerator({ brief, onAdd, onReplace, revise }: { brief: Bri
     }
   }
 
+  /** ① / ② of a clip made from frames: an image at the clip's proportions, set as its start or end frame */
+  const generateFrame = async (which: 'start' | 'end') => {
+    const text = (which === 'start' ? startPrompt : endPrompt).trim()
+    const base = request()
+    if (!base) return toast('이미지를 만들 서비스가 없어요. AI 연결에서 힉스필드·매그니픽을 연결하거나 Codex에 로그인해 주세요.', 'error')
+    if (!text) return toast(`${which === 'start' ? '시작' : '끝'} 프레임 프롬프트를 적어 주세요.`, 'error')
+    setMaking(which)
+    try {
+      // the end frame follows the start frame's look when the model takes a reference image
+      const refsFor = which === 'end' && frames.start?.startsWith('composition/') ? [frames.start.replace(/^composition\//, '')] : []
+      const c = await generate({ ...base, style: 'none', kind: 'free', framing: 'auto', ratio: vRatio as Ratio, prompt: text, references: refsFor })
+      if (c) setFrames((f) => ({ ...f, [which]: c.file }))
+    } finally {
+      setMaking(null)
+    }
+  }
+
   // 수정해서 다시 만들기: the same request plus the designer's change (and the previous image when the model takes it)
   const fromAsset = (from: string, prev?: string) => (from.startsWith('composition/') ? from : prev)
   const reviseImage = (req: GenRequest, from: string, note: string, useImage: boolean) =>
@@ -213,19 +301,75 @@ export function AssetGenerator({ brief, onAdd, onReplace, revise }: { brief: Bri
     setOpen(true)
   }
 
+  // what the resident helper sees, and where its prompt goes
+  const scene = intent ? `장면 ${intent.scene} 「${intent.sceneTitle}」: ${intent.sceneDescription} · 필요한 소재: ${intent.material.label} (${intent.material.kind === 'video' ? '영상' : '이미지'}) · 영상 비율 ${out.width}×${out.height}` : undefined
+  const frameRefs = [frames.start, frames.end].filter(Boolean).map((f) => f!.replace(/^composition\//, ''))
+  const helperCtx: HelperCtx =
+    media === 'image' || target === 'start' || target === 'end'
+      ? {
+          media: target === 'start' ? '시작 프레임 이미지' : target === 'end' ? '끝 프레임 이미지' : '이미지',
+          model: model?.label ?? model?.model ?? '자동',
+          lang: PROMPT_LANG_LABELS[langOf(model, provider)],
+          style: media === 'image' ? STYLE_LABELS[style] : '스타일 없음',
+          kind: media === 'image' ? KIND_LABELS[flat ? 'character' : kind] : '자유',
+          framing: media === 'image' && showFraming ? FRAMING_LABELS[framing] : '-',
+          prompt: target === 'start' ? startPrompt : target === 'end' ? endPrompt : prompt,
+          projectId: pid,
+          referenceFiles: media === 'image' ? refs : target === 'end' ? frameRefs.slice(0, 1) : [],
+          scene,
+        }
+      : {
+          media: '영상',
+          model: vModel?.label ?? vModel?.model ?? '자동',
+          lang: PROMPT_LANG_LABELS[lang],
+          style: '-',
+          kind: '-',
+          framing: `시작 프레임 ${frames.start ? '있음' : '없음'} · 끝 프레임 ${frames.end ? '있음' : '없음'} · ${duration}초 · ${vRatio}`,
+          prompt: vPrompt,
+          projectId: pid,
+          referenceFiles: frameRefs,
+          scene,
+        }
+  const helperKey = JSON.stringify(helperCtx) + target
+  useEffect(() => {
+    const t = media === 'image' ? 'image' : target === 'image' ? 'video' : target
+    useGenHelper.setState({
+      ctx: helperCtx,
+      target: t,
+      use: (p: string) => {
+        if (t === 'image') setPrompt(p)
+        else if (t === 'start') setStartPrompt(p)
+        else if (t === 'end') setEndPrompt(p)
+        else setVPrompt(p)
+      },
+    })
+  }, [helperKey, media]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => useGenHelper.setState({ ctx: null, use: null }), [])
+
   return (
-    <div ref={box} className="card" style={{ padding: 0, overflow: 'hidden' }} data-testid="asset-generator">
+    <div ref={box} className="card gen-card" style={{ padding: 0, overflow: 'hidden' }} data-testid="asset-generator">
       <button className="row" style={{ width: '100%', padding: '12px 14px', border: 'none', background: 'var(--surface-2)', cursor: 'pointer', color: 'var(--text)' }} onClick={() => setOpen(!open)} data-testid="gen-toggle" aria-expanded={open}>
         <Sparkles size={15} color="var(--accent)" />
         <span style={{ fontWeight: 650, textAlign: 'left' }} className="grow">
           AI로 만들기
         </span>
         {!open && candidates.length > 0 && <span className="badge accent">후보 {candidates.length}개</span>}
-        <span className="tiny muted">이미지·영상 모델로 소재를 만들어 바로 소재에 넣어요</span>
+        <span className="tiny muted">이미지·영상을 만들어 소재함에 넣어요</span>
         {open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
       </button>
       {open && (
         <div className="col" style={{ gap: 12, padding: 14 }}>
+          {intent && (
+            <div className="card row" style={{ padding: '8px 10px', gap: 8, borderColor: 'var(--accent)', background: 'var(--accent-soft)' }} data-testid="gen-intent">
+              <Sparkles size={13} color="var(--accent)" />
+              <span className="small grow">
+                <b>장면 {intent.scene} · {intent.material.label}</b> 소재를 만들어요. 만든 결과에서 <b>이 장면에 넣기</b>를 누르면 콘티 칸에 바로 들어가요.
+              </span>
+              <button className="btn ghost sm" onClick={onIntentDone}>
+                그만 만들기
+              </button>
+            </div>
+          )}
           {revising && (
             <div className="card" style={{ padding: 10, display: 'grid', gridTemplateColumns: '84px 1fr', gap: 12, borderColor: 'var(--accent)', background: 'var(--accent-soft)' }} data-testid="revise-asset">
               <div style={{ width: 84, height: 84, borderRadius: 6, overflow: 'hidden', background: 'var(--canvas)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -273,7 +417,7 @@ export function AssetGenerator({ brief, onAdd, onReplace, revise }: { brief: Bri
 
           {media === 'image' ? (
             <>
-              <div style={{ display: 'grid', gridTemplateColumns: '84px 1fr', gap: '10px 12px', alignItems: 'center' }}>
+              <div className="gen-grid" style={{ display: 'grid', gridTemplateColumns: '84px minmax(0, 1fr)', gap: '10px 12px', alignItems: 'center' }}>
                 <span className="small muted">이미지 모델</span>
                 <div className="row" style={{ gap: 8 }}>
                   <div className="grow">
@@ -341,20 +485,12 @@ export function AssetGenerator({ brief, onAdd, onReplace, revise }: { brief: Bri
               <div className="col" style={{ gap: 6 }}>
                 <div className="row">
                   <span className="small muted grow">프롬프트 · 적은 그대로 보내요{style !== 'none' || kind !== 'free' ? ' (스타일·종류 문장만 앞에 붙어요)' : ''}</span>
-                  <button className={`btn sm${helper ? ' primary' : ''}`} onClick={() => setHelper(!helper)} data-testid="helper-toggle">
-                    <MessageCircle size={13} />
-                    프롬프트 도우미
-                  </button>
+                  <span className="tiny faint">
+                    <MessageCircle size={11} /> 오른쪽 도우미가 함께 써 줘요
+                  </span>
                 </div>
-                <textarea className="textarea" rows={4} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder={PLACEHOLDER[flat ? 'character' : kind]} data-testid="gen-prompt" />
+                <textarea className="textarea" rows={4} value={prompt} onFocus={() => setTarget('image')} onChange={(e) => setPrompt(e.target.value)} placeholder={PLACEHOLDER[flat ? 'character' : kind]} data-testid="gen-prompt" />
               </div>
-              {helper && (
-                <PromptHelper
-                  ctx={{ media: '이미지', model: model?.label ?? model?.model ?? '자동', lang: PROMPT_LANG_LABELS[lang], style: STYLE_LABELS[style], kind: KIND_LABELS[flat ? 'character' : kind], framing: showFraming ? FRAMING_LABELS[framing] : '-', prompt, projectId: pid, referenceFiles: refs }}
-                  refsCount={refs.length}
-                  onUse={setPrompt}
-                />
-              )}
 
               {imageAssets.length > 0 && (
                 <div className="col" style={{ gap: 6 }}>
@@ -388,7 +524,7 @@ export function AssetGenerator({ brief, onAdd, onReplace, revise }: { brief: Bri
             </>
           ) : (
             <>
-              <div style={{ display: 'grid', gridTemplateColumns: '84px 1fr', gap: '10px 12px', alignItems: 'center' }}>
+              <div className="gen-grid" style={{ display: 'grid', gridTemplateColumns: '84px minmax(0, 1fr)', gap: '10px 12px', alignItems: 'center' }}>
                 <span className="small muted">영상 모델</span>
                 <div className="row" style={{ gap: 8 }}>
                   <div className="grow">
@@ -402,35 +538,68 @@ export function AssetGenerator({ brief, onAdd, onReplace, revise }: { brief: Bri
                 <Segmented value={vRatio} onChange={setVRatio} options={VIDEO_RATIOS.map((r) => ({ value: r, label: r }))} />
               </div>
 
-              <div className="col" style={{ gap: 6 }}>
-                <span className="small muted">시작·끝 프레임 · 이 이미지에서 시작해 저 이미지로 끝나요 (선택)</span>
-                <div className="row" style={{ gap: 10, alignItems: 'stretch' }}>
-                  <FrameSlot label="시작 프레임" value={frames.start} base={base} choices={frameChoices} onChange={(v) => setFrames((f) => ({ ...f, start: v }))} testId="frame-start" />
-                  <button className="icon-btn" style={{ alignSelf: 'center' }} title="시작·끝 바꾸기" disabled={!frames.start && !frames.end} onClick={() => setFrames((f) => ({ start: f.end, end: f.start }))}>
-                    <ArrowLeftRight size={14} />
-                  </button>
-                  <FrameSlot label="끝 프레임" value={frames.end} base={base} choices={frameChoices} onChange={(v) => setFrames((f) => ({ ...f, end: v }))} testId="frame-end" />
+              <Segmented
+                value={vMode}
+                onChange={(v) => {
+                  setVMode(v)
+                  setTarget(v === 'frames' && !frames.start ? 'start' : 'video')
+                }}
+                options={[
+                  { value: 'direct', label: '바로 만들기' },
+                  { value: 'frames', label: '시작·끝 프레임 먼저' },
+                ]}
+              />
+              {vMode === 'frames' ? (
+                <div className="col" style={{ gap: 10 }} data-testid="frame-steps">
+                  {(['start', 'end'] as const).map((which, i) => (
+                    <div key={which} className="card" style={{ padding: 10, display: 'grid', gridTemplateColumns: '140px 1fr', gap: 10, background: 'var(--surface-2)' }}>
+                      <FrameSlot label={which === 'start' ? '시작 프레임' : '끝 프레임'} value={frames[which]} base={base} choices={frameChoices} onChange={(v) => setFrames((f) => ({ ...f, [which]: v }))} testId={`frame-${which}`} />
+                      <div className="col" style={{ gap: 6, minWidth: 0 }}>
+                        <span className="small">
+                          <b>{i === 0 ? '①' : '②'}</b> {which === 'start' ? '시작' : '끝'} 프레임 이미지{which === 'end' ? ' (선택 · 받는 모델만, 예: Kling)' : ''}
+                        </span>
+                        <textarea
+                          className="textarea"
+                          rows={3}
+                          value={which === 'start' ? startPrompt : endPrompt}
+                          onFocus={() => setTarget(which)}
+                          onChange={(e) => (which === 'start' ? setStartPrompt : setEndPrompt)(e.target.value)}
+                          placeholder={which === 'start' ? '첫 장면 그림을 적어요. 예) 아침 햇살이 드는 주방, 식탁 위 민트색 텀블러' : '마지막 장면 그림을 적어요. 예) 같은 주방, 텀블러를 든 손이 화면 앞으로'}
+                          data-testid={`${which}-prompt`}
+                        />
+                        <div className="row" style={{ gap: 6 }}>
+                          <span className="tiny faint grow">이미지 모델: {model?.label ?? (provider === 'codex' ? 'GPT 이미지 (Codex)' : '자동')} · {vRatio}</span>
+                          <button className="btn sm" disabled={!!busy || !provider} onClick={() => void generateFrame(which)} data-testid={`${which}-make`}>
+                            {making === which ? <Loader2 size={12} className="spin" /> : <Wand2 size={12} />}
+                            {making === which ? '만드는 중…' : frames[which] ? '다시 만들기' : '이미지 만들기'}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-                <span className="tiny muted">이미지 탭에서 만든 후보나 브리프 소재를 고를 수 있어요. 끝 프레임은 받는 모델만 써요(예: Kling 3.0).</span>
-              </div>
+              ) : (
+                <div className="col" style={{ gap: 6 }}>
+                  <span className="small muted">시작·끝 프레임 · 이 이미지에서 시작해 저 이미지로 끝나요 (선택)</span>
+                  <div className="row" style={{ gap: 10, alignItems: 'stretch' }}>
+                    <FrameSlot label="시작 프레임" value={frames.start} base={base} choices={frameChoices} onChange={(v) => setFrames((f) => ({ ...f, start: v }))} testId="frame-start" />
+                    <button className="icon-btn" style={{ alignSelf: 'center' }} title="시작·끝 바꾸기" disabled={!frames.start && !frames.end} onClick={() => setFrames((f) => ({ start: f.end, end: f.start }))}>
+                      <ArrowLeftRight size={14} />
+                    </button>
+                    <FrameSlot label="끝 프레임" value={frames.end} base={base} choices={frameChoices} onChange={(v) => setFrames((f) => ({ ...f, end: v }))} testId="frame-end" />
+                  </div>
+                  <span className="tiny muted">이미지 탭에서 만든 후보나 소재함의 이미지를 고를 수 있어요. 끝 프레임은 받는 모델만 써요(예: Kling 3.0).</span>
+                </div>
+              )}
 
               <div className="col" style={{ gap: 6 }}>
                 <div className="row">
-                  <span className="small muted grow">움직임 프롬프트 · 적은 그대로 보내요</span>
-                  <button className={`btn sm${helper ? ' primary' : ''}`} onClick={() => setHelper(!helper)}>
-                    <MessageCircle size={13} />
-                    프롬프트 도우미
-                  </button>
+                  <span className="small muted grow">
+                    {vMode === 'frames' ? <b>③ </b> : null}움직임 프롬프트 · 적은 그대로 보내요
+                  </span>
                 </div>
-                <textarea className="textarea" rows={3} value={vPrompt} onChange={(e) => setVPrompt(e.target.value)} placeholder="예) 카메라가 천천히 다가가고, 캐릭터가 고개를 들어 손을 흔든다. 부드럽고 경쾌한 리듬." data-testid="video-prompt" />
+                <textarea className="textarea" rows={3} value={vPrompt} onFocus={() => setTarget('video')} onChange={(e) => setVPrompt(e.target.value)} placeholder="예) 카메라가 천천히 다가가고, 캐릭터가 고개를 들어 손을 흔든다. 부드럽고 경쾌한 리듬." data-testid="video-prompt" />
               </div>
-              {helper && (
-                <PromptHelper
-                  ctx={{ media: '영상', model: vModel?.label ?? vModel?.model ?? '자동', lang: PROMPT_LANG_LABELS[lang], style: '-', kind: '-', framing: `시작 프레임 ${frames.start ? '있음' : '없음'} · 끝 프레임 ${frames.end ? '있음' : '없음'} · ${duration}초 · ${vRatio}`, prompt: vPrompt, projectId: pid, referenceFiles: [frames.start, frames.end].filter(Boolean).map((f) => f!.replace(/^composition\//, '')) }}
-                  refsCount={[frames.start, frames.end].filter(Boolean).length}
-                  onUse={setVPrompt}
-                />
-              )}
 
               <div className="row">
                 <span className="tiny faint grow">고른 계정의 크레딧을 써요. 한 편에 몇 분 걸려요.</span>
@@ -484,6 +653,21 @@ export function AssetGenerator({ brief, onAdd, onReplace, revise }: { brief: Bri
                       }
                     }}
                     onFrame={c.video ? undefined : (which) => useAsFrame(which, c.file)}
+                    onApply={
+                      intent && onApply && (intent.material.kind === 'video') === !!c.video
+                        ? async () => {
+                            try {
+                              const a = await studio.ai.keepCandidate(pid, c.id)
+                              await onApply(a)
+                              setCandidates((l) => l.filter((x) => x.id !== c.id))
+                              toast(`장면 ${intent.scene}의 「${intent.material.label}」에 넣었어요`, 'success')
+                              onIntentDone?.()
+                            } catch (e) {
+                              toast(errText(e), 'error')
+                            }
+                          }
+                        : undefined
+                    }
                     onReconvert={async () => {
                       try {
                         const info = await studio.ai.reconvert(pid, c.character!.dir, c.request.framing, Math.max(6, (c.character!.colors ?? 14) - 4))
@@ -567,7 +751,7 @@ function FrameSlot({ label, value, base, choices, onChange, testId }: { label: s
   )
 }
 
-function CandidateCard({ c, base, busy, onKeep, onDiscard, onAgain, onRevise, onReconvert, onFrame, replaces, onReplace }: { c: GenCandidate; base: string; busy: boolean; onKeep(): void; onDiscard(): void; onAgain(): void; onRevise(note: string, useImage: boolean): void; onReconvert(): Promise<void>; onFrame?(which: 'start' | 'end'): void; replaces?: Asset; onReplace?(): void }) {
+function CandidateCard({ c, base, busy, onKeep, onDiscard, onAgain, onRevise, onReconvert, onFrame, replaces, onReplace, onApply }: { c: GenCandidate; base: string; busy: boolean; onKeep(): void; onDiscard(): void; onAgain(): void; onRevise(note: string, useImage: boolean): void; onReconvert(): Promise<void>; onFrame?(which: 'start' | 'end'): void; replaces?: Asset; onReplace?(): void; onApply?(): void }) {
   const [compare, setCompare] = useState(false)
   const [working, setWorking] = useState(false)
   const [revising, setRevising] = useState(false)
@@ -601,7 +785,13 @@ function CandidateCard({ c, base, busy, onKeep, onDiscard, onAgain, onRevise, on
             기존 소재와 바꾸기
           </button>
         )}
-        <button className={`btn sm${replaces ? '' : ' primary'}`} onClick={onKeep}>
+        {onApply && (
+          <button className="btn sm primary" onClick={onApply} title="소재함에 넣고 콘티의 그 칸에 바로 넣어요" data-testid="candidate-apply">
+            <Check size={12} />
+            이 장면에 넣기
+          </button>
+        )}
+        <button className={`btn sm${replaces || onApply ? '' : ' primary'}`} onClick={onKeep}>
           <ImagePlus size={12} />
           소재에 추가
         </button>
@@ -751,13 +941,26 @@ interface HelperMsg {
   reply?: HelperReply
 }
 
-/** mini chat with the prompt helper (latest Haiku); its prompt goes into the box with one click */
-function PromptHelper({ ctx, refsCount, onUse }: { ctx: { media: string; model: string; lang: string; style: string; kind: string; framing: string; prompt: string; projectId: string; referenceFiles: string[] }; refsCount: number; onUse(p: string): void }) {
+/**
+ * The prompt helper (Haiku 5.5), always beside the 소재 panel: it reads the generator's form
+ * (useGenHelper) and its prompt goes into the prompt box last focused with one click. Images
+ * dropped on it (from the computer, the library or a storyboard sketch) are looked at too.
+ */
+export function PromptHelper() {
+  const { project, toast } = useStore()
+  const pid = project!.meta.id
+  const { ctx, target, use } = useGenHelper()
   const [sid, setSid] = useState(() => crypto.randomUUID())
   const [msgs, setMsgs] = useState<HelperMsg[]>([])
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
+  const [dropped, setDropped] = useState<string[]>([])
+  const [over, setOver] = useState(false)
+  const [base, setBase] = useState('')
   const list = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    void studio.projects.fileUrl(pid, '').then(setBase)
+  }, [pid])
   useEffect(() => {
     list.current?.scrollTo({ top: list.current.scrollHeight })
   }, [msgs.length, busy])
@@ -768,7 +971,8 @@ function PromptHelper({ ctx, refsCount, onUse }: { ctx: { media: string; model: 
     setMsgs((m) => [...m, { role: 'user', text: t }])
     setBusy(true)
     try {
-      const r = await studio.ai.askHelper(sid, t, ctx)
+      const c = ctx ?? { media: '이미지', model: '자동', lang: '영어', style: '스타일 없음', kind: '자유', framing: '-', prompt: '', projectId: pid, referenceFiles: [] }
+      const r = await studio.ai.askHelper(sid, t, { ...c, referenceFiles: [...c.referenceFiles, ...dropped] } as never)
       setMsgs((m) => [...m, { role: 'helper', text: r.text, reply: r }])
     } catch (e) {
       setMsgs((m) => [...m, { role: 'helper', text: errText(e) }])
@@ -776,40 +980,88 @@ function PromptHelper({ ctx, refsCount, onUse }: { ctx: { media: string; model: 
       setBusy(false)
     }
   }
+  /** images from the computer are copied into the project (feedback/refs) so the helper may read them */
+  const addFiles = async (paths: string[]) => {
+    const imgs = paths.filter((p) => /\.(png|jpe?g|webp|gif)$/i.test(p))
+    if (!imgs.length) return toast('참고할 이미지(png·jpg·webp)를 넣어 주세요.', 'error')
+    const rels: string[] = []
+    for (const f of imgs.slice(0, 4)) rels.push(await studio.projects.addFeedbackImage(pid, f))
+    setDropped((d) => [...d, ...rels].slice(-4))
+  }
+  const url = (rel: string) => (/^(\.studio|feedback|references)\//.test(rel) ? base + rel : `${base}composition/${rel}`)
+  const all = [...(ctx?.referenceFiles ?? []), ...dropped]
   return (
-    <div className="card" style={{ padding: 10, background: 'var(--surface-2)', display: 'flex', flexDirection: 'column', gap: 8 }} data-testid="prompt-helper">
-      <div className="row tiny muted">
-        <MessageCircle size={12} />
-        <span className="grow">
-          원하는 {ctx.media === '영상' ? '움직임' : '이미지'}과 언어(영어·중국어 …)를 말하면 프롬프트를 만들어 줘요. 최신 Haiku · 추론 높음
-          {refsCount > 0 ? ` · 고른 이미지 ${refsCount}개를 보고 써요` : ctx.media === '영상' ? ' · 시작·끝 프레임을 고르면 그 이미지도 보고 써요' : ' · 아래 참고 소재를 고르면 그 이미지도 보고 써요'}
-        </span>
+    <div
+      className="col"
+      style={{ height: '100%', gap: 8, padding: 12, background: 'var(--surface-2)', outline: over ? '2px dashed var(--accent)' : 'none', outlineOffset: -4 }}
+      data-testid="prompt-helper"
+      onDragOver={(e) => {
+        const types = [...e.dataTransfer.types]
+        if (!types.includes('Files') && !types.includes(ASSET_DRAG_TYPE)) return
+        e.preventDefault()
+        setOver(true)
+      }}
+      onDragLeave={(e) => e.currentTarget === e.target && setOver(false)}
+      onDrop={(e) => {
+        e.preventDefault()
+        setOver(false)
+        const asset = e.dataTransfer.getData(ASSET_DRAG_TYPE)
+        if (asset) {
+          if (!/\.(png|jpe?g|webp|gif)$/i.test(asset)) return toast('이미지 소재만 참고할 수 있어요.', 'error')
+          return setDropped((d) => [...d.filter((x) => x !== asset), asset].slice(-4))
+        }
+        void addFiles([...e.dataTransfer.files].map((f) => studio.app.pathForFile(f)).filter(Boolean))
+      }}
+    >
+      <div className="row" style={{ gap: 6 }}>
+        <MessageCircle size={14} color="var(--accent)" />
+        <b className="grow">프롬프트 도우미</b>
+        <span className="tiny faint">Haiku 5.5</span>
         <button
           className="btn ghost sm"
           style={{ height: 22 }}
           onClick={() => {
             setSid(crypto.randomUUID())
             setMsgs([])
+            setDropped([])
           }}
         >
           새 대화
         </button>
       </div>
-      <div ref={list} className="col" style={{ gap: 8, maxHeight: 260, overflow: 'auto' }}>
-        {msgs.length === 0 && <div className="tiny faint">예) 귀여운 개구쟁이 초록 모자 소년, 영어로</div>}
+      <div className="tiny muted" style={{ lineHeight: 1.5 }}>
+        지금 쓰는 칸: {targetLabel(target)}. 원하는 그림이나 움직임을 말하면 프롬프트를 써 줘요. 참고 이미지는 여기로 끌어 놓으세요.
+        {ctx?.scene ? ` · ${ctx.scene.split(' · ')[0]}` : ''}
+      </div>
+      {all.length > 0 && (
+        <div className="row" style={{ gap: 4, flexWrap: 'wrap' }}>
+          {all.map((r) => (
+            <div key={r} style={{ position: 'relative', width: 40, height: 40 }}>
+              {base && <img src={url(r)} style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 5, border: '1px solid var(--border)' }} />}
+              {dropped.includes(r) && (
+                <button className="icon-btn" title="빼기" onClick={() => setDropped((d) => d.filter((x) => x !== r))} style={{ position: 'absolute', right: -6, top: -6, width: 16, height: 16, borderRadius: 8, background: 'var(--surface-3)' }}>
+                  <X size={9} />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      <div ref={list} className="col grow" style={{ gap: 8, overflow: 'auto', minHeight: 0 }}>
+        {msgs.length === 0 && <div className="tiny faint">예) 비 오는 밤 골목의 네온, 영어로 · 첫 프레임은 텀블러 클로즈업으로</div>}
         {msgs.map((m, i) =>
           m.role === 'user' ? (
-            <div key={i} className="small" style={{ alignSelf: 'flex-end', background: 'var(--accent)', color: '#fff', padding: '6px 10px', borderRadius: 10, maxWidth: '85%' }}>
+            <div key={i} className="small" style={{ alignSelf: 'flex-end', background: 'var(--accent)', color: '#fff', padding: '6px 10px', borderRadius: 10, maxWidth: '88%' }}>
               {m.text}
             </div>
           ) : (
-            <div key={i} className="col" style={{ gap: 6, background: 'var(--surface)', padding: '8px 10px', borderRadius: 10, maxWidth: '92%' }}>
+            <div key={i} className="col" style={{ gap: 6, background: 'var(--surface)', padding: '8px 10px', borderRadius: 10, maxWidth: '96%' }}>
               {m.reply?.prompt ? (
                 <>
-                  <div className="small" style={{ whiteSpace: 'pre-wrap', lineHeight: 1.55 }}>{m.reply.prompt}</div>
+                  <div className="small" style={{ whiteSpace: 'pre-wrap', lineHeight: 1.55, userSelect: 'text' }}>{m.reply.prompt}</div>
                   {m.reply.memo && <div className="tiny muted" style={{ whiteSpace: 'pre-wrap' }}>{m.reply.memo}</div>}
-                  <button className="btn sm primary" style={{ alignSelf: 'flex-start' }} onClick={() => onUse(m.reply!.prompt!)} data-testid="helper-use">
-                    프롬프트 칸에 넣기
+                  <button className="btn sm primary" style={{ alignSelf: 'flex-start' }} disabled={!use} onClick={() => use?.(m.reply!.prompt!)} data-testid="helper-use">
+                    {targetLabel(target)} 칸에 넣기
                   </button>
                 </>
               ) : (
@@ -831,7 +1083,7 @@ function PromptHelper({ ctx, refsCount, onUse }: { ctx: { media: string; model: 
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && !e.nativeEvent.isComposing && void send()}
-          placeholder="원하는 이미지를 말해 주세요"
+          placeholder="원하는 그림이나 움직임을 말해 주세요"
           data-testid="helper-input"
         />
         <button className="btn primary" disabled={busy || !text.trim()} onClick={() => void send()}>
@@ -841,3 +1093,5 @@ function PromptHelper({ ctx, refsCount, onUse }: { ctx: { media: string; model: 
     </div>
   )
 }
+
+const ASSET_DRAG_TYPE = 'application/x-ms-asset'

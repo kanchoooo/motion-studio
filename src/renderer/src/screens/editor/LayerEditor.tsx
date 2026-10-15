@@ -335,7 +335,7 @@ function TransformSection({ id }: { id: string }) {
         )
       }
     >
-      {!el.movable && <div className="tiny" style={{ color: 'var(--warning)' }}>이 레이어는 위치를 옮길 수 없게 만들어졌어요. Claude에게 "절대 위치로 바꿔줘"라고 요청해 주세요.</div>}
+      {!el.movable && <div className="tiny" style={{ color: 'var(--warning)' }}>화면에 붙어 있는(sticky) 레이어라 옮길 수 없어요. 옮기려면 Claude에게 말해 주세요.</div>}
       {el.movable && !el.transformable && <FreeLayoutHint id={id} />}
       {el.transformable && !isPart && !isCamera && (
         <KeyRow id={id} label="기준점" props={['anchorX', 'anchorY']}>
@@ -396,8 +396,8 @@ function FreeLayoutHint({ id }: { id: string }) {
   const [busy, setBusy] = useState(false)
   return (
     <div className="row tiny" style={{ gap: 6 }} data-testid="flow-hint">
-      <span className="muted grow">그룹 안에 줄지어 놓인 레이어라 지금은 위치만 옮길 수 있어요.</span>
-      {el.parent && (
+      <span className="muted grow">{el.parent ? '그룹' : '화면'} 안에 줄지어 놓인 레이어라 지금은 위치만 옮길 수 있어요. 자유 배치로 바꾸면 크기·회전·효과도 쓸 수 있어요(화면은 그대로예요).</span>
+      {el.movable && (
         <button
           className="btn sm"
           disabled={busy}

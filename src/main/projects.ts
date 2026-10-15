@@ -1,5 +1,5 @@
 import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
-import { basename, extname, join } from 'node:path'
+import { basename, dirname, extname, join } from 'node:path'
 import { app, shell } from 'electron'
 import { emptyBrief, normalizeBrief, OUTPUT_PRESETS, type Asset, type AssetKind, type Brief, type OutputPresetId } from '@shared/brief'
 import { emptyOverrides, normalizeOverrides, overridesToScript, type Overrides } from '@shared/overrides'
@@ -13,12 +13,11 @@ import * as history from './history'
 import { probeMedia } from './media'
 import { candidateFolder, candidateTarget, discardCandidate } from './ai/generate'
 import type { GenCandidate } from '@shared/assetGen'
-import type { CollectItem } from '@shared/api'
 import { dataDir, runtimeFiles } from './paths'
 import { folderOf, folderPath, isInside, moveDir, moveTarget, scan } from './folders'
-import { writeBriefDoc } from './agent/briefDoc'
 import { serveFolder } from './preview-server'
 import { compositionHasVideo, HYPERFRAMES_JSON, starterComposition } from './template'
+import { repairCompositionHead } from './headFix'
 import { newId, nowIso, readJson, safeName, uniquePath, writeJson, writeText } from './util'
 
 const open = new Map<string, string>() // projectId -> folder
@@ -107,6 +106,8 @@ export function listProjects(): ProjectSummary[] {
 /** copies the app-managed runtime files into composition/ (keeps old projects current) */
 function syncManagedFiles(dir: string, overrides: Overrides): void {
   const comp = f.comp(dir)
+  // the app's head lines (Claude writes plain HyperFrames; older projects keep theirs)
+  repairCompositionHead(dir, dirname(runtimeFiles.gsap()))
   mkdirSync(join(comp, 'ms'), { recursive: true })
   mkdirSync(join(comp, 'vendor'), { recursive: true })
   mkdirSync(join(comp, 'assets'), { recursive: true })
@@ -152,7 +153,8 @@ export async function createProject(input: { name: string; presetId: OutputPrese
   mkdirSync(base, { recursive: true })
   const dir = uniquePath((n) => join(base, `${name}${n ? ` ${n + 1}` : ''}.msproj`))
   mkdirSync(dir, { recursive: true })
-  const meta: ProjectMeta = { id: newId(), name, createdAt: nowIso(), updatedAt: nowIso(), appVersion: app.getVersion() }
+  // 0.5: a new video is refined in the conversation first; hand edits open with 편집 활성화
+  const meta: ProjectMeta = { id: newId(), name, createdAt: nowIso(), updatedAt: nowIso(), appVersion: app.getVersion(), editable: false }
   const brief = emptyBrief(name, input.presetId, Math.max(1, Math.min(180, input.duration || 15)))
   const overrides = emptyOverrides()
   writeJson(f.meta(dir), meta)
@@ -259,7 +261,6 @@ export async function removeProject(dir: string): Promise<void> {
 export async function saveBrief(projectId: string, brief: Brief): Promise<ProjectState> {
   const dir = pathOf(projectId)
   writeJson(f.brief(dir), brief)
-  writeBriefDoc(dir, brief)
   touch(projectId)
   await history.record(dir, { actor: 'designer', summary: '브리프를 수정했어요' })
   return state(projectId)
@@ -327,7 +328,7 @@ export async function importAssets(projectId: string, sources: string[], opts: {
           file: `assets/${basename(p.file)}`,
           originalName: layered ? `${basename(src)} › ${p.name}` : basename(src),
           kind: guessKind(p.name, '.png'),
-          required: !layered,
+          required: false,
           timing: { mode: 'any' },
           position: 'any',
           transform: guessKind(p.name, '.png') === 'logo' ? 'none' : 'free',
@@ -347,7 +348,7 @@ export async function importAssets(projectId: string, sources: string[], opts: {
       file: `assets/${basename(dst)}`,
       originalName: basename(src),
       kind: guessKind(basename(src), ext),
-      required: true,
+      required: false,
       timing: { mode: 'any' },
       position: 'any',
       transform: guessKind(basename(src), ext) === 'logo' ? 'none' : 'free',
@@ -356,6 +357,48 @@ export async function importAssets(projectId: string, sources: string[], opts: {
     })
   }
   return out
+}
+
+// ---- the asset library (소재함): changed here, merged into the brief on disk ----
+
+/** the screen hears about library / output changes made here (also by Claude's tools) */
+let briefListener: ((projectId: string) => void) | null = null
+export const onBriefChanged = (fn: (projectId: string) => void) => (briefListener = fn)
+/** the project's state changed outside the screen (e.g. 편집 활성화 finished): the screen reloads it */
+export const notifyChanged = (projectId: string) => briefListener?.(projectId)
+
+function mutateBrief(projectId: string, fn: (b: Brief) => Brief): ProjectState {
+  const dir = pathOf(projectId)
+  const cur = normalizeBrief(readJson<Brief | null>(f.brief(dir), null) ?? emptyBrief(''))
+  writeJson(f.brief(dir), fn(cur))
+  touch(projectId)
+  briefListener?.(projectId)
+  return state(projectId)
+}
+
+/** files from the computer (or an attachment) into the library */
+export async function addToLibrary(projectId: string, files: string[], opts: { psd?: 'flat' | 'layers' } = {}): Promise<{ added: Asset[]; state: ProjectState }> {
+  const added = await importAssets(projectId, files, opts)
+  return { added, state: mutateBrief(projectId, (b) => ({ ...b, assets: [...b.assets, ...added] })) }
+}
+
+/** assets made elsewhere (a kept AI candidate) */
+export function addAssets(projectId: string, assets: Asset[]): ProjectState {
+  return mutateBrief(projectId, (b) => ({ ...b, assets: [...b.assets, ...assets.filter((a) => !b.assets.some((x) => x.file === a.file))] }))
+}
+
+export function removeAsset(projectId: string, assetId: string): ProjectState {
+  return mutateBrief(projectId, (b) => ({ ...b, assets: b.assets.filter((a) => a.id !== assetId) }))
+}
+
+/** a revised asset takes an old one's place in the library */
+export function replaceAsset(projectId: string, oldId: string, asset: Asset): ProjectState {
+  return mutateBrief(projectId, (b) => ({ ...b, assets: b.assets.map((a) => (a.id === oldId ? asset : a)) }))
+}
+
+/** the output spec (size, length, fps, export settings) without touching the rest of the brief */
+export function saveOutput(projectId: string, patch: Partial<Brief['output']>): ProjectState {
+  return mutateBrief(projectId, (b) => ({ ...b, output: { ...b.output, ...patch } }))
 }
 
 /**
@@ -469,39 +512,3 @@ export function removeFile(path: string): void {
   rmSync(path, { force: true })
 }
 
-/**
- * AI 웹 수집: the items the designer kept → assets (images, logos copied into
- * composition/assets/), brand colours and brand notes (facts, copy). The brief itself
- * is changed by the brief screen, which merges what comes back.
- */
-export async function keepCollected(projectId: string, items: CollectItem[]): Promise<{ assets: Asset[]; colors: { name: string; hex: string }[]; notes: string[] }> {
-  const dir = pathOf(projectId)
-  const assetsDir = join(f.comp(dir), 'assets')
-  mkdirSync(assetsDir, { recursive: true })
-  const assets: Asset[] = []
-  for (const it of items) {
-    if (!it.file || (it.type !== 'logo' && it.type !== 'image')) continue
-    const src = join(dir, it.file)
-    if (!existsSync(src)) continue
-    const ext = extname(src).toLowerCase()
-    const base = safeName(`web-${it.title || it.type}`, 'web').replace(/\s+/g, '_').slice(0, 40)
-    const dst = uniquePath((n) => join(assetsDir, `${base}${n ? `_${n + 1}` : ''}${ext}`))
-    copyFileSync(src, dst)
-    const meta = await probeMedia(dst)
-    assets.push({
-      id: newId(),
-      file: `assets/${basename(dst)}`,
-      originalName: `웹 · ${it.title || (it.type === 'logo' ? '로고' : '이미지')}`,
-      kind: it.type === 'logo' ? 'logo' : 'other',
-      required: false,
-      timing: { mode: 'any' },
-      position: 'any',
-      transform: it.type === 'logo' ? 'none' : 'free',
-      note: it.source ? `웹에서 모은 자료 · 출처 ${it.source} (사용 권한을 확인해 주세요)` : '웹에서 모은 자료 (사용 권한을 확인해 주세요)',
-      meta: { ...meta, bytes: statSync(dst).size },
-    })
-  }
-  const colors = items.filter((x) => x.type === 'color' && x.hex).map((x) => ({ name: x.title || x.hex!, hex: x.hex! }))
-  const notes = items.filter((x) => (x.type === 'fact' || x.type === 'copy') && x.text).map((x) => `${x.type === 'copy' ? '카피' : '사실'}: ${x.text}${x.source ? ` (출처 ${x.source})` : ''}`)
-  return { assets, colors, notes }
-}

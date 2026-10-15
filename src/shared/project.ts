@@ -32,6 +32,11 @@ export interface ProjectMeta {
   agentPermission?: 'ask' | 'all'
   /** made from a template: its fill-in slots are in .studio/template.json */
   template?: { id: string; name: string }
+  /**
+   * hand edits are open (편집 활성화 done). false: a 0.5+ project whose video is still refined in the
+   * conversation (the editor only shows it); missing: an older project — always editable.
+   */
+  editable?: boolean
 }
 
 export interface ProjectSummary {

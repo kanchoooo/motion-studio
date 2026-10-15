@@ -1,8 +1,8 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron'
 import type { AgentEvent, ExportOptions, ExportProgress, SendMessageInput, AgentPermission, HelperContext, TemplateValues } from '@shared/api'
-import type { Brief } from '@shared/brief'
+import type { Asset, Brief } from '@shared/brief'
 import type { Overrides } from '@shared/overrides'
 import { hasAccess, unlock } from './access'
 import { checkUpdate, downloadUpdate, installUpdate } from './updater'
@@ -17,11 +17,10 @@ import { previewBase } from './preview-server'
 import * as projects from './projects'
 import * as folders from './folders'
 import * as templates from './templates'
-import { writeBriefDoc } from './agent/briefDoc'
 import { cancelExport, exportAll, exportingDirs, listRenders, removeRender, startExport, updateRender } from './renders'
 import { createVariations, setFamilyStatus } from './variations'
-import { listBrands, removeBrand, saveBrand } from './brands'
-import { addReferenceFiles, addYoutube, listReferences, removeReference, updateReference } from './references'
+import { addReferenceFiles, addYoutube, listReferences, nearDuplicates, REFERENCE_EXTENSIONS, removeReference, updateReference } from './references'
+import { snapshot as hfSnapshot } from './hyperframes'
 import type { AiConnectProvider, AiLoginEvent, AiMediaKind, AiSettings, AiVoiceInfo, AudioCandidate, AudioCandidateList, LoginWindow } from '@shared/ai'
 import { loginBrowsers } from './ai/browser'
 import { refreshThumbnail } from './thumbnail'
@@ -37,7 +36,6 @@ import { answerPermission, askingFor, setPermissionHooks, type PermissionAnswer 
 import { projectForToken } from './agent/mcp-http'
 import { discardCandidate, generateCandidate, listCandidates, reconvert, writeCandidates } from './ai/generate'
 import { generateVideoCandidate } from './ai/generateVideo'
-import { cancelCollect, collectBrand, dropCollected, listCollected } from './ai/webCollect'
 import { askHelper } from './ai/promptHelper'
 import type { Framing, GenRequest, VideoGenRequest } from '@shared/assetGen'
 import { exportAePackage } from './ae/export'
@@ -72,7 +70,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
     if (/^https:\/\//.test(url)) return shell.openExternal(url)
   })
   handle('app:reveal', (path: string) => shell.showItemInFolder(path))
-  handle('app:pickFiles', async (kind: 'assets' | 'images' | 'any') => {
+  handle('app:pickFiles', async (kind: 'assets' | 'images' | 'media' | 'any') => {
     const win = getWindow()
     const opts: Electron.OpenDialogOptions = {
       properties: ['openFile', 'multiSelections'],
@@ -81,6 +79,8 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
           ? [{ name: '이미지·영상·소리', extensions: projects.ASSET_EXTENSIONS }]
           : kind === 'images'
             ? [{ name: '이미지', extensions: projects.FEEDBACK_IMAGE_EXTENSIONS }]
+            : kind === 'media'
+              ? [{ name: '이미지·영상', extensions: REFERENCE_EXTENSIONS }]
             : [{ name: '모든 파일', extensions: ['*'] }],
     }
     const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
@@ -170,7 +170,6 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
     const t = templates.projectSlots(dir)
     if (!t) throw new Error('템플릿으로 만든 프로젝트가 아니에요.')
     const r = await templates.applySlots(dir, t.slots, values)
-    writeBriefDoc(dir, projects.state(id).brief)
     projects.refreshFontCss(dir)
     projects.applyAudioEdits(dir)
     projects.touch(id)
@@ -230,6 +229,12 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
   handle('projects:assetUrl', (id: string, rel: string) => serveFolderUrl(join(projects.pathOf(id), 'composition')) + rel)
   handle('projects:fileUrl', (id: string, rel: string) => serveFolderUrl(projects.pathOf(id)) + rel)
   handle('projects:addFeedbackImage', (id: string, file: string) => projects.addFeedbackImage(id, file))
+  // the asset library (소재함) and the output spec: merged into brief.json here (never a stale whole brief)
+  handle('projects:addToLibrary', async (id: string, files: string[], opts?: { psd?: 'flat' | 'layers' }) => (await projects.addToLibrary(id, files, opts ?? {})).state)
+  handle('projects:addAssets', (id: string, assets: Asset[]) => projects.addAssets(id, assets))
+  handle('projects:removeAsset', (id: string, assetId: string) => projects.removeAsset(id, assetId))
+  handle('projects:replaceAsset', (id: string, oldId: string, asset: Asset) => projects.replaceAsset(id, oldId, asset))
+  handle('projects:saveOutput', (id: string, patch: Partial<Brief['output']>) => projects.saveOutput(id, patch))
 
   // ---- agent (live Claude Code session in a PTY) ----
   handle('agent:start', (id: string) => {
@@ -241,7 +246,17 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
   handle('agent:send', (input: SendMessageInput) => agent.send(input))
   handle('agent:interrupt', (id: string) => agent.interrupt(id))
   handle('agent:transcript', (id: string) => agent.transcript(id))
-  handle('agent:approveStoryboard', (id: string, itemId: string) => agent.approveStoryboard(id, itemId))
+  handle('agent:storyboard', (id: string) => agent.storyboard(id))
+  handle('agent:assign', (id: string, materialId: string, file: string | null) => agent.assign(id, materialId, file))
+  // files from the computer straight into a storyboard slot (they join the library too)
+  handle('agent:assignFiles', async (id: string, materialId: string, files: string[]) => {
+    const { added } = await projects.addToLibrary(id, files)
+    if (!added.length) throw new Error('이미지나 영상 파일을 넣어 주세요.')
+    return agent.assign(id, materialId, added[0].file)
+  })
+  handle('agent:pickVoice', (id: string, itemId: string, voiceId: string) => agent.pickVoice(id, itemId, voiceId))
+  // 편집 활성화: the video becomes editable by hand (Claude names the layers if needed)
+  handle('agent:activateEditing', (id: string) => agent.activateEditing(id))
   handle('agent:setModel', (id: string, opts: { model: string; effort: string }) => agent.setModel(id, opts))
   handle('agent:setPermission', (id: string, mode: AgentPermission) => {
     projects.touch(id, { agentPermission: mode === 'all' ? 'all' : undefined })
@@ -255,8 +270,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
     if (!item || item.role !== 'generated') throw new Error('이 소재 카드를 찾을 수 없어요.')
     if (action === 'keep') {
       const added = await projects.importAssets(id, item.files.map((f) => join(dir, 'composition', f.file)))
-      const st = projects.state(id)
-      await projects.saveBrief(id, { ...st.brief, assets: [...st.brief.assets, ...added.map((a) => ({ ...a, required: false, note: item.label ?? '' }))] })
+      projects.addAssets(id, added.map((a) => ({ ...a, required: false, note: item.label ?? '' })))
       agent.resolveGenerated(id, itemId, 'kept', note)
     } else if (action === 'discard') {
       for (const f of item.files) await shell.trashItem(join(dir, 'composition', f.file)).catch(() => {})
@@ -268,7 +282,6 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
     projectFor: projectForToken,
     mode: (id) => (projects.state(id).meta.agentPermission === 'all' ? 'all' : 'ask'),
     dirOf: (id) => projects.pathOf(id),
-    stopBlocked: (id) => agent.holdTurn(id),
     effortOf: (id) => agent.state(id).effort,
     changed: (id, asks, added) => {
       send('agent:event', { type: 'permissions', projectId: id, asks, added } satisfies AgentEvent)
@@ -284,10 +297,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
   ipcMain.on('terminal:write', (_e, id: string, data: string) => agent.write(id, data))
   ipcMain.on('terminal:resize', (_e, id: string, cols: number, rows: number) => agent.resize(id, cols, rows))
 
-  // ---- brand kits ----
-  handle('brands:list', () => listBrands())
-  handle('brands:save', (b: Parameters<typeof saveBrand>[0], logoSource?: string) => saveBrand(b, logoSource))
-  handle('brands:remove', (id: string) => removeBrand(id))
+  projects.onBriefChanged((id) => send('agent:event', { type: 'project-changed', projectId: id } satisfies AgentEvent))
 
   // ---- references ----
   const refsChanged = (id: string) => () => send('agent:event', { type: 'references-changed', projectId: id } satisfies AgentEvent)
@@ -361,6 +371,19 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
   // ---- renders ----
   const progress = (p: ExportProgress) => send('renders:progress', p)
   handle('renders:list', (id: string) => listRenders(projects.pathOf(id)))
+  // before export: frames almost identical to a reference, and imported media with their source / license
+  handle('renders:preflight', async (id: string) => {
+    const dir = projects.pathOf(id)
+    const imports = listGenerated(dir).filter((g) => g.tool === 'import' && existsSync(join(dir, 'composition', g.file)) && readFileSync(join(dir, 'composition', 'index.html'), 'utf8').includes(g.file))
+    let copies: { t: number; ref: string; refT: number }[] = []
+    if (listReferences(dir).some((r) => r.status === 'ready' && r.frames?.length)) {
+      const d = projects.state(id).brief.output.duration
+      const times = [0.1, 0.25, 0.4, 0.55, 0.7, 0.85].map((k) => +(d * k).toFixed(2))
+      const frames = await hfSnapshot(join(dir, 'composition'), times, join(dir, '.cache', 'similarity')).catch(() => [])
+      copies = (await nearDuplicates(dir, frames.map((file, i) => ({ t: times[i], file }))).catch(() => [])).map((h) => ({ t: h.t, ref: h.ref, refT: h.refT }))
+    }
+    return { copies, imports: imports.map((g) => ({ file: g.file, label: g.label, source: g.source, license: g.license, provider: g.provider })) }
+  })
   handle('renders:start', (id: string, opts: ExportOptions) => {
     notWhileBusy(id, '내보내 주세요')
     return startExport(id, opts, progress)
@@ -421,15 +444,6 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
   handle('ai:generated', (id: string) => listGenerated(projects.pathOf(id)))
   handle('ai:generate', (id: string, req: GenRequest) => generateCandidate(projects.pathOf(id), req))
   handle('ai:generateVideo', (id: string, req: VideoGenRequest) => generateVideoCandidate(projects.pathOf(id), req))
-  handle('ai:collect', (id: string, query: { brand: string; focus: string }) => collectBrand(projects.pathOf(id), query, (line) => send('ai:collect', { projectId: id, line })))
-  handle('ai:cancelCollect', () => cancelCollect())
-  handle('ai:collected', (id: string) => listCollected(projects.pathOf(id)))
-  handle('ai:dropCollected', (id: string, ids: string[]) => dropCollected(projects.pathOf(id), ids))
-  handle('ai:keepCollected', async (id: string, ids: string[]) => {
-    const all = listCollected(projects.pathOf(id))?.items ?? []
-    const kept = await projects.keepCollected(id, all.filter((x) => ids.includes(x.id)))
-    return { ...kept, left: dropCollected(projects.pathOf(id), ids) }
-  })
   handle('ai:candidates', (id: string) => listCandidates(projects.pathOf(id)))
   handle('ai:discardCandidate', (id: string, cid: string) => {
     discardCandidate(projects.pathOf(id), cid)
@@ -453,7 +467,8 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
   handle('ai:askHelper', (sid: string, message: string, ctx: HelperContext & { projectId?: string; referenceFiles?: string[] }) => {
     // the generator's picked images → files the helper can look at: reference assets are
     // composition-relative, video frames may also be candidates (.studio/generations/…)
-    const refs = ctx.projectId ? (ctx.referenceFiles ?? []).map((r) => (r.startsWith('.studio/') ? join(projects.pathOf(ctx.projectId!), r) : join(projects.pathOf(ctx.projectId!), 'composition', r))).filter((f) => !relative(projects.pathOf(ctx.projectId!), f).startsWith('..')) : []
+    // (and images dropped on the helper: feedback/refs/…, storyboard sketches: .studio/…, attachments: references/…)
+    const refs = ctx.projectId ? (ctx.referenceFiles ?? []).map((r) => (/^(\.studio|feedback|references)\//.test(r) ? join(projects.pathOf(ctx.projectId!), r) : join(projects.pathOf(ctx.projectId!), 'composition', r))).filter((f) => !relative(projects.pathOf(ctx.projectId!), f).startsWith('..')) : []
     return askHelper(sid, message, { ...ctx, references: refs })
   })
   handle('ai:codexStatus', (force?: boolean) => codexStatus(!!force))

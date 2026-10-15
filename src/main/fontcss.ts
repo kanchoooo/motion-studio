@@ -18,9 +18,10 @@ export function usedFamilies(html: string, overrides: Overrides): string[] {
     }
   }
   // a value is a run of quoted names and plain characters; it ends at ; } < > or the quote closing a style attribute
-  for (const m of html.matchAll(/font-family\s*:\s*((?:"[^"]*"|'[^']*'|[^;}"'<>])+)/gi)) add(m[1].replace(/!important/i, ''))
+  // (a quoted name never holds < > or a line break: the quote closing a style attribute is not one)
+  for (const m of html.matchAll(/font-family\s*:\s*((?:"[^"<>\n]*"|'[^'<>\n]*'|[^;}"'<>])+)/gi)) add(m[1].replace(/!important/i, ''))
   for (const m of html.matchAll(/fontFamily\s*:\s*['"]([^'"]+)['"]/g)) add(m[1])
-  for (const m of html.matchAll(/font\s*:\s*[^;}"<>]*?\d+px(?:\/[\d.]+)?\s+((?:"[^"]*"|'[^']*'|[^;}"'<>])+)/gi)) add(m[1])
+  for (const m of html.matchAll(/font\s*:\s*[^;}"<>]*?\d+px(?:\/[\d.]+)?\s+((?:"[^"<>\n]*"|'[^'<>\n]*'|[^;}"'<>])+)/gi)) add(m[1])
   for (const e of Object.values(overrides.elements)) if (e.style?.fontFamily) add(e.style.fontFamily)
   return [...names]
 }

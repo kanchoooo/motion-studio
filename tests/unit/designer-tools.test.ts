@@ -26,7 +26,7 @@ describe('designer edits for Claude', async () => {
   o.layers = [{ id: 'Lmine', kind: 'shape', label: '내 도형', x: 0, y: 0, w: 100, h: 100 }]
   o.duplicates = [{ id: 'Dcopy', of: 'cta' }]
   await projects.saveOverrides(p.meta.id, o, '준비')
-  const server = buildStudioServer(p.meta.id, { onStoryboard() {}, onAudioCandidates() {}, onGenerated() {} })
+  const server = buildStudioServer(p.meta.id, { onStoryboard() {}, onAudioCandidates() {}, onGenerated() {}, onVoices() {}, onBuildStart() {} })
   const [a, b] = InMemoryTransport.createLinkedPair()
   await server.connect(a)
   const client = new Client({ name: 'test', version: '1' })
