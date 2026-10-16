@@ -362,7 +362,7 @@ try {
     { id: 'menu-photo', file: photo, note: '이 사진으로 바꿔 줘' },
     { id: 'order-btn', file: buttonLook, note: '이 버튼을 붙인 이미지 스타일처럼 바꿔 줘' },
   ]
-  await win.getByTestId('canvas-mark-tools').getByTestId('tool-pin').click()
+  await win.getByTestId('tool-pin').click()
   for (const p of pins) {
     const m = await middle(p.id)
     await win.mouse.click(m.x, m.y)

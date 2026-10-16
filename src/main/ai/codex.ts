@@ -4,11 +4,12 @@
 // → account/read + account/rateLimits/read), which calls no model and spends
 // nothing; generation runs `codex exec` read-only and takes the picture from
 // $CODEX_HOME/generated_images/<thread id>/. (Same reading as the 관제센터 dashboard.)
-import { execFile, spawn } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import type { CodexStatus } from '@shared/ai'
+import { killTree, spawnCommand } from '../spawn-cmd'
 
 const home = homedir()
 const codexHome = () => process.env.CODEX_HOME || join(home, '.codex')
@@ -47,11 +48,11 @@ export async function codexBinary(): Promise<string | null> {
   return (binCache = null)
 }
 
-/** spawns codex (a .cmd on Windows needs the shell) */
+/** spawns codex (a .cmd on Windows goes through cmd.exe with its arguments kept whole) */
 async function run(args: string[], opts: { cwd?: string } = {}) {
   const bin = await codexBinary()
   if (!bin) throw new Error('Codex CLI가 설치돼 있지 않아요.')
-  return spawn(bin, args, { cwd: opts.cwd, env: await codexEnv(), shell: /\.cmd$/i.test(bin), stdio: ['pipe', 'pipe', 'pipe'] })
+  return spawnCommand(bin, args, { cwd: opts.cwd, env: await codexEnv() })
 }
 
 /** asks `codex app-server` (no model call): account and rate limits */
@@ -63,7 +64,7 @@ async function appServer(timeoutMs = 25_000): Promise<{ account?: Record<string,
     const done = () => {
       clearTimeout(timer)
       try {
-        pr.kill()
+        killTree(pr)
       } catch {
         /* gone */
       }
@@ -124,10 +125,14 @@ export async function codexStatus(force = false): Promise<CodexStatus> {
     }
     const loggedIn = !!acc && !/401|unauthori[sz]ed|token_expired|not logged/i.test(r.error ?? '')
     const reached = !!(rl.rateLimitReachedType || rl.spendControlReached) || r.limits?.ordinaryUsageAllowed === false || limits.some((l) => l.usedPercent >= 100)
+    // Codex could not reach ChatGPT (it reads the account over the network): not a sign-in problem
+    const offline = !acc && /timed? ?out|timeout|network|connect|dns|unreachable|답하지 않았어요/i.test(r.error ?? '')
     const reason = !loggedIn
       ? /401|unauthori[sz]ed|token_expired/i.test(r.error ?? '')
         ? 'Codex 로그인이 만료됐어요. 터미널에서 codex login을 한 번 해 주세요.'
-        : `Codex에 로그인돼 있지 않아요. 터미널에서 codex login을 해 주세요.${r.error ? ` (${r.error.slice(0, 120)})` : ''}`
+        : offline
+          ? `Codex가 ChatGPT 서버에 연결하지 못했어요. 인터넷 연결을 확인하고 잠시 뒤 다시 시도해 주세요.${r.error ? ` (${r.error.slice(0, 120)})` : ''}`
+          : `Codex에 로그인돼 있지 않아요. 터미널에서 codex login을 해 주세요.${r.error ? ` (${r.error.slice(0, 120)})` : ''}`
       : reached
         ? `Codex 사용 한도에 닿았어요.${limits.find((l) => l.usedPercent >= 100)?.resetsAt ? ` ${new Date(limits.find((l) => l.usedPercent >= 100)!.resetsAt!).toLocaleString('ko-KR')}에 풀려요.` : ''}`
         : acc?.type && acc.type !== 'chatgpt'
@@ -186,7 +191,7 @@ export async function codexImage(opts: { prompt: string; ratio: string; referenc
   let stderr = ''
   pr.stderr.on('data', (d: Buffer) => (stderr = (stderr + d.toString('utf8')).slice(-2000)))
   const code = await new Promise<number | null>((resolve) => {
-    const limit = setTimeout(() => pr.kill(), 6 * 60_000)
+    const limit = setTimeout(() => killTree(pr), 6 * 60_000)
     pr.on('close', (c) => {
       clearTimeout(limit)
       resolve(c)

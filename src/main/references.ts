@@ -93,6 +93,9 @@ export function addYoutube(dir: string, url: string, notify: Notify): ReferenceI
     bin.ytdlp(),
     [
       '--no-playlist', '--no-progress', '--no-warnings',
+      // YouTube's JS challenges need a JavaScript runtime (without one formats go missing and
+      // downloads fail): the app's own Electron runs as Node for it — nothing to install
+      '--js-runtimes', `node:${process.execPath}`,
       '--match-filter', 'duration <= 600',
       '-f', 'bv*[height<=720][ext=mp4]+ba[ext=m4a]/b[height<=720][ext=mp4]/b[height<=720]/b',
       '--merge-output-format', 'mp4',
@@ -101,11 +104,13 @@ export function addYoutube(dir: string, url: string, notify: Notify): ReferenceI
       '-o', join(folder, 'source.%(ext)s'),
       url.trim(),
     ],
-    { windowsHide: true },
+    { windowsHide: true, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } },
   )
   downloads.set(id, child)
+  // what it says (a skipped long video is said on stdout, errors on stderr); read so the pipe never fills
   let err = ''
-  child.stderr.on('data', (d) => (err += d))
+  child.stderr.on('data', (d) => (err = (err + d).slice(-20_000)))
+  child.stdout.on('data', (d) => (err = (err + d).slice(-20_000)))
   child.on('error', () => {
     downloads.delete(id)
     patch(dir, id, { status: 'error', error: '영상을 내려받지 못했어요. 주소와 인터넷 연결을 확인해 주세요.' }, notify)
@@ -116,7 +121,7 @@ export function addYoutube(dir: string, url: string, notify: Notify): ReferenceI
     if (!existsSync(folder) || !listReferences(dir).some((x) => x.id === id)) return
     const file = readdirSync(folder).find((f) => f.startsWith('source.') && !f.endsWith('.json') && !f.endsWith('.part'))
     if (code !== 0 || !file) {
-      patch(dir, id, { status: 'error', error: /duration/.test(err) ? '10분이 넘는 영상은 레퍼런스로 쓸 수 없어요.' : '영상을 내려받지 못했어요. 주소와 인터넷 연결을 확인해 주세요.' }, notify)
+      patch(dir, id, { status: 'error', error: youtubeError(err) }, notify)
       return
     }
     let title = '유튜브 영상'
@@ -129,6 +134,21 @@ export function addYoutube(dir: string, url: string, notify: Notify): ReferenceI
     void analyze(dir, id, notify)
   })
   return item
+}
+
+/** why yt-dlp could not download, said for the designer (its own words follow when nothing matches) */
+export function youtubeError(stderr: string): string {
+  const said = stderr.split(/\r?\n/).filter((l) => /^ERROR:/.test(l.trim())).pop()?.replace(/^\s*ERROR:\s*(\[[^\]]+\]\s*)?([\w-]+:\s*)?/, '').trim() ?? ''
+  const all = `${said}\n${stderr}`
+  if (/does not pass filter|duration/i.test(all) && /600|filter/i.test(all)) return '10분이 넘는 영상은 레퍼런스로 쓸 수 없어요.'
+  if (/not a bot|confirm you.re not|sign in to confirm/i.test(all)) return '유튜브가 자동 접속으로 보고 막았어요. 잠시 뒤 다시 시도하거나, 영상을 내려받아 파일로 첨부해 주세요.'
+  if (/private video/i.test(all)) return '비공개 영상이라 내려받을 수 없어요.'
+  if (/age|inappropriate|confirm your age/i.test(said)) return '연령 제한 영상이라 로그인 없이 내려받을 수 없어요. 파일로 첨부해 주세요.'
+  if (/members.only|join this channel/i.test(all)) return '채널 멤버십 전용 영상이라 내려받을 수 없어요.'
+  if (/live event|is live|premieres/i.test(all)) return '라이브·최초 공개 중인 영상은 끝난 뒤에 받을 수 있어요.'
+  if (/unavailable|removed|does not exist|not available in your country/i.test(all)) return '볼 수 없는 영상이에요(삭제됐거나 지역 제한). 주소를 확인해 주세요.'
+  if (/getaddrinfo|timed out|connection|network|unable to download webpage/i.test(all)) return '영상을 내려받지 못했어요. 인터넷 연결을 확인해 주세요.'
+  return `영상을 내려받지 못했어요.${said ? ` (${said.slice(0, 160)})` : ' 주소와 인터넷 연결을 확인해 주세요.'}`
 }
 
 /** scene-change keyframes + dense samples inside the designer's ranges */

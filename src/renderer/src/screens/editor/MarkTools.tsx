@@ -1,5 +1,5 @@
 // Marking what to change on the video (feedback for Claude): an area (M) or pins (P), labelled and in
-// the marks' colour — in the chat box and floating on the canvas.
+// the marks' colour — in the chat box.
 import { MapPin, SquareDashed } from 'lucide-react'
 import { useEditor } from './editorStore'
 

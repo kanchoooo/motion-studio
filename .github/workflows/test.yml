@@ -1,0 +1,26 @@
+# Type check and unit tests on every pushed branch — no installers, nothing published.
+# The Windows run covers what a Mac cannot: cmd.exe argument handling (codex.cmd), Windows paths.
+name: test
+on:
+  workflow_dispatch:
+  push:
+    branches: ['**']
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      # some unit tests run FFmpeg: this machine's copy
+      - run: node scripts/fetch-binaries.mjs
+      - run: npm test

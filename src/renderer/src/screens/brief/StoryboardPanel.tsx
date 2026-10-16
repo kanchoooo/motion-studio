@@ -7,6 +7,7 @@ import { Clapperboard, Film, FolderOpen, Image as ImageIcon, Sparkles, X } from 
 import type { StoryboardScene, StoryMaterial } from '@shared/api'
 import { cleanError, studio, useStore } from '../../store'
 import { ASSET_DRAG, useBriefUi } from './briefUi'
+import { SceneViewer, ZoomMark } from '../../components/SceneViewer'
 
 const IMAGE = /\.(png|jpe?g|webp|gif|svg|avif)$/i
 const VIDEO = /\.(mp4|mov|webm|m4v)$/i
@@ -20,6 +21,8 @@ export function StoryboardPanel({ onClose }: { onClose(): void }) {
   }, [pid])
   const o = project!.brief.output
   const sb = storyboard?.storyboard
+  // a sketch opened large (scene number)
+  const [viewing, setViewing] = useState<number | null>(null)
 
   return (
     <>
@@ -46,12 +49,13 @@ export function StoryboardPanel({ onClose }: { onClose(): void }) {
           <div className="col" style={{ gap: 14 }}>
             <div className="small" style={{ lineHeight: 1.65 }}>{sb.concept}</div>
             {sb.scenes.map((s) => (
-              <SceneRow key={s.n} scene={s} base={base} ratio={o.width / o.height} />
+              <SceneRow key={s.n} scene={s} base={base} ratio={o.width / o.height} onOpen={() => setViewing(s.n)} />
             ))}
             {sb.notes && <div className="tiny muted">{sb.notes}</div>}
           </div>
         )}
       </div>
+      {sb && viewing != null && base && <SceneViewer scenes={sb.scenes} n={viewing} base={base} onShow={setViewing} onClose={() => setViewing(null)} />}
       {sb && <LibraryStrip base={base} />}
       {sb && (
         <div className="row" style={{ padding: '10px 14px', borderTop: '1px solid var(--border)', gap: 10 }}>
@@ -97,12 +101,19 @@ function LibraryStrip({ base }: { base: string }) {
   )
 }
 
-function SceneRow({ scene: s, base, ratio }: { scene: StoryboardScene; base: string; ratio: number }) {
+function SceneRow({ scene: s, base, ratio, onOpen }: { scene: StoryboardScene; base: string; ratio: number; onOpen(): void }) {
   const portrait = ratio < 1
   return (
     <div className="card" style={{ padding: 12, display: 'grid', gridTemplateColumns: `${portrait ? 120 : 220}px 1fr`, gap: 14 }} data-testid={`scene-${s.n}`}>
       <div style={{ aspectRatio: String(ratio), borderRadius: 8, overflow: 'hidden', background: 'var(--canvas)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        {s.frame && base ? <img src={base + s.frame} style={{ width: '100%', height: '100%', objectFit: 'contain' }} data-testid="scene-frame" /> : <span className="tiny faint">시안 없음</span>}
+        {s.frame && base ? (
+          <button className="scene-frame-open" title="크게 보기" onClick={onOpen} data-testid="scene-frame-open">
+            <img src={base + s.frame} style={{ width: '100%', height: '100%', objectFit: 'contain' }} data-testid="scene-frame" />
+            <ZoomMark />
+          </button>
+        ) : (
+          <span className="tiny faint">시안 없음</span>
+        )}
       </div>
       <div className="col" style={{ gap: 6, minWidth: 0 }}>
         <div className="row" style={{ gap: 8 }}>

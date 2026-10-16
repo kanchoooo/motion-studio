@@ -10,7 +10,7 @@
 //  - a text with its own box offers 배경 따로 떼기
 //  - editing checks: a click in and out of a number field saves nothing; ⇧⌘D's second half shows;
 //    ⌘A leaves the camera out; shortcuts work with the Korean keyboard on
-//  - the 영역 / 핀 tools are on the canvas; pins take images and videos (a video gets a still for
+//  - the 영역 / 핀 tools are in the chat box only (a hint on the canvas while marking); pins take images and videos (a video gets a still for
 //    Claude); what they are for is written in the pin's comment, as before (no picker)
 // MS_SANDBOX=<sandbox with the "앱 주문 런칭" project> node tests/e2e/edit-usability.mjs
 // (the sandbox is copied; the copy is removed afterwards)
@@ -249,13 +249,15 @@ try {
   await win.keyboard.press('Escape')
   // with the Korean keyboard on, P is "ㅔ": the key still means 핀
   await win.evaluate(() => document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'ㅔ', code: 'KeyP', bubbles: true })))
-  check('shortcuts work with the Korean keyboard on (ㅔ → 핀)', await until(async () => (await win.getByTestId('canvas-mark-tools').getByTestId('tool-pin').getAttribute('class'))?.includes('on')))
+  check('shortcuts work with the Korean keyboard on (ㅔ → 핀)', await until(async () => (await win.getByTestId('tool-pin').getAttribute('class'))?.includes('on')))
   await win.keyboard.press('Escape')
 
   // ---- pins with files ----
-  const tools = win.getByTestId('canvas-mark-tools')
-  check('the 영역 / 핀 tools are on the canvas, labelled', (await tools.isVisible()) && (await tools.innerText()).includes('핀') && (await tools.innerText()).includes('영역'))
-  await tools.getByTestId('tool-pin').click()
+  // the 영역 / 핀 buttons are in the chat box only; the canvas shows a hint only while marking
+  check('no 수정 요청 pill on the canvas', (await win.getByTestId('canvas-mark-tools').count()) === 0 && (await win.getByTestId('mark-hint').count()) === 0)
+  check('the 영역 / 핀 tools are in the chat box, labelled', (await win.getByTestId('tool-pin').count()) === 1 && (await win.getByTestId('tool-pin').innerText()).includes('핀') && (await win.getByTestId('tool-box').innerText()).includes('영역'))
+  await win.getByTestId('tool-pin').click()
+  check('…while marking, the canvas says what to do', await until(async () => (await win.getByTestId('mark-hint').count()) === 1))
   for (const [x, y] of [[400, 300], [900, 500]]) {
     const q = await at(x, y)
     await win.mouse.click(q.x, q.y)

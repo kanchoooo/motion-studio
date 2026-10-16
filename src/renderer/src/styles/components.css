@@ -1536,3 +1536,87 @@
 .gen-card .row {
   flex-wrap: wrap;
 }
+
+/* 콘티 크게 보기 */
+.scene-viewer {
+  background: rgba(8, 8, 12, 0.88);
+  z-index: 200;
+}
+.scene-viewer-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  max-width: calc(100vw - 140px);
+  max-height: calc(100vh - 40px);
+}
+.scene-viewer-body img {
+  max-width: 100%;
+  max-height: calc(100vh - 190px);
+  object-fit: contain;
+  border-radius: 10px;
+  background: var(--canvas);
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.5);
+  user-select: none;
+}
+.scene-viewer-info {
+  width: min(760px, 100%);
+  max-height: 130px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.scene-viewer-nav,
+.scene-viewer-close {
+  position: absolute;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+}
+.scene-viewer-nav {
+  top: 50%;
+  transform: translateY(-50%);
+  width: 48px;
+  height: 48px;
+  border-radius: 24px;
+}
+.scene-viewer-close {
+  top: 16px;
+  right: 16px;
+  width: 38px;
+  height: 38px;
+  border-radius: 19px;
+}
+.scene-viewer-nav:hover,
+.scene-viewer-close:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+.scene-frame-open {
+  position: relative;
+  cursor: zoom-in;
+  padding: 0;
+  border: 0;
+  background: none;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.scene-zoom-mark {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  display: flex;
+  padding: 3px;
+  border-radius: 5px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.45);
+  opacity: 0.75;
+  pointer-events: none;
+}
+.scene-frame-open:hover .scene-zoom-mark {
+  opacity: 1;
+}

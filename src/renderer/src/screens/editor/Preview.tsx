@@ -8,7 +8,6 @@ import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { Clapperboard, Hash, Loader2, Magnet, Maximize, Ruler, Smartphone } from 'lucide-react'
 import { isSpatial, sortedKeys, valueAt, type LayerMask } from '@shared/overrides'
 import { Menu, type MenuItem } from '../../components/ui'
-import { ToolButtons } from './MarkTools'
 import { studio, useStore } from '../../store'
 import { freeLayout, isKeyed, isLocked, labelOf, outermost, ov, setProps, valueNow } from './edit'
 import { elementsForMark, elementsUnder, useEditor } from './editorStore'
@@ -765,16 +764,14 @@ export function Preview({ active }: { active: boolean }) {
         </button>
         <SafeZoneMenu zone={out.safeZone} on={!!safe && safeOn} onChange={(_zone, on) => setLayout({ guides: on })} />
       </div>
-      {/* marking what to change: always at hand on the canvas */}
-      <div className="canvas-mark-tools" style={{ top: 8 + pad, left: 8 + pad }} data-testid="canvas-mark-tools">
-        <span className="tiny muted" style={{ paddingLeft: 4 }}>수정 요청</span>
-        <ToolButtons />
-        {markMode && (
-          <span className="tiny" style={{ color: 'var(--mark)', fontWeight: 650 }}>
+      {/* the 영역 / 핀 buttons live in the chat box; while marking, the canvas says what to do */}
+      {markMode && (
+        <div className="canvas-mark-tools" style={{ top: 8 + pad, left: 8 + pad }} data-testid="mark-hint">
+          <span className="tiny" style={{ color: 'var(--mark)', fontWeight: 650, padding: '0 6px' }}>
             {ed.tool === 'pin' ? '바꿀 곳을 클릭하세요 · 여러 개 찍어도 돼요' : '바꿀 곳을 드래그하세요'} · 요청은 채팅창에 (Esc: 끝)
           </span>
-        )}
-      </div>
+        </div>
+      )}
       {ed.maskDraw && (
         <div className="lock-banner" style={{ top: 10 + pad }}>
           <b>마스크 그리기</b> · 캔버스에서 끌어서 영역을 정해요 (Esc: 취소)

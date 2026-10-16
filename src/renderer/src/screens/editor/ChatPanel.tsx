@@ -9,6 +9,7 @@ import { studio, useStore } from '../../store'
 import { useBriefUi } from '../brief/briefUi'
 import { useEditor } from './editorStore'
 import { ToolButtons } from './MarkTools'
+import { SceneViewer, ZoomMark } from '../../components/SceneViewer'
 import { captureAnnotatedFrame } from './Preview'
 
 const YT = /https?:\/\/(?:www\.|m\.)?(?:youtube\.com\/(?:watch\?[^\s]+|shorts\/[\w-]+|embed\/[\w-]+)|youtu\.be\/[\w-]+)[^\s]*/gi
@@ -835,6 +836,8 @@ function StoryboardCard({ item }: { item: Extract<ChatItem, { role: 'storyboard'
     setTab('brief')
     useBriefUi.setState({ panel: 'storyboard' })
   }
+  // a sketch opened large (scene number)
+  const [viewing, setViewing] = useState<number | null>(null)
   return (
     <div className="card fade-in" style={{ padding: 0, overflow: 'hidden', opacity: item.status === 'superseded' ? 0.55 : 1 }} data-testid="storyboard-card">
       <div className="row" style={{ padding: '10px 12px', background: 'var(--surface-2)', borderBottom: '1px solid var(--border)' }}>
@@ -855,7 +858,12 @@ function StoryboardCard({ item }: { item: Extract<ChatItem, { role: 'storyboard'
             {sb.scenes.map((s) => (
               <div key={s.n} className="col" style={{ gap: 3 }}>
                 <div style={{ aspectRatio: `${o.width} / ${o.height}`, borderRadius: 6, overflow: 'hidden', background: 'var(--canvas)', border: '1px solid var(--border)' }}>
-                  {s.frame && base && <img src={base + s.frame} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />}
+                  {s.frame && base && (
+                    <button className="scene-frame-open" title="크게 보기" onClick={() => setViewing(s.n)} data-testid="storyboard-frame-open">
+                      <img src={base + s.frame} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                      <ZoomMark />
+                    </button>
+                  )}
                 </div>
                 <span className="tiny muted ellipsis">
                   {s.n}. {s.title}
@@ -891,6 +899,7 @@ function StoryboardCard({ item }: { item: Extract<ChatItem, { role: 'storyboard'
         ))}
         {sb.notes && <div className="tiny muted">{sb.notes}</div>}
       </div>
+      {viewing != null && base && <SceneViewer scenes={sb.scenes} n={viewing} base={base} onShow={setViewing} onClose={() => setViewing(null)} />}
       {item.status === 'pending' && (
         <div className="row" style={{ padding: '0 12px 12px', gap: 6, flexWrap: 'wrap' }}>
           {slots.length > 0 && (
