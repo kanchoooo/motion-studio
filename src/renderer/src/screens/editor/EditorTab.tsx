@@ -268,7 +268,7 @@ function EditLockBanner() {
       </div>
     )
   return (
-    <div key={at} className={`lock-banner${flash}`} data-testid="edit-lock">
+    <div key={at} className={`lock-banner bottom${flash}`} data-testid="edit-lock">
       <Loader2 size={13} className="spin" color="var(--accent)" />
       <span>
         <b>아직 Claude가 작업 중이에요.</b> 지금은 보기·재생만 되고, 작업이 끝나면 {viewOnly ? '편집을 켤 수 있어요.' : '바로 편집할 수 있어요.'}

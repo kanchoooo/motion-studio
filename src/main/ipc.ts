@@ -256,6 +256,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
     return agent.assign(id, materialId, added[0].file)
   })
   handle('agent:pickVoice', (id: string, itemId: string, voiceId: string) => agent.pickVoice(id, itemId, voiceId))
+  handle('agent:pickAudio', (id: string, itemId: string, candidateId: string) => agent.pickAudio(id, itemId, candidateId))
   // 편집 활성화: the video becomes editable by hand (Claude names the layers if needed)
   handle('agent:activateEditing', (id: string) => agent.activateEditing(id))
   handle('agent:splitLayer', (id: string, layerId: string) => agent.splitLayer(id, layerId))
@@ -501,6 +502,8 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
   })
   handle('ai:useAudioCandidate', async (id: string, item: AudioCandidate) => {
     const dir = projects.pathOf(id)
+    // a listening copy already in the project: that file
+    if (item.file && !item.file.includes('..') && existsSync(join(dir, 'composition', item.file))) return item.file
     const url = item.downloadUrl ?? item.previewUrl
     if (!url) throw new Error('이 후보는 내려받을 수 있는 파일 주소가 없어요. 아트리스트에서 직접 받아서 첨부해 주세요.')
     const m = await importUrl(join(dir, 'composition'), url, item.source.replace(/[^a-z0-9-]/gi, '').slice(0, 20) || 'audio')

@@ -14,6 +14,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
+  Crosshair,
   Diamond,
   Download,
   Eye,
@@ -50,7 +51,7 @@ import { makeTimeMap } from '@shared/timeRemap'
 import { FontSelect } from '../../components/FontSelect'
 import { ColorField, NumberField, Segmented, Toggle } from '../../components/ui'
 import { cleanError, studio, useStore } from '../../store'
-import { anyNow, freeLayout, isKeyed, keyTimes, labelOf, releaseOwn, reorder, setOwnNow, setProps, snapT, takeOver, toggleKeyHere, toggleStopwatch } from './edit'
+import { anchorToCenter, anyNow, freeLayout, isKeyed, keyTimes, labelOf, releaseOwn, reorder, setOwnNow, setProps, snapT, takeOver, toggleKeyHere, toggleStopwatch } from './edit'
 import { useEditor } from './editorStore'
 import { useOverrides } from './overrides'
 import { propsNow } from './player'
@@ -342,6 +343,9 @@ function TransformSection({ id }: { id: string }) {
         <KeyRow id={id} label="기준점" props={['anchorX', 'anchorY']}>
           <PropField id={id} p="anchorX" label="X" />
           <PropField id={id} p="anchorY" label="Y" />
+          <button className="icon-btn" style={{ width: 20, flex: 'none' }} title="기준점을 레이어 가운데로 (화면에서 레이어는 그대로예요)" disabled={!v('anchorX') && !v('anchorY')} onClick={() => anchorToCenter(id)} data-testid="anchor-center">
+            <Crosshair size={12} />
+          </button>
         </KeyRow>
       )}
       {el.movable &&
@@ -639,6 +643,8 @@ function counterFrom(text: string, t: number): TextCounter {
 }
 
 function TextSection({ id }: { id: string }) {
+  // values at the playhead: drawn again when it moves
+  useEditor((s) => s.time)
   const { fonts } = useStore()
   const el = useEditor((s) => s.elements.find((e) => e.id === id))!
   const { value: ov, patchElement, updateLayer } = useOverrides()
@@ -794,6 +800,8 @@ const seenColour = (c: string | undefined) => {
 }
 
 function ShapeSection({ id }: { id: string }) {
+  // values at the playhead: drawn again when it moves
+  useEditor((s) => s.time)
   const o = useOverrides((s) => s.value?.elements[id]) ?? {}
   const { patchElement } = useOverrides()
   const label = labelOf(id)
@@ -1172,6 +1180,8 @@ function Highlights({ id }: { id: string }) {
 
 /** the text changes at set times (Source Text keyframes): each holds until the next */
 function TimedText({ id }: { id: string }) {
+  // values at the playhead: drawn again when it moves
+  useEditor((s) => s.time)
   const list = useOverrides((s) => s.value?.elements[id]?.textKeys) ?? []
   const counter = useOverrides((s) => !!s.value?.elements[id]?.counter)
   const { patchElement } = useOverrides()
@@ -1239,6 +1249,8 @@ function CustomTextAnim({ id }: { id: string }) {
  * the movement, a clip faster / slower / backwards.
  */
 function LinkSection({ id }: { id: string }) {
+  // values at the playhead: drawn again when it moves
+  useEditor((s) => s.time)
   const el = useEditor((s) => s.elements.find((e) => e.id === id))!
   const elements = useEditor((s) => s.elements)
   const o = useOverrides((s) => s.value?.elements[id]) ?? {}

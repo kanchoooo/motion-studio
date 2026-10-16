@@ -1,11 +1,11 @@
 // Marking what to change on the video (feedback for Claude): an area (M) or pins (P), labelled and in
 // the marks' colour — in the chat box.
 import { MapPin, SquareDashed } from 'lucide-react'
-import { useEditor } from './editorStore'
+import { useEditor, useEditorStill } from './editorStore'
 
 /** marking what to change on the video: an area (M) or a pin (P) — labelled, in the marks' colour */
 export function ToolButtons({ compact }: { compact?: boolean }) {
-  const { tool } = useEditor()
+  const { tool } = useEditorStill()
   const setTool = (t: 'select' | 'box' | 'pin') => useEditor.setState({ tool: tool === t ? 'select' : t })
   return (
     <div className="row" style={{ gap: 4 }}>

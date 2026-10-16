@@ -43,16 +43,70 @@ function setAttr(tag: string, name: string, value: string | null): string {
   return re.test(tag) ? tag.replace(re, next) : tag.replace(/^<audio\b/, `<audio${next}`)
 }
 
+/** an attribute in either quote style (Claude does not always write double quotes) */
+const anyAttr = (tag: string, name: string) => {
+  const m = tag.match(new RegExp(`\\s${name}\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i'))
+  return m ? (m[2] ?? m[3] ?? m[4]) : undefined
+}
+
+/**
+ * What a sound is when data-ms-type does not say (music Claude placed without the app's marks, a
+ * workflow's id="el-bgm", an imported effect): its id, label, kind and file name, else its length
+ * (a long or looping sound is music) — so it still shows in the Sound tab and the timeline
+ */
+export function audioKind(tag: string): 'bgm' | 'sfx' | 'voice' {
+  const type = anyAttr(tag, 'data-ms-type')
+  if (type === 'bgm' || type === 'sfx' || type === 'voice') return type
+  if (anyAttr(tag, 'data-ms-sfx')) return 'sfx'
+  const words = ['data-ms-id', 'id', 'class', 'data-ms-label', 'src'].map((n) => anyAttr(tag, n) ?? '').join(' ')
+  if (/voice|narrat|(^|[\s_/.-])(tts|vo)([\s_.-]|$)|내레이션|나레이션|목소리|음성/i.test(words)) return 'voice'
+  if (/bgm|music|song|track|soundtrack|배경음|음악|노래/i.test(words) || /\sloop(\s|=|>|$)/i.test(tag)) return 'bgm'
+  if (/sfx|whoosh|swoosh|swish|swipe|pop|click|ding|chime|hit|impact|riser|boom|thud|effect|효과/i.test(words)) return 'sfx'
+  return parseFloat(anyAttr(tag, 'data-duration') ?? '0') >= 6 ? 'bgm' : 'sfx'
+}
+
+const KIND_LABEL = { bgm: '배경음악', voice: '내레이션', sfx: '효과음' } as const
+
+/**
+ * Gives every <audio> the marks the Sound tab and the designer's sound edits need (data-ms-id,
+ * data-ms-type, data-ms-label) when Claude left them out — attributes only, nothing plays
+ * differently. The app's own music block is left alone.
+ */
+export function markAudio(html: string): string {
+  const used = new Set([...html.matchAll(/\sdata-ms-id\s*=\s*["']([^"']+)["']/gi)].map((m) => m[1]))
+  let n = 0
+  return html.replace(/<audio\b[^>]*>/gi, (tag) => {
+    if (anyAttr(tag, 'data-ms-managed') === 'true') return tag
+    const type = anyAttr(tag, 'data-ms-type')
+    const hasId = !!anyAttr(tag, 'data-ms-id')
+    if (hasId && (type === 'bgm' || type === 'sfx' || type === 'voice') && anyAttr(tag, 'data-ms-label')) return tag
+    const kind = audioKind(tag)
+    let next = tag
+    if (!hasId) {
+      const own = anyAttr(tag, 'id')
+      let id = own && /^[\w-]+$/.test(own) && !used.has(own) ? own : ''
+      while (!id || used.has(id)) id = `${kind}-${++n}`
+      used.add(id)
+      next = next.replace(/^<audio\b/i, `<audio data-ms-id="${id}"`)
+    }
+    if (type !== 'bgm' && type !== 'sfx' && type !== 'voice') next = setAttr(next.replace(/\sdata-ms-type\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/i, ''), 'data-ms-type', kind)
+    if (!anyAttr(next, 'data-ms-label')) {
+      const file = (anyAttr(tag, 'src') ?? '').split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? ''
+      next = setAttr(next, 'data-ms-label', kind === 'sfx' ? (anyAttr(tag, 'data-ms-sfx') ?? (file || KIND_LABEL.sfx)) : KIND_LABEL[kind])
+    }
+    return next
+  })
+}
+
 export function parseAudio(html: string): AudioClip[] {
   const out: AudioClip[] = []
   for (const m of html.matchAll(/<audio\b[^>]*>/gi)) {
     const tag = m[0]
     const id = attr(tag, 'data-ms-id')
     if (!id) continue
-    const type = attr(tag, 'data-ms-type')
     out.push({
       id,
-      kind: type === 'sfx' ? 'sfx' : type === 'bgm' ? 'bgm' : type === 'voice' ? 'voice' : 'other',
+      kind: audioKind(tag),
       group: attr(tag, 'data-ms-sfx'),
       label: attr(tag, 'data-ms-label') ?? id,
       src: attr(tag, 'src') ?? '',

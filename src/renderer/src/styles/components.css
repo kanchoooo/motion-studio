@@ -844,6 +844,11 @@
 .lock-banner.flash {
   animation: lock-flash 0.9s ease-out;
 }
+/* "Claude 작업 중": at the bottom of the canvas, clear of the view toolbar and the canvas tools */
+.lock-banner.bottom {
+  top: auto;
+  bottom: 14px;
+}
 /* 보기 모드: the 편집 활성화 button sits at the bottom of the canvas, clear of the view toolbar */
 .lock-banner.activate {
   top: auto;

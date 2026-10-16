@@ -4,7 +4,7 @@ import type { AudioClipInfo, SfxInfo } from '@shared/api'
 import { keysAt, type BgmTrack, type Keyframe } from '@shared/overrides'
 import { Menu, NumberField, Toggle } from '../../components/ui'
 import { studio, useStore } from '../../store'
-import { useEditor } from './editorStore'
+import { useEditor, useEditorStill } from './editorStore'
 import { useOverrides } from './overrides'
 import { blockedEdit } from './editLock'
 import { SoundFinder } from './SoundFinder'
@@ -48,7 +48,7 @@ function usePreview() {
 export function SoundPanel() {
   const { project, toast } = useStore()
   const pid = project!.meta.id
-  const { audio, selectedAudio } = useEditor()
+  const { audio, selectedAudio } = useEditorStill()
   const { value: ov, setBgm } = useOverrides()
   const [lib, setLib] = useState<SfxInfo[]>([])
   useEffect(() => {
@@ -99,7 +99,7 @@ export function SoundPanel() {
   if (sel) return <ClipEditor clip={sel} lib={lib} count={sfx.filter((s) => s.group === sel.group).length} />
 
   return (
-    <div className="col" style={{ gap: 14 }}>
+    <div className="col" style={{ gap: 14 }} data-testid="sound-panel">
       <SoundFinder />
       <div className="col" style={{ gap: 6 }}>
         <div className="row">

@@ -307,11 +307,14 @@ try {
     if (before.h > before.w) break
     await win.waitForTimeout(150)
   }
+  // (the anchor point moves with ⌥ held, After Effects' Pan Behind; a plain drag there moves the layer)
   const anc = await win.getByTestId('handle-anchor').boundingBox()
+  await win.keyboard.down('Alt')
   await win.mouse.move(anc.x + anc.width / 2, anc.y + anc.height / 2)
   await win.mouse.down()
   await win.mouse.move(anc.x + anc.width / 2 + 40, anc.y + anc.height / 2 + 25, { steps: 6 })
   await win.mouse.up()
+  await win.keyboard.up('Alt')
   const anchored = await waitOv((o) => (o.elements[rectId].transform.anchorX ?? 0) !== 0)
   await win.waitForTimeout(600)
   const afterA = (await inPreview(() => window.__MS_RUNTIME__.listElements())).find((x) => x.id === rectId).rect

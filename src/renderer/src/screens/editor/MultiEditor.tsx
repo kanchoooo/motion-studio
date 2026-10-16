@@ -27,7 +27,7 @@ import { FontSelect } from '../../components/FontSelect'
 import { ColorField, NumberField, Segmented } from '../../components/ui'
 import { useStore } from '../../store'
 import { align, deleteSelection, distribute, duplicateSelection, isLocked, labelOf, setProps, toggleLockSelection } from './edit'
-import { useEditor } from './editorStore'
+import { useEditor, useEditorStill } from './editorStore'
 import { rgbToHex, useOverrides } from './overrides'
 import type { RuntimeElement } from './player'
 
@@ -35,7 +35,7 @@ const WEIGHTS = [100, 200, 300, 400, 500, 600, 700, 800, 900]
 
 export function MultiEditor() {
   const { fonts } = useStore()
-  const { elements, selection, select } = useEditor()
+  const { elements, selection, select } = useEditorStill()
   const { value: ov, patchElements } = useOverrides()
   const picked = selection.map((id) => elements.find((e) => e.id === id)).filter((e): e is RuntimeElement => !!e).map((e) => ({ ...e, label: labelOf(e.id) }))
   // locked layers are shown but not changed (their text styles, 초기화)

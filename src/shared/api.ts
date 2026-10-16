@@ -62,6 +62,8 @@ export type ChatItem =
   | { id: string; at: string; role: 'notice'; text: string }
   /** voices Claude suggests for a narration: the designer listens and picks one */
   | { id: string; at: string; role: 'voices'; label?: string; script?: string; voices: VoiceChoice[]; picked?: string }
+  /** music or sound-effect candidates Claude found: the designer listens in the chat and picks one */
+  | { id: string; at: string; role: 'audio'; list: AudioCandidateList; picked?: string }
   /** images / video clips Claude generated, waiting for the designer: keep in assets, discard, or apply */
   | { id: string; at: string; role: 'generated'; files: { file: string; kind: string }[]; label?: string; status: 'pending' | 'kept' | 'discarded' | 'applied'; note?: string }
 
@@ -425,6 +427,8 @@ export interface StudioApi {
     assignFiles(projectId: string, materialId: string, files: string[]): Promise<CurrentStoryboard>
     /** the designer picked a voice on a voice card (Claude is told) */
     pickVoice(projectId: string, itemId: string, voiceId: string): Promise<void>
+    /** the designer picked a music / sound-effect candidate on a chat card: Claude is told */
+    pickAudio(projectId: string, itemId: string, candidateId: string): Promise<void>
     /** 편집 활성화: makes the video editable by hand ('asked': Claude is naming the layers now) */
     activateEditing(projectId: string): Promise<'ready' | 'asked'>
     /** 배경 따로 떼기: Claude splits a text layer from its coloured box */

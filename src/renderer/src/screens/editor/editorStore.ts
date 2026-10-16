@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { useShallow } from 'zustand/react/shallow'
 import type { AudioClipInfo } from '@shared/api'
 import type { Track } from './tracks'
 import type { FeedbackMark } from '@shared/project'
@@ -171,3 +172,18 @@ onLeaveProject(() => {
     maskDraw: null,
   })
 })
+
+/**
+ * The editor state without the playhead time. Playback updates the time about 15 times a second:
+ * panels that don't show it (chat, layer list, sound, inspector frame, the timeline's rows) use this
+ * and are not drawn again for every tick — on a slow computer those redraws made the timeline lag
+ * behind the video and keep moving after a pause.
+ */
+export const useEditorStill = () =>
+  useEditor(
+    useShallow((s: EditorState) => {
+      const { time: _time, ...rest } = s
+      void _time
+      return rest
+    }),
+  )

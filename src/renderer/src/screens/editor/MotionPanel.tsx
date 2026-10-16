@@ -4,13 +4,13 @@ import { useState } from 'react'
 import { AlertTriangle, ArrowLeft, Download, Lock, RotateCcw } from 'lucide-react'
 import { ColorField, NumberField, Segmented, Toggle } from '../../components/ui'
 import { takeOver } from './edit'
-import { useEditor } from './editorStore'
+import { useEditor, useEditorStill } from './editorStore'
 import { DEFAULT_EASE, EASES, easeLabel, easePath, formatValue, motionLabel, parseValue, propLabel } from './motionInfo'
 import { useOverrides } from './overrides'
 import type { RuntimeMotion } from './player'
 
 export function MotionPanel() {
-  const { motions, selected, selectedMotion, elements, staleMotions } = useEditor()
+  const { motions, selected, selectedMotion, elements, staleMotions } = useEditorStill()
   const { value: ov, patchMotion } = useOverrides()
   const m = motions.find((x) => x.key === selectedMotion)
   const el = elements.find((e) => e.id === selected)

@@ -12,7 +12,7 @@ import { studio, useStore } from '../../store'
 import { freeLayout, isKeyed, isLocked, labelOf, outermost, ov, setProps, valueNow } from './edit'
 import { elementsForMark, elementsUnder, useEditor } from './editorStore'
 import { useLayout } from './layout'
-import { useOverrides } from './overrides'
+import { beginEditGesture, useOverrides } from './overrides'
 import { ask, hitTest, invertAffine, MsPlayer, queryElements, queryMotions, queryTiming, soloLayers, type Affine, type RuntimeElement } from './player'
 
 const SAFE: Record<string, { top: number; right: number; bottom: number; left: number } | null> = {
@@ -69,7 +69,7 @@ type Pt = { x: number; y: number }
 type Box = { x: number; y: number; w: number; h: number }
 
 type Gesture =
-  | { kind: 'move'; items: { id: string; x: number; y: number; keyed: boolean; rect: Box; unit: number }[]; p0: Pt; moved: boolean; dx: number; dy: number }
+  | { kind: 'move'; items: { id: string; x: number; y: number; keyed: boolean; rect: Box; unit: number }[]; p0: Pt; moved: boolean; dx: number; dy: number; pickOnClick?: boolean }
   | { kind: 'scale'; id: string; handle: string; p0: Pt; pivot: Pt; sx: number; sy: number; r: number; keyed: boolean; nsx: number; nsy: number; rect0?: Box }
   | { kind: 'rotate'; id: string; p0: Pt; pivot: Pt; r0: number; keyed: boolean; nr: number }
   | { kind: 'anchor'; id: string; p0: Pt; ax: number; ay: number; x: number; y: number; sx: number; sy: number; r: number; keyedPos: boolean; d: Pt }
@@ -399,6 +399,23 @@ export function Preview({ active }: { active: boolean }) {
         if (!hits.length) return void (!add && ed.select(null))
         return void ed.select(hits[0].id, add)
       }
+      // a press inside the box of what is picked where that layer paints nothing and only the canvas
+      // background (or nothing) is there — around a turned layer, between letters — drags the picked
+      // layers, as a press on them does; a click there without moving still picks as before
+      if (!add) {
+        const picked = outermost(ed.selection, ed.elements)
+          .map((id) => ed.elements.find((x) => x.id === id))
+          .filter((x): x is RuntimeElement => !!x && x.type !== 'camera' && x.movable && !isLocked(x.id))
+        const inBox = picked.some((x) => p.x >= x.rect.x && p.x <= x.rect.x + x.rect.w && p.y >= x.rect.y && p.y <= x.rect.y + x.rect.h)
+        const top = hits.length ? ed.elements.find((x) => x.id === hits[0].id) : undefined
+        const onlyBackground = !hits.length || (!!top && top.rect.w * top.rect.h > W * H * 0.9 && !ed.selection.includes(top.id))
+        if (picked.length && inBox && onlyBackground && !hits.some((h) => ed.selection.includes(h.id))) {
+          capture()
+          beginEditGesture()
+          setGesture({ kind: 'move', items: picked.map((el) => ({ id: el.id, x: valueNow(el.id, 'x'), y: valueNow(el.id, 'y'), keyed: isKeyed(el.id, 'x') || isKeyed(el.id, 'y'), rect: el.rect, unit: el.unit ?? 1 })), p0: p, moved: false, dx: 0, dy: 0, pickOnClick: true })
+          return
+        }
+      }
       if (!hits.length) {
         // empty canvas: marquee selection
         if (!add) ed.select(null)
@@ -426,6 +443,7 @@ export function Preview({ active }: { active: boolean }) {
       const movable = ids.map((id) => ed.elements.find((x) => x.id === id)).filter((x): x is RuntimeElement => !!x && x.movable && !isLocked(x.id))
       if (movable.length) {
         capture()
+        beginEditGesture()
         setGesture({ kind: 'move', items: movable.map((el) => ({ id: el.id, x: valueNow(el.id, 'x'), y: valueNow(el.id, 'y'), keyed: isKeyed(el.id, 'x') || isKeyed(el.id, 'y'), rect: el.rect, unit: el.unit ?? 1 })), p0: p, moved: false, dx: 0, dy: 0 })
       }
       return
@@ -551,6 +569,12 @@ export function Preview({ active }: { active: boolean }) {
     const p = toComp(e.clientX, e.clientY)
     setDraft({ ...draft, x1: p.x, y1: p.y })
   }
+  /** a click there, as before: the top layer under the pointer (the canvas background), or nothing */
+  const pickUnder = async (p: Pt) => {
+    const painted = await layersAt(p)
+    const hits = painted !== null ? painted : elementsUnder(pickable(visibleEls), { x: p.x, y: p.y, w: 1, h: 1 }).map((h) => h.id)
+    useEditor.getState().select(hits[0] ?? null)
+  }
   const onUp = (e: React.PointerEvent) => {
     if (pressing.current) pressing.current.up = true
     const cur = gRef.current
@@ -558,6 +582,8 @@ export function Preview({ active }: { active: boolean }) {
     setSnapLines({ x: [], y: [] })
     if (cur) {
       const st = useOverrides.getState()
+      // pressed in an empty part of the picked layer's box and let go without moving: a click, as before
+      if (cur.kind === 'move' && !cur.moved && cur.pickOnClick) void pickUnder(cur.p0)
       if (cur.kind === 'move' && cur.moved) {
         const keyed = cur.items.filter((i) => i.keyed)
         if (keyed.length) setProps(keyed.map((i) => ({ id: i.id, values: { x: i.x + cur.dx / i.unit, y: i.y + cur.dy / i.unit } })), ['x', 'y'])
@@ -636,6 +662,9 @@ export function Preview({ active }: { active: boolean }) {
   }, [project?.hasVideo])
 
   const startHandle = (e: React.PointerEvent, el: RuntimeElement, handle: string) => {
+    // the anchor point sits in the middle, where a layer is grabbed to move it: it moves the anchor only
+    // with ⌥ held (After Effects' Pan Behind); a plain press goes on to the canvas and moves the layer
+    if (handle === 'anchor' && !e.altKey) return
     e.stopPropagation()
     // a layer placed by the composition's layout (flex, grid, flow): its group is set free first —
     // nothing moves on screen, and from then on it scales, turns and takes effects like any layer
@@ -646,6 +675,7 @@ export function Preview({ active }: { active: boolean }) {
     if (!el.pivot) return
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
     playerRef.current?.pause()
+    beginEditGesture()
     const p0 = toComp(e.clientX, e.clientY)
     if (handle === 'rot') setGesture({ kind: 'rotate', id: el.id, p0, pivot: el.pivot, r0: valueNow(el.id, 'rotate'), keyed: isKeyed(el.id, 'rotate'), nr: valueNow(el.id, 'rotate') })
     else if (handle === 'anchor') {
@@ -1053,7 +1083,7 @@ function SelectionHandles({ el, S, gesture, onHandle, onMove, onUp }: { el: Runt
       <div className="rot-stem" style={{ left: S(r.x + r.w / 2), top: S(r.y) - 22, height: 22 }} />
       <div className="rot-handle" style={{ left: S(r.x + r.w / 2), top: S(r.y) - 26 }} onPointerDown={(e) => onHandle(e, 'rot')} {...common} title="끌어서 회전 (Shift: 15° 단위)" data-testid="handle-rot" />
       {el.type !== 'part' && el.type !== 'camera' && (
-        <div className="anchor-handle" style={{ left: S(piv.x), top: S(piv.y) }} onPointerDown={(e) => onHandle(e, 'anchor')} {...common} title="기준점: 끌어서 옮겨요 (크기·회전의 중심)" data-testid="handle-anchor" />
+        <div className="anchor-handle" style={{ left: S(piv.x), top: S(piv.y) }} onPointerDown={(e) => onHandle(e, 'anchor')} {...common} title="기준점 (크기·회전의 중심) · ⌥를 누른 채 끌면 옮겨요 · 그냥 끌면 레이어가 움직여요" data-testid="handle-anchor" />
       )}
       {el.type === 'part' && <div className="anchor-handle part" style={{ left: S(piv.x), top: S(piv.y), pointerEvents: 'none' }} title="관절 (이 점을 중심으로 돌아요)" />}
     </>

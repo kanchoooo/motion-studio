@@ -167,6 +167,10 @@ export interface AudioCandidate {
   /** downloadable file when the service offers one */
   downloadUrl?: string
   pageUrl?: string
+  /** a listening copy already in the project (composition path, e.g. assets/candidates/x.mp3) */
+  file?: string
+  /** licence as the source states it (open-source libraries) */
+  license?: string
 }
 
 export interface AudioCandidateList {

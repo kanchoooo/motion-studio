@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Activity, AlertCircle, ArrowUp, Check, ChevronsLeft, Clapperboard, Cpu, Film, ImagePlus, Info, Loader2, Mic, Pause, Play, Scissors, ShieldCheck, ShieldQuestion, Square, X, Link2 } from 'lucide-react'
+import { Activity, AlertCircle, ArrowUp, Check, ChevronsLeft, Clapperboard, Cpu, ExternalLink, Film, ImagePlus, Info, Loader2, Mic, Music, Pause, Play, Scissors, ShieldCheck, ShieldQuestion, Square, X, Link2 } from 'lucide-react'
 import type { ClaudeUsage } from '@shared/ai'
 import type { AgentEffort, AgentModel, AgentPermission, ChatItem, PermissionAsk, Storyboard } from '@shared/api'
 import type { ReferenceItem } from '@shared/brief'
@@ -7,7 +7,7 @@ import { Markdown } from '../../components/Markdown'
 import { Modal } from '../../components/ui'
 import { studio, useStore } from '../../store'
 import { useBriefUi } from '../brief/briefUi'
-import { useEditor } from './editorStore'
+import { useEditor, useEditorStill } from './editorStore'
 import { ToolButtons } from './MarkTools'
 import { SceneViewer, ZoomMark } from '../../components/SceneViewer'
 import { captureAnnotatedFrame } from './Preview'
@@ -35,7 +35,7 @@ const toAttach = (r: ReferenceItem, prev?: Attach): Attach => ({ id: r.id, kind:
  */
 export function ChatPanel({ onFold, mode = 'edit' }: { onFold?(): void; mode?: 'plan' | 'edit' }) {
   const { project, chat, session, toast, setTerminal, asks, refsNonce, setTab } = useStore()
-  const { marks, markTime, removeMark, updateMark, clearMarks, player } = useEditor()
+  const { marks, markTime, removeMark, updateMark, clearMarks, player } = useEditorStill()
   const plan = mode === 'plan'
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
@@ -465,7 +465,7 @@ const EFFORTS: { value: AgentEffort; label: string }[] = [
 function GeneratedCard({ item }: { item: Extract<ChatItem, { role: 'generated' }> }) {
   const { project, toast } = useStore()
   const pid = project!.meta.id
-  const { selected, elements } = useEditor()
+  const { selected, elements } = useEditorStill()
   const [base, setBase] = useState('')
   const [menu, setMenu] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -793,6 +793,8 @@ function ChatRow({ item, count = 1 }: { item: ChatItem; count?: number }) {
       return <StoryboardCard item={item} />
     case 'voices':
       return <VoicesCard item={item} />
+    case 'audio':
+      return <AudioCard item={item} />
     case 'generated':
       return <GeneratedCard item={item} />
     case 'error':
@@ -915,6 +917,87 @@ function StoryboardCard({ item }: { item: Extract<ChatItem, { role: 'storyboard'
 }
 
 /** narration voices Claude suggests: listen, then pick one (Claude is told) */
+const mmss = (s?: number) => (s == null ? '' : `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`)
+
+/** music or sound-effect candidates: listen to each in the chat, pick one (Claude brings it in) */
+function AudioCard({ item }: { item: Extract<ChatItem, { role: 'audio' }> }) {
+  const { project, toast } = useStore()
+  const [playing, setPlaying] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const audio = useRef<HTMLAudioElement | null>(null)
+  // listening copies Claude put in the project are played from there
+  const [base, setBase] = useState('')
+  useEffect(() => {
+    if (item.list.items.some((c) => c.file)) void studio.projects.fileUrl(project!.meta.id, '').then(setBase)
+  }, [item.list.items, project])
+  useEffect(() => () => audio.current?.pause(), [])
+  const urlOf = (c: (typeof item.list.items)[number]) => (c.file ? (base ? `${base}composition/${c.file}` : undefined) : c.previewUrl)
+  const play = (id: string, url?: string) => {
+    audio.current?.pause()
+    if (!url || playing === id) return setPlaying(null)
+    const a = new Audio(url)
+    audio.current = a
+    a.onended = () => setPlaying(null)
+    void a.play().catch(() => {
+      setPlaying(null)
+      toast('미리듣기를 재생하지 못했어요.', 'error')
+    })
+    setPlaying(id)
+  }
+  const bgm = item.list.kind === 'bgm'
+  return (
+    <div className="card fade-in" style={{ padding: 10, display: 'flex', flexDirection: 'column', gap: 8 }} data-testid="audio-card">
+      <div className="row small" style={{ gap: 6, fontWeight: 650 }}>
+        <Music size={14} color="var(--accent)" />
+        <span className="grow">
+          {bgm ? '배경음악' : '효과음'} 후보 · {item.list.query}
+        </span>
+      </div>
+      <div className="col" style={{ gap: 4 }}>
+        {item.list.items.map((c) => (
+          <div key={c.id} className="row" style={{ gap: 8, padding: '4px 6px', borderRadius: 8, background: item.picked === c.id ? 'var(--accent-soft)' : 'var(--surface-2)' }} data-testid="audio-candidate">
+            <button className="icon-btn" disabled={!urlOf(c)} title={urlOf(c) ? '들어 보기' : '미리듣기가 없어요'} onClick={() => play(c.id, urlOf(c))} data-testid="audio-play">
+              {playing === c.id ? <Pause size={13} /> : <Play size={13} />}
+            </button>
+            <div className="col grow" style={{ gap: 0, minWidth: 0 }}>
+              <span className="small ellipsis">{c.title}</span>
+              <span className="tiny muted ellipsis">{[c.artist, mmss(c.duration), c.bpm && `${c.bpm}BPM`, c.mood, c.source !== 'web' && c.source, c.license].filter(Boolean).join(' · ')}</span>
+            </div>
+            {c.pageUrl && (
+              <button className="icon-btn" title="출처 페이지 열기" onClick={() => studio.app.openExternal(c.pageUrl!)}>
+                <ExternalLink size={12} />
+              </button>
+            )}
+            {item.picked === c.id ? (
+              <span className="badge success">골랐어요</span>
+            ) : (
+              <button
+                className="btn sm"
+                disabled={busy || !!item.picked}
+                onClick={async () => {
+                  setBusy(true)
+                  audio.current?.pause()
+                  setPlaying(null)
+                  try {
+                    await studio.agent.pickAudio(project!.meta.id, item.id, c.id)
+                  } catch (e) {
+                    toast(errText(e), 'error')
+                  } finally {
+                    setBusy(false)
+                  }
+                }}
+                data-testid="audio-pick"
+              >
+                {bgm ? '이 음악으로' : '이 효과음으로'}
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function VoicesCard({ item }: { item: Extract<ChatItem, { role: 'voices' }> }) {
   const { project, toast } = useStore()
   const [playing, setPlaying] = useState<string | null>(null)

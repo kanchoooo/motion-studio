@@ -221,6 +221,11 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
               ]),
             ),
             designerLayers: overrides.layers.map((l) => ({ id: l.id, kind: l.kind, label: l.label, box: [l.x, l.y, l.w, l.h], text: l.text, src: l.src })),
+            // music the designer added in the Sound tab (the <!-- ms:bgm --> block): it plays besides your bgm element
+            designerMusic: overrides.bgm.length
+              ? { note: 'Music tracks the designer added in the Sound tab; the app writes them, you cannot change them. If the designer wants other music while one of these plays, tell them (in Korean) to remove or swap it in the 사운드 tab, or ask whether yours should replace it.', tracks: overrides.bgm.map((b) => ({ id: b.id, label: b.label, src: b.src, from: b.start, to: b.end, volume: b.volume })) }
+              : undefined,
+            designerSoundEdits: Object.keys(overrides.audio ?? {}).length ? overrides.audio : undefined,
             duplicates: overrides.duplicates,
             deleted: Object.entries(overrides.elements).filter(([, e]) => e.deleted).map(([id]) => id),
             stackingOrder: overrides.order,
@@ -517,7 +522,7 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
   server.registerTool(
     'use_sound_effect',
     {
-      description: 'Copy a built-in sound effect into composition/assets/sfx/ and get its path for <audio src>. Mark the element with data-ms-type="sfx" data-ms-sfx="<id>".',
+      description: 'Copy a built-in sound effect into composition/assets/sfx/ and get its path for <audio src>. The element: <audio data-ms-id="sfx-<id>-N" data-ms-type="sfx" data-ms-sfx="<id>" data-ms-label="<Korean: what it accompanies>" src=… data-start data-duration data-volume> as a direct child of the root.',
       inputSchema: { id: z.string() },
     },
     async ({ id }) => {
@@ -974,11 +979,12 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
   server.registerTool(
     'show_audio_candidates',
     {
-      description: "Show music or sound-effect candidates (e.g. found on Artlist) to the designer in the Sound panel, where they can audition and pick one. Include preview_url for listening and download_url if the service gives a downloadable file. After calling this, briefly say what you found and END YOUR TURN.",
+      description:
+        "Let the designer LISTEN to music or sound-effect candidates before one is settled: a card in the chat (and the list in the Sound tab) with a play button per candidate; their pick comes back as a message. Use it for any source — Artlist results, free libraries that allow commercial use without attribution, a file you made. Each candidate needs something to play: preview_url (a direct audio link you checked) or file (a listening copy you downloaded into the composition, e.g. assets/candidates/upbeat-1.mp3). Give source and license for free music. After calling this, briefly say what you found and END YOUR TURN.",
       inputSchema: {
-        query: z.string().describe('what was searched, in Korean'),
+        query: z.string().describe('what was looked for, in Korean'),
         kind: z.enum(['bgm', 'sfx']),
-        source: z.string().default('artlist'),
+        source: z.string().optional().describe('where they come from: artlist, pixabay, mixkit, freesound, made here …'),
         items: z
           .array(
             z.object({
@@ -988,9 +994,11 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
               duration: z.number().optional().describe('seconds'),
               bpm: z.number().optional(),
               mood: z.string().optional(),
+              license: z.string().optional(),
               preview_url: z.string().optional(),
               download_url: z.string().optional(),
               page_url: z.string().optional(),
+              file: z.string().optional().describe('a listening copy inside composition/ (composition path)'),
             }),
           )
           .min(1)
@@ -998,6 +1006,10 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
       },
     },
     async ({ query, kind, source, items }) => {
+      // every candidate can be heard: a link, or a sound file that exists in the composition
+      const okFile = (f?: string) => !!f && /^[\w./ -]+\.(mp3|wav|m4a|aac|ogg|flac|webm)$/i.test(f) && !f.includes('..') && existsSync(join(dir(), 'composition', f))
+      const deaf = items.find((it) => !(it.preview_url && /^https?:\/\//.test(it.preview_url)) && !okFile(it.file))
+      if (deaf) return text(`「${deaf.title}」: give preview_url (a direct http(s) audio link) or file (a sound file inside composition/, e.g. assets/candidates/x.mp3) so the designer can listen.`)
       hooks.onAudioCandidates(projectId, {
         id: Math.random().toString(36).slice(2, 10),
         at: new Date().toISOString(),
@@ -1005,19 +1017,21 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
         kind,
         items: items.map((it, i) => ({
           id: it.id ?? String(i),
-          source,
+          source: source ?? 'web',
           kind,
           title: it.title,
           artist: it.artist,
           duration: it.duration,
           bpm: it.bpm,
           mood: it.mood,
+          license: it.license,
           previewUrl: it.preview_url,
           downloadUrl: it.download_url,
           pageUrl: it.page_url,
+          file: okFile(it.file) ? it.file : undefined,
         })),
       })
-      return text('사운드 패널에 후보를 보여줬어요. 디자이너가 듣고 고를 거예요. 이번 턴은 여기서 마무리하세요.')
+      return text('대화창과 사운드 탭에 후보를 보여줬어요. 디자이너가 들어 보고 고르면 메시지로 알려 줘요. 이번 턴은 여기서 마무리하세요.')
     },
   )
 
@@ -1025,7 +1039,7 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
     'show_voice_candidates',
     {
       description:
-        "Show narration voices to the designer as a card in the chat: they listen (preview_url, or the sample of a local voice) and pick one; their pick comes back as a message. Service voices come from the service's voice list (ai_call: Higgsfield list_voices / Magnific audio_voices_list). A voice from an open-source model you ran on this Mac is provider \"local\" with engine (model · licence) and sample (the take you made of the script, a composition path). Service and local voices can be on one card.",
+        "Show narration voices (or TTS models to choose between) to the designer as a card in the chat: they listen (preview_url, or the sample of a local voice) and pick one; their pick comes back as a message. Service voices come from the service's voice list (ai_call: Higgsfield list_voices / Magnific audio_voices_list). A voice from an open-source model you ran on this Mac is provider \"local\" with engine (model · licence) and sample (the take you made of the script, a composition path); a model not installed yet is provider \"local\" with engine and preview_url = its official demo clip (a direct audio link you checked). Service and local voices can be on one card.",
       inputSchema: {
         label: z.string().optional().describe('what the narration is for, in Korean'),
         script: z.string().optional().describe('the narration script so far'),
@@ -1050,12 +1064,13 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
     },
     async ({ label, script, voices }) => {
       // a local voice is heard from its sample: a sound file inside the composition
-      const bad = voices.find((v) => v.provider === 'local' && !(v.sample && /^[\w./-]+\.(wav|mp3|m4a|aac|ogg|flac)$/i.test(v.sample) && !v.sample.includes('..') && existsSync(join(dir(), 'composition', v.sample))))
-      if (bad) return text(`「${bad.name}」: a local voice needs sample = the take you made, a composition path to a sound file that exists (e.g. assets/generated/voice-melo-1.wav).`)
+      const hasSample = (v: (typeof voices)[number]) => !!v.sample && /^[\w./-]+\.(wav|mp3|m4a|aac|ogg|flac)$/i.test(v.sample) && !v.sample.includes('..') && existsSync(join(dir(), 'composition', v.sample))
+      const bad = voices.find((v) => v.provider === 'local' && !hasSample(v) && !(v.preview_url && /^https?:\/\//.test(v.preview_url)))
+      if (bad) return text(`「${bad.name}」: a local voice needs sample = the take you made (a composition path to a sound file that exists, e.g. assets/generated/voice-melo-1.wav), or — for a model not installed yet — preview_url = its official demo clip.`)
       hooks.onVoices(projectId, {
         label,
         script,
-        voices: voices.map((v) => ({ provider: v.provider, id: v.id, name: v.name, description: v.description, gender: v.gender, previewUrl: v.preview_url, voiceType: v.voice_type, source: v.source, engine: v.engine, sample: v.sample })),
+        voices: voices.map((v) => ({ provider: v.provider, id: v.id, name: v.name, description: v.description, gender: v.gender, previewUrl: v.preview_url, voiceType: v.voice_type, source: v.source, engine: v.engine, sample: hasSample(v) ? v.sample : undefined })),
       })
       return text('목소리 후보를 디자이너에게 보여줬어요. 들어 보고 고르면 메시지로 알려 줘요. 이번 턴은 여기서 마무리하세요.')
     },

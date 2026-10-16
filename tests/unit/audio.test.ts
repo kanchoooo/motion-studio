@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyAudio, parseAudio } from '../../src/main/audio'
+import { applyAudio, audioKind, markAudio, parseAudio } from '../../src/main/audio'
 import { emptyOverrides } from '@shared/overrides'
 
 const html = `<body><div id="root" data-composition-id="main" data-start="0" data-duration="8">
@@ -109,5 +109,44 @@ describe('length with section speed', () => {
     expect(out).toContain('data-ms-authored-rate="none"')
     expect(applyLength(out, o)).toBe(out) // idempotent
     expect(applyLength(out, emptyOverrides())).toBe(page) // fully reversible
+  })
+})
+
+describe('sounds Claude placed without the app marks still show in the Sound tab', () => {
+  it('tells music, effects and narration apart', () => {
+    expect(audioKind('<audio id="el-bgm" src="assets/a.mp3">')).toBe('bgm')
+    expect(audioKind('<audio id="el-sfx-2" src="assets/b.wav">')).toBe('sfx')
+    expect(audioKind("<audio id='narration' src='assets/generated/line.wav'>")).toBe('voice')
+    expect(audioKind('<audio id="a1" src="https://cdn.example.com/upbeat.mp3" loop>')).toBe('bgm')
+    expect(audioKind('<audio id="a2" src="assets/generated/whoosh-01.mp3">')).toBe('sfx')
+    expect(audioKind('<audio id="a3" src="assets/generated/x.mp3" data-duration="14">')).toBe('bgm')
+    expect(audioKind('<audio id="a4" src="assets/generated/x.mp3" data-duration="0.8">')).toBe('sfx')
+    expect(audioKind('<audio data-ms-type="voice" id="bgm">')).toBe('voice')
+  })
+
+  it('marks them (id, type, label) and leaves marked ones and the app block alone', () => {
+    const html = [
+      '<div data-composition-id="main">',
+      '<audio id="el-bgm" src="assets/generated/calm-piano.mp3" data-start="0" data-duration="15" data-volume="0.5"></audio>',
+      "<audio src='assets/generated/pop.wav' data-start='1.2'></audio>",
+      '<audio data-ms-id="sfx-ding-1" data-ms-type="sfx" data-ms-sfx="ding" data-ms-label="띵" src="assets/sfx/ding.wav"></audio>',
+      '<audio data-ms-id="bgm-x" data-ms-managed="true" src="assets/m.mp3"></audio>',
+      '</div>',
+    ].join('\n')
+    const out = markAudio(html)
+    const clips = parseAudio(out)
+    expect(clips.map((c) => [c.id, c.kind, c.label])).toEqual([
+      ['el-bgm', 'bgm', '배경음악'],
+      ['sfx-1', 'sfx', 'pop'],
+      ['sfx-ding-1', 'sfx', '띵'],
+      ['bgm-x', 'bgm', 'bgm-x'],
+    ])
+    // the rest of each tag stays as Claude wrote it
+    expect(out).toContain('src="assets/generated/calm-piano.mp3" data-start="0" data-duration="15" data-volume="0.5"')
+    expect(out).toContain("src='assets/generated/pop.wav' data-start='1.2'")
+    expect(out).toContain('<audio data-ms-id="sfx-ding-1" data-ms-type="sfx" data-ms-sfx="ding" data-ms-label="띵" src="assets/sfx/ding.wav"></audio>')
+    expect(out).toContain('<audio data-ms-id="bgm-x" data-ms-managed="true" src="assets/m.mp3"></audio>')
+    // once marked, nothing more to do
+    expect(markAudio(out)).toBe(out)
   })
 })

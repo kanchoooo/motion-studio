@@ -55,8 +55,8 @@ import {
   toggleHidden,
   trimToPlayhead,
 } from './edit'
-import { stackedTree } from '@shared/layers'
-import { useEditor } from './editorStore'
+import { stackedTree, visibleNow } from '@shared/layers'
+import { useEditor, useEditorStill } from './editorStore'
 import { ADD_LAYER } from './Inspector'
 import { clampSize, LAYOUT_DEFAULTS, useLayout } from './layout'
 import { motionLabel } from './motionInfo'
@@ -111,8 +111,11 @@ export function timecode(t: number, fps: number): string {
 
 export function Timeline() {
   const { project, toast } = useStore()
-  const ed = useEditor()
-  const { player, time, duration, playing, marks, audio, selectedAudio, timing, selection, elements, motions, selectedMotion, openLayers, selectedKeys, solo, workArea } = ed
+  const ed = useEditorStill()
+  // the playhead time is read where it is shown (Playhead, Timecode) or used (now()): the rows are not
+  // drawn again for every tick of playback
+  const { player, duration, playing, marks, audio, selectedAudio, timing, selection, elements, motions, selectedMotion, openLayers, selectedKeys, solo, workArea } = ed
+  const now = () => useEditor.getState().time
   const { value: ov, setRemap, patchMotion, setLocked, setInOut, moveKeys, setKeyEase, removeKeys, addMarker, updateMarker, removeMarker, shiftLayers } = useOverrides()
   const { layerW, zoom, frames, snap, set: setLayout } = useLayout()
   const scroller = useRef<HTMLDivElement>(null)
@@ -152,22 +155,28 @@ export function Timeline() {
     return Math.max(0, Math.min(d, (x / trackW) * d))
   }
 
-  // keep the playhead in view while playing when zoomed in
-  useEffect(() => {
-    const el = scroller.current
-    if (!el || zoom <= 1 || !playing) return
-    const x = px(time)
-    if (x < el.scrollLeft || x > el.scrollLeft + el.clientWidth - layerW - 40) el.scrollLeft = Math.max(0, x - 80)
-  }, [time, playing, zoom]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // work area: playback loops inside it
-  useEffect(() => {
-    if (!playing || !workArea || !player) return
-    if (time >= workArea.b - 1 / fps || time < workArea.a - 0.05) {
-      player.seek(workArea.a)
-      player.play()
-    }
-  }, [time, playing, workArea, player, fps])
+  // while playing, every time update: keep the playhead in view when zoomed in, loop inside the work area
+  // (a store subscription, not a render)
+  const follow = useRef({ px, layerW, zoom, workArea, player, fps })
+  follow.current = { px, layerW, zoom, workArea, player, fps }
+  useEffect(
+    () =>
+      useEditor.subscribe((s, prev) => {
+        if (s.time === prev.time || !s.playing) return
+        const f = follow.current
+        const el = scroller.current
+        if (el && f.zoom > 1) {
+          const x = f.px(s.time)
+          if (x < el.scrollLeft || x > el.scrollLeft + el.clientWidth - f.layerW - 40) el.scrollLeft = Math.max(0, x - 80)
+        }
+        const wa = f.workArea
+        if (wa && f.player && (s.time >= wa.b - 1 / f.fps || s.time < wa.a - 0.05)) {
+          f.player.seek(wa.a)
+          f.player.play()
+        }
+      }),
+    [],
+  )
 
   // solo: only those layers show (the preview forgets it on reload, so it is sent again)
   useEffect(() => {
@@ -221,16 +230,34 @@ export function Timeline() {
   }
 
   const [onlySel, setOnlySel] = useState(false)
+  /** 지금 보이는 것만: layers seen at the playhead (as of the last pause / seek) */
+  const [onlyNow, setOnlyNow] = useState(false)
+  /** 소리만: the music, narration and sound-effect lanes without the picture layers */
+  const [onlySound, setOnlySound] = useState(false)
+  const [filterMenu, setFilterMenu] = useState(false)
   /** the pointer just ended a drag (its click is not a click) */
   const dragged = useRef(false)
   const stacked = useMemo(() => stackedTree(elements), [elements])
-  // 선택한 것만: the picked layers and the groups they sit in
+  const compW = project?.brief.output.width ?? 1920
+  const compH = project?.brief.output.height ?? 1080
+  // 선택한 것만 / 지금 보이는 것만: those layers and the groups they sit in
   const layers = useMemo(() => {
-    if (!onlySel || !selection.length) return stacked
-    const keep = new Set<string>()
-    for (const id of selection) for (let p: string | null | undefined = id; p; p = stacked.find((x) => x.id === p)?.parent) keep.add(p)
-    return stacked.filter((x) => keep.has(x.id))
-  }, [stacked, onlySel, selection])
+    const withParents = (ids: Iterable<string>) => {
+      const keep = new Set<string>()
+      for (const id of ids) for (let p: string | null | undefined = id; p; p = stacked.find((x) => x.id === p)?.parent) keep.add(p)
+      return keep
+    }
+    let out = stacked
+    if (onlySel && selection.length) {
+      const keep = withParents(selection)
+      out = out.filter((x) => keep.has(x.id))
+    }
+    if (onlyNow) {
+      const keep = withParents(visibleNow(elements, compW, compH))
+      out = out.filter((x) => keep.has(x.id))
+    }
+    return out
+  }, [stacked, onlySel, onlyNow, selection, elements, compW, compH])
   // the picked layer is in view (the list may be long)
   useEffect(() => {
     const id = selection[selection.length - 1]
@@ -272,7 +299,7 @@ export function Timeline() {
   // ---- dragging blocks, bar ends, keyframes, markers ----
   /** times a dragged edge snaps to: the start and end, the playhead, markers, the work area, other layers' bars */
   const snapTimes = (skip: Set<string>) => {
-    const out = [0, d, time, ...markers.map((m) => m.t)]
+    const out = [0, d, now(), ...markers.map((m) => m.t)]
     if (workArea) out.push(workArea.a, workArea.b)
     for (const t of timing) if (!skip.has(t.id)) out.push(t.start, ...(t.end != null ? [t.end] : []))
     return out
@@ -496,7 +523,7 @@ export function Timeline() {
   }
 
   const rows: React.ReactNode[] = []
-  for (const el of layers) {
+  for (const el of onlySound ? [] : layers) {
     // a character's parts show once the character is unfolded (or one of them is picked)
     if (el.type === 'part' && el.parent && !openLayers.includes(el.parent) && !selection.some((x) => x === el.id || x.startsWith(`${el.parent}::`))) continue
     const t = timingById.get(el.id)
@@ -851,17 +878,17 @@ export function Timeline() {
         <button className="icon-btn" title="처음으로 (Home)" onClick={() => seek(0)} disabled={!player}>
           <SkipBack size={15} />
         </button>
-        <button className="icon-btn" title="이전 프레임 (←, ⌘←)" onClick={() => seek(time - 1 / fps)} disabled={!player}>
+        <button className="icon-btn" title="이전 프레임 (←, ⌘←)" onClick={() => seek(now() - 1 / fps)} disabled={!player}>
           <ChevronLeft size={16} />
         </button>
         <button className="icon-btn" title="재생/정지 (Space)" style={{ width: 32, height: 32, background: 'var(--surface-3)', color: 'var(--text)' }} onClick={() => (playing ? player?.pause() : player?.play())} disabled={!player}>
           {playing ? <Pause size={16} /> : <Play size={16} />}
         </button>
-        <button className="icon-btn" title="다음 프레임 (→, ⌘→)" onClick={() => seek(time + 1 / fps)} disabled={!player}>
+        <button className="icon-btn" title="다음 프레임 (→, ⌘→)" onClick={() => seek(now() + 1 / fps)} disabled={!player}>
           <ChevronRight size={16} />
         </button>
         <button className="mono small" style={{ marginLeft: 6, fontVariantNumeric: 'tabular-nums', border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text)' }} title="눌러서 초 / 프레임 표시 바꾸기" onClick={() => setLayout({ frames: !frames })} data-testid="timecode">
-          <span>{fmt(time)}</span>
+          <NowLabel fmt={fmt} />
           <span className="faint"> / {fmt(d)}</span>
         </button>
         <div className="grow" />
@@ -874,14 +901,14 @@ export function Timeline() {
             레이어
           </button>
         </div>
-        <button className="icon-btn" title="지금 시점에 마커 (*)" disabled={!project?.hasVideo} onClick={() => addMarker(time)} data-testid="add-marker">
+        <button className="icon-btn" title="지금 시점에 마커 (*)" disabled={!project?.hasVideo} onClick={() => addMarker(now())} data-testid="add-marker">
           <Bookmark size={14} />
         </button>
         <button
           className={`icon-btn${wa ? ' active' : ''}`}
           title={wa ? `작업 영역 ${fmt(wa.a)}~${fmt(wa.b)} 반복 재생 · 눌러서 끄기 (B/N으로 시작·끝 지정)` : '작업 영역 반복 재생: B로 시작, N으로 끝 지정'}
           disabled={!project?.hasVideo}
-          onClick={() => useEditor.setState({ workArea: wa ? null : { a: Math.min(time, d - 0.5), b: Math.min(d, Math.max(time + 2, 1)) } })}
+          onClick={() => useEditor.setState({ workArea: wa ? null : { a: Math.min(now(), d - 0.5), b: Math.min(d, Math.max(now() + 2, 1)) } })}
           data-testid="work-area"
         >
           <Repeat size={14} />
@@ -929,9 +956,31 @@ export function Timeline() {
         <div className="tl-grid" style={{ gridTemplateColumns: `${layerW}px ${trackW}px` }}>
           <div className="tl-corner tiny muted">
             레이어 {layers.length ? `· ${layers.length}` : ''}
-            <button className={`btn ghost sm${onlySel ? ' active' : ''}`} style={{ height: 18, marginLeft: 6, color: onlySel ? 'var(--accent)' : undefined }} onClick={() => setOnlySel(!onlySel)} title="고른 레이어(와 그 그룹)만 보기" data-testid="timeline-only-selected">
-              {onlySel ? '모두 보기' : '선택만'}
-            </button>
+            {/* 보기: the picked layers, the layers seen now, or the sound lanes only */}
+            <span style={{ position: 'relative', marginLeft: 6 }}>
+              <button
+                className={`btn ghost sm${onlySel || onlyNow || onlySound ? ' active' : ''}`}
+                style={{ height: 18, gap: 2, color: onlySel || onlyNow || onlySound ? 'var(--accent)' : undefined }}
+                onClick={() => setFilterMenu(!filterMenu)}
+                title="타임라인에 보일 줄 고르기"
+                data-testid="timeline-filter"
+              >
+                {[onlySel && '선택만', onlyNow && '보이는 것만', onlySound && '소리만'].filter(Boolean).join(' · ') || '보기'}
+                <ChevronDown size={11} />
+              </button>
+              {filterMenu && (
+                <Menu
+                  style={{ left: 0, top: 22, minWidth: 200 }}
+                  onClose={() => setFilterMenu(false)}
+                  items={[
+                    { label: '고른 레이어만 (그룹 포함)', active: onlySel, onClick: () => setOnlySel(!onlySel), testId: 'timeline-only-selected' },
+                    { label: '지금 화면에 보이는 레이어만', active: onlyNow, onClick: () => setOnlyNow(!onlyNow), testId: 'timeline-only-now' },
+                    { label: '소리만 (배경음악·내레이션·효과음)', active: onlySound, onClick: () => setOnlySound(!onlySound), testId: 'timeline-only-sound' },
+                    { label: '모두 보기', onClick: () => (setOnlySel(false), setOnlyNow(false), setOnlySound(false)), testId: 'timeline-show-all' },
+                  ]}
+                />
+              )}
+            </span>
             {solo.length > 0 && (
               <button className="btn ghost sm" style={{ height: 18, marginLeft: 6 }} onClick={() => useEditor.setState({ solo: [] })} title="솔로 모두 끄기">
                 솔로 끄기
@@ -1030,10 +1079,7 @@ export function Timeline() {
             })}
             {project?.hasVideo && (
               // the grip sits on the exact time; the time label goes to whichever side has room
-              <div className="tl-head" style={{ left: px(time) }} onPointerDown={scrub} title="끌어서 원하는 장면으로" data-testid="playhead">
-                <i />
-                <span className={px(time) > trackW - 70 ? 'left' : ''}>{fmt(time)}</span>
-              </div>
+              <PlayheadHead px={px} trackW={trackW} fmt={fmt} onPointerDown={scrub} />
             )}
           </div>
           {rows}
@@ -1047,7 +1093,7 @@ export function Timeline() {
           )}
           {/* playhead over every track: the line can be grabbed too */}
           {/* no grid placement: the rows are implicit, so '1 / -1' would be zero rows tall */}
-          <div className="tl-playhead" style={{ left: layerW + px(time) }} onPointerDown={project?.hasVideo ? scrub : undefined} data-testid="playhead-line" />
+          <PlayheadLine left={layerW} px={px} onPointerDown={project?.hasVideo ? scrub : undefined} />
           {drag?.kind === 'layer' && drag.snapAt != null && <div className="tl-snap-line" style={{ left: layerW + px(drag.snapAt) }} data-testid="timeline-snap" />}
         </div>
       </div>
@@ -1193,4 +1239,27 @@ function ValueGraph({ id, track, keys, px, tOf, fps, locked }: { id: string; tra
       })}
     </svg>
   )
+}
+
+// The playhead and the timecode are the only parts of the timeline that follow every time update
+// while the video plays: small components of their own, so the rows are not drawn again each tick.
+function NowLabel({ fmt }: { fmt: (t: number) => string }) {
+  const time = useEditor((s) => s.time)
+  return <span>{fmt(time)}</span>
+}
+
+function PlayheadHead({ px, trackW, fmt, onPointerDown }: { px: (t: number) => number; trackW: number; fmt: (t: number) => string; onPointerDown: (e: React.PointerEvent) => void }) {
+  const time = useEditor((s) => s.time)
+  // the grip sits on the exact time; the time label goes to whichever side has room
+  return (
+    <div className="tl-head" style={{ left: px(time) }} onPointerDown={onPointerDown} title="끌어서 원하는 장면으로" data-testid="playhead">
+      <i />
+      <span className={px(time) > trackW - 70 ? 'left' : ''}>{fmt(time)}</span>
+    </div>
+  )
+}
+
+function PlayheadLine({ left, px, onPointerDown }: { left: number; px: (t: number) => number; onPointerDown?: (e: React.PointerEvent) => void }) {
+  const time = useEditor((s) => s.time)
+  return <div className="tl-playhead" style={{ left: left + px(time) }} onPointerDown={onPointerDown} data-testid="playhead-line" />
 }

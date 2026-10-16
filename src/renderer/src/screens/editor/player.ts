@@ -58,6 +58,17 @@ export class MsPlayer {
   currentTime = 0
   duration = 0
   playing = false
+  /**
+   * Each play / pause / seek is numbered and the preview says which one it had done when it posted
+   * a state. The preview plays at real speed in its own process: on a slow computer its time updates
+   * pile up while the editor draws, and the old ones (posted before a pause or a seek) would move the
+   * playhead on after the pause — they are dropped, and of the rest only the latest is shown, once
+   * per frame.
+   */
+  private cmd = 0
+  private pending: PlayerState | null = null
+  private frame = 0
+  private timer: ReturnType<typeof setTimeout> | null = null
 
   constructor(
     src: string,
@@ -74,36 +85,63 @@ export class MsPlayer {
     this.iframe = f
     const onMsg = (e: MessageEvent) => {
       if (e.source !== f.contentWindow || !e.data || typeof e.data !== 'object') return
-      const d = e.data as { ms?: string; time?: number; duration?: number; playing?: boolean; message?: string }
+      const d = e.data as { ms?: string; time?: number; duration?: number; playing?: boolean; message?: string; seq?: number }
       if (d.ms === 'ready') {
         this.duration = d.duration ?? 0
         this.on.ready(this.duration)
       } else if (d.ms === 'state') {
+        // posted before the preview got our last command: stale (a runtime without numbers: every state counts)
+        if (typeof d.seq === 'number' && d.seq < this.cmd) return
         this.currentTime = d.time ?? 0
         this.duration = d.duration ?? this.duration
         this.playing = !!d.playing
-        this.on.state({ time: this.currentTime, duration: this.duration, playing: this.playing })
+        this.deliver({ time: this.currentTime, duration: this.duration, playing: this.playing })
       } else if (d.ms === 'error') this.on.error(d.message ?? '미리보기를 시작하지 못했어요.')
     }
     window.addEventListener('message', onMsg)
     this.listeners.push(onMsg)
   }
 
+  /** the latest state, once per frame (a hidden window has no frames: then within 100 ms) */
+  private deliver(st: PlayerState) {
+    this.pending = st
+    if (this.frame || this.timer) return
+    const go = () => {
+      if (this.frame) cancelAnimationFrame(this.frame)
+      if (this.timer) clearTimeout(this.timer)
+      this.frame = 0
+      this.timer = null
+      const p = this.pending
+      this.pending = null
+      if (p) this.on.state(p)
+    }
+    this.frame = requestAnimationFrame(go)
+    this.timer = setTimeout(go, 100)
+  }
+
   private post(msg: Record<string, unknown>) {
     this.iframe.contentWindow?.postMessage(msg, '*')
   }
   play() {
-    this.post({ ms: 'play' })
+    this.post({ ms: 'play', seq: ++this.cmd })
   }
   pause() {
-    this.post({ ms: 'pause' })
+    this.post({ ms: 'pause', seq: ++this.cmd })
+    // the button and the editor stop at once; the preview's own state brings the exact time
+    if (this.playing) {
+      this.playing = false
+      this.pending = null
+      this.on.state({ time: this.currentTime, duration: this.duration, playing: false })
+    }
   }
   seek(t: number) {
     this.currentTime = t
-    this.post({ ms: 'seek', t })
+    this.post({ ms: 'seek', t, seq: ++this.cmd })
   }
   dispose() {
     for (const l of this.listeners) window.removeEventListener('message', l)
+    if (this.frame) cancelAnimationFrame(this.frame)
+    if (this.timer) clearTimeout(this.timer)
     this.iframe.remove()
   }
 }

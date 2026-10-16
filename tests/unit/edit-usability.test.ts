@@ -173,6 +173,14 @@ describe('marks with files', () => {
   })
 })
 
+describe('지금 보이는 것만', () => {
+  it('keeps layers shown on the canvas at the playhead (not hidden, transparent, off the canvas, or the camera)', async () => {
+    const { visibleNow } = await import('../../src/shared/layers')
+    const el = (id: string, visible: boolean, x: number, w = 100, type = 'shape') => ({ id, type, visible, rect: { x, y: 10, w, h: 100 } })
+    expect(visibleNow([el('a', true, 10), el('hidden', false, 10), el('off', true, 2000), el('edge', true, -50), el('flat', true, 10, 0), el('__camera', true, 0, 1920, 'camera')], 1920, 1080)).toEqual(['a', 'edge'])
+  })
+})
+
 describe('the name a request uses', () => {
   it('is the layer label in the composition, in either attribute order', async () => {
     vi.doMock('node-pty', () => ({ spawn: () => ({}) }))

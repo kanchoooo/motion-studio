@@ -8,7 +8,7 @@ import { ConnectionsModal } from '../../components/ai/ConnectionsModal'
 import { VoiceBrowser } from '../../components/ai/VoiceBrowser'
 import { Menu, Segmented } from '../../components/ui'
 import { studio, useStore } from '../../store'
-import { useEditor } from './editorStore'
+import { useEditor, useEditorStill } from './editorStore'
 import { useOverrides } from './overrides'
 
 let player: HTMLAudioElement | null = null
@@ -24,7 +24,7 @@ export function SoundFinder() {
         value={tab}
         onChange={setTab}
         options={[
-          { value: 'artlist', label: '아트리스트' },
+          { value: 'artlist', label: '음악·효과음 후보' },
           { value: 'voice', label: '내레이션' },
           { value: 'made', label: 'AI로 만든 소리' },
         ]}
@@ -61,8 +61,12 @@ function ArtlistSearch() {
   const [menu, setMenu] = useState<string | null>(null)
   const { playing, toggle } = usePlayer()
   const { value: ov, setBgm, setSfxGroup } = useOverrides()
-  const { audio } = useEditor()
+  const { audio } = useEditorStill()
   const asked = useRef(false)
+  const [base, setBase] = useState('')
+  useEffect(() => {
+    void studio.projects.fileUrl(pid, '').then(setBase)
+  }, [pid])
 
   useEffect(() => {
     void studio.ai.settings().then((s) => setEnabled(s.artlist))
@@ -87,13 +91,13 @@ function ArtlistSearch() {
       if (it.kind === 'bgm' && !target) {
         const d = project!.brief.output.duration
         const track: BgmTrack = { id: `bgm-${crypto.randomUUID().slice(0, 8)}`, label: it.title, src: file, start: 0, end: Math.min(d, it.duration ?? d), mediaStart: 0, volume: 0.7, fadeIn: 0.3, fadeOut: 1, loop: (it.duration ?? d) < d }
-        setBgm([...(ov?.bgm ?? []), track], `배경음악 추가: ${it.title} (아트리스트)`)
+        setBgm([...(ov?.bgm ?? []), track], `배경음악 추가: ${it.title}${it.source === 'artlist' ? ' (아트리스트)' : ''}`)
         toast('배경음악으로 넣었어요. 구간·볼륨은 아래에서 조절해요.', 'success')
       } else if (target) {
         setSfxGroup(target.group, { src: file }, `효과음 일괄 변경: ${target.group} → ${it.title}`)
         toast('효과음을 바꿨어요', 'success')
       } else {
-        await studio.agent.send({ projectId: pid, text: `아트리스트에서 고른 효과음 "${it.title}"(${file})을 어울리는 장면에 넣어 주세요.` })
+        await studio.agent.send({ projectId: pid, text: `고른 효과음 "${it.title}"(${file})을 어울리는 장면에 넣어 주세요.` })
         toast('Claude에게 넣어 달라고 했어요', 'success')
       }
     } catch (e) {
@@ -103,21 +107,83 @@ function ArtlistSearch() {
     }
   }
 
-  if (enabled === false)
-    return (
-      <div className="col small muted" style={{ gap: 8 }}>
-        아트리스트가 꺼져 있어요. AI 연결에서 켜고 로그인하면 Claude가 배경음악·효과음을 찾아 여기에 보여줘요.
-        <button className="btn sm" style={{ alignSelf: 'flex-start' }} onClick={() => setConnections(true)}>
-          AI 연결 열기
-        </button>
-        {connections && <ConnectionsModal onClose={() => setConnections(false)} />}
-      </div>
-    )
-
   const list = audioCandidates
   const groups = [...new Set(audio.filter((a) => a.kind === 'sfx').map((a) => a.group ?? '기타'))]
+  // listening copies Claude put in the project are played from there
+  const urlOf = (it: AudioCandidate) => (it.file ? (base ? `${base}composition/${it.file}` : undefined) : it.previewUrl)
   return (
     <div className="col" style={{ gap: 8 }}>
+      {enabled === false ? (
+        <div className="col small muted" style={{ gap: 8 }}>
+          대화에서 "무료 배경음악 후보 찾아 줘"처럼 말하면 Claude가 들어 볼 수 있는 후보를 대화창과 여기에 보여줘요. 아트리스트를 켜면 여기서 바로 검색도 할 수 있어요.
+          <button className="btn sm" style={{ alignSelf: 'flex-start' }} onClick={() => setConnections(true)}>
+            AI 연결 열기
+          </button>
+          {connections && <ConnectionsModal onClose={() => setConnections(false)} />}
+        </div>
+      ) : (
+        <ArtlistBox kind={kind} setKind={setKind} query={query} setQuery={setQuery} search={search} searching={session.status === 'busy' && asked.current} />
+      )}
+      {list && renderList(list)}
+    </div>
+  )
+
+  function renderList(list: NonNullable<typeof audioCandidates>) {
+    const artlist = list.items.some((i) => i.source === 'artlist')
+    return (
+        <div className="col" style={{ gap: 2 }}>
+          <div className="tiny muted">
+            “{list.query}” {list.kind === 'bgm' ? '배경음악' : '효과음'} 후보 {list.items.length}개
+          </div>
+          {list.items.map((it) => {
+            const key = `${list.id}:${it.id}`
+            const url = urlOf(it)
+            return (
+              <div key={key} className="row" style={{ gap: 6, padding: '6px 4px', borderTop: '1px solid var(--border)', position: 'relative' }} data-candidate={it.title}>
+                <button className="icon-btn" disabled={!url} title={url ? '미리듣기' : '미리듣기 없음'} onClick={() => url && toggle(key, url)} style={{ width: 26, height: 26, borderRadius: 13, background: 'var(--surface-3)' }}>
+                  {playing === key ? <Pause size={12} /> : <Play size={12} />}
+                </button>
+                <div className="col grow" style={{ gap: 0, minWidth: 0 }}>
+                  <span className="small ellipsis" style={{ fontWeight: 600 }}>{it.title}</span>
+                  <span className="tiny faint ellipsis">{[it.artist, mmss(it.duration), it.bpm && `${it.bpm}BPM`, it.mood, it.source !== 'artlist' && it.source !== 'web' && it.source, it.license].filter(Boolean).join(' · ')}</span>
+                </div>
+                {it.pageUrl && (
+                  <button className="icon-btn" title={it.source === 'artlist' ? '아트리스트에서 보기' : '출처 페이지 열기'} onClick={() => studio.app.openExternal(it.pageUrl!)}>
+                    <ExternalLink size={12} />
+                  </button>
+                )}
+                <button
+                  className="btn sm"
+                  disabled={using === it.id || (!it.downloadUrl && !it.previewUrl && !it.file)}
+                  onClick={() => (it.kind === 'sfx' ? setMenu(menu === key ? null : key) : void use(it))}
+                  title={it.downloadUrl || it.file || it.source !== 'artlist' ? '' : '미리듣기 파일로 넣어요. 최종본은 아트리스트에서 라이선스 받은 파일로 바꿔 주세요.'}
+                >
+                  {using === it.id ? <Loader2 size={12} className="spin" /> : null}
+                  사용
+                </button>
+                {menu === key && (
+                  <Menu
+                    style={{ right: 0, top: 34 }}
+                    onClose={() => setMenu(null)}
+                    items={[
+                      { label: 'Claude에게 어울리는 곳에 넣어 달라고 하기', onClick: () => void use(it) },
+                      ...groups.map((g) => ({ label: `"${g}" 효과음 모두 이걸로 바꾸기`, onClick: () => void use(it, { group: g }) })),
+                    ]}
+                  />
+                )}
+              </div>
+            )
+          })}
+          {artlist && list.items.some((i) => i.source === 'artlist' && !i.downloadUrl) && <div className="tiny faint">미리듣기 파일로 넣은 곡은 납품 전에 아트리스트에서 라이선스를 받은 파일로 바꿔 주세요.</div>}
+        </div>
+    )
+  }
+}
+
+/** Artlist search through Claude (when Artlist is on) */
+function ArtlistBox({ kind, setKind, query, setQuery, search, searching }: { kind: 'bgm' | 'sfx'; setKind(k: 'bgm' | 'sfx'): void; query: string; setQuery(q: string): void; search(): void; searching: boolean }) {
+  return (
+    <>
       <div className="row" style={{ gap: 6 }}>
         <Segmented value={kind} onChange={setKind} options={[{ value: 'bgm', label: '배경음악' }, { value: 'sfx', label: '효과음' }]} />
       </div>
@@ -136,59 +202,13 @@ function ArtlistSearch() {
           찾기
         </button>
       </div>
-      {session.status === 'busy' && asked.current && (
+      {searching && (
         <div className="row tiny muted">
           <Loader2 size={12} className="spin" />
           Claude가 찾고 있어요
         </div>
       )}
-      {list && (
-        <div className="col" style={{ gap: 2 }}>
-          <div className="tiny muted">
-            “{list.query}” {list.kind === 'bgm' ? '배경음악' : '효과음'} 후보 {list.items.length}개
-          </div>
-          {list.items.map((it) => {
-            const key = `${list.id}:${it.id}`
-            return (
-              <div key={key} className="row" style={{ gap: 6, padding: '6px 4px', borderTop: '1px solid var(--border)', position: 'relative' }} data-candidate={it.title}>
-                <button className="icon-btn" disabled={!it.previewUrl} title={it.previewUrl ? '미리듣기' : '미리듣기 없음'} onClick={() => it.previewUrl && toggle(key, it.previewUrl)} style={{ width: 26, height: 26, borderRadius: 13, background: 'var(--surface-3)' }}>
-                  {playing === key ? <Pause size={12} /> : <Play size={12} />}
-                </button>
-                <div className="col grow" style={{ gap: 0, minWidth: 0 }}>
-                  <span className="small ellipsis" style={{ fontWeight: 600 }}>{it.title}</span>
-                  <span className="tiny faint ellipsis">{[it.artist, mmss(it.duration), it.bpm && `${it.bpm}BPM`, it.mood].filter(Boolean).join(' · ')}</span>
-                </div>
-                {it.pageUrl && (
-                  <button className="icon-btn" title="아트리스트에서 보기" onClick={() => studio.app.openExternal(it.pageUrl!)}>
-                    <ExternalLink size={12} />
-                  </button>
-                )}
-                <button
-                  className="btn sm"
-                  disabled={using === it.id || (!it.downloadUrl && !it.previewUrl)}
-                  onClick={() => (it.kind === 'sfx' ? setMenu(menu === key ? null : key) : void use(it))}
-                  title={it.downloadUrl ? '' : '미리듣기 파일로 넣어요. 최종본은 아트리스트에서 라이선스 받은 파일로 바꿔 주세요.'}
-                >
-                  {using === it.id ? <Loader2 size={12} className="spin" /> : null}
-                  사용
-                </button>
-                {menu === key && (
-                  <Menu
-                    style={{ right: 0, top: 34 }}
-                    onClose={() => setMenu(null)}
-                    items={[
-                      { label: 'Claude에게 어울리는 곳에 넣어 달라고 하기', onClick: () => void use(it) },
-                      ...groups.map((g) => ({ label: `"${g}" 효과음 모두 이걸로 바꾸기`, onClick: () => void use(it, { group: g }) })),
-                    ]}
-                  />
-                )}
-              </div>
-            )
-          })}
-          {list.items.some((i) => !i.downloadUrl) && <div className="tiny faint">미리듣기 파일로 넣은 곡은 납품 전에 아트리스트에서 라이선스를 받은 파일로 바꿔 주세요.</div>}
-        </div>
-      )}
-    </div>
+    </>
   )
 }
 
@@ -228,7 +248,7 @@ function MadeAudio() {
   useEffect(() => {
     void studio.ai.generated(pid).then((g) => setItems(g.filter((x) => x.kind === 'audio')))
   }, [pid, historyNonce])
-  if (!items.length) return <div className="small muted">아직 AI로 만들거나 가져온 소리가 없어요. 내레이션이나 아트리스트 음악을 쓰면 여기에 모여요.</div>
+  if (!items.length) return <div className="small muted">아직 AI로 만들거나 가져온 소리가 없어요. 내레이션이나 고른 음악·효과음을 쓰면 여기에 모여요.</div>
   return (
     <div className="col" style={{ gap: 2 }}>
       {items.map((it) => (
@@ -243,7 +263,7 @@ function MadeAudio() {
           {it.provider === 'artlist' ? <Music size={12} /> : <Sparkles size={12} />}
           <div className="col grow" style={{ gap: 0, minWidth: 0 }}>
             <span className="small ellipsis">{it.label ?? it.file.split('/').pop()}</span>
-            <span className="tiny faint">{(AI_PROVIDERS as Record<string, { name: string }>)[it.provider]?.name ?? (it.provider === 'pick' ? '아트리스트' : it.provider)}</span>
+            <span className="tiny faint">{(AI_PROVIDERS as Record<string, { name: string }>)[it.provider]?.name ?? (it.provider === 'pick' ? '고른 후보' : it.provider)}</span>
           </div>
           <button
             className="btn ghost sm"

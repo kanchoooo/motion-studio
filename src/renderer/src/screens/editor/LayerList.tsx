@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Box, ChevronDown, ChevronRight, Contrast, Eye, EyeOff, Film, Image as ImageIcon, Layers, Lock, Search, Type, Unlock, Video, X } from 'lucide-react'
 import { labelOf } from './edit'
 import { useEditLocked } from './editLock'
-import { useEditor } from './editorStore'
+import { useEditor, useEditorStill } from './editorStore'
 import { listedLayers, matchesLayer } from '@shared/layers'
 import { useOverrides } from './overrides'
 
@@ -21,7 +21,7 @@ const KINDS: { id: string; label: string; types: string[] }[] = [
 ]
 
 export function LayerList() {
-  const { elements, selection, select } = useEditor()
+  const { elements, selection, select } = useEditorStill()
   const ov = useOverrides((s) => s.value)
   const { patchElement, setLocked } = useOverrides()
   const [q, setQ] = useState('')

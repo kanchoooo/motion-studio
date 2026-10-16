@@ -192,7 +192,7 @@ studio.agent.onEvent((e: AgentEvent) => {
       break
     case 'audio-candidates':
       useStore.setState({ audioCandidates: e.list })
-      useStore.getState().toast(`음악 후보 ${e.list.items.length}개를 찾았어요. 사운드 패널에서 들어 보세요.`, 'success')
+      useStore.getState().toast(`${e.list.kind === 'bgm' ? '음악' : '효과음'} 후보 ${e.list.items.length}개를 찾았어요. 대화창이나 사운드 탭에서 들어 보세요.`, 'success')
       break
   }
 })

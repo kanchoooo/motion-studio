@@ -41,6 +41,10 @@ try {
   await setStatus(p.id, 'busy')
   await win.getByTestId('edit-lock').waitFor({ timeout: 5000 })
   check('banner says Claude is still working', (await win.getByTestId('edit-lock').innerText()).includes('아직 Claude가 작업 중'))
+  // at the bottom of the canvas, clear of the view toolbar at the top
+  const bannerBox = await win.getByTestId('edit-lock').boundingBox()
+  const frameBox = await win.locator('[data-capture-frame]').boundingBox()
+  check('the banner sits at the bottom of the canvas', !!bannerBox && !!frameBox && bannerBox.y > frameBox.y + frameBox.height / 2, JSON.stringify({ bannerBox, frameBox }))
 
   // selecting still works
   await win.locator('[data-layer="app-title"]').click()

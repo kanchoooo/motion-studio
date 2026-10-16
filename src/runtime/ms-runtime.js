@@ -2278,9 +2278,9 @@
     else if (d.ms === 'claude-tracks') reply({ tracks: claudeTracks(String(d.id || ''), d.props) })
     else if (d.ms === 'props-now') reply({ values: propsNow(String(d.id || ''), d.props || []) })
     else if (d.ms === 'measure-flow') reply(measureFlow(String(d.id || '')))
-    else if (d.ms === 'play' && P) { P.play(); postState() }
-    else if (d.ms === 'pause' && P) { P.pause(); postState() }
-    else if (d.ms === 'seek' && P) { P.pause(); P.seek(Math.max(0, +d.t || 0)); postState() }
+    else if (d.ms === 'play' && P) { took(d); P.play(); postState() }
+    else if (d.ms === 'pause' && P) { took(d); P.pause(); postState() }
+    else if (d.ms === 'seek' && P) { took(d); P.pause(); P.seek(Math.max(0, +d.t || 0)); postState() }
     else if (d.ms === 'apply-styles') {
       EL = (d.overrides && d.overrides.elements) || {}
       applyStyles(EL)
@@ -2294,11 +2294,15 @@
   })
 
   // ---- 5. transport state for the editor (time, duration, playing) ----------------
+  // every state says which of the editor's play / pause / seek commands was the last one done here:
+  // the editor drops states that piled up before its latest command
+  var cmdSeq = 0
+  function took(d) { if (typeof d.seq === 'number') cmdSeq = d.seq }
   function postState() {
     var P = window.__player
     if (!P || window.parent === window) return
     try {
-      window.parent.postMessage({ ms: 'state', time: P.getTime(), duration: P.getDuration(), playing: !!P.isPlaying() }, '*')
+      window.parent.postMessage({ ms: 'state', time: P.getTime(), duration: P.getDuration(), playing: !!P.isPlaying(), seq: cmdSeq }, '*')
     } catch (e) { /* parent gone */ }
   }
   var lastSent = 0

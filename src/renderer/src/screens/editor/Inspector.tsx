@@ -3,7 +3,7 @@ import { CAMERA_ID } from '@shared/overrides'
 import { Circle, Contrast, Film, Image as ImageIcon, Lock, Redo2, Square, SquareDashed, Type, Undo2 } from 'lucide-react'
 import { useStore } from '../../store'
 import { addLayer, labelOf } from './edit'
-import { useEditor } from './editorStore'
+import { useEditor, useEditorStill } from './editorStore'
 import { useEditLocked } from './editLock'
 import { LayerEditor } from './LayerEditor'
 import { LayerList } from './LayerList'
@@ -25,7 +25,7 @@ export const ADD_LAYER: { kind: Parameters<typeof addLayer>[0]; label: string; i
 
 export function Inspector() {
   const { project, loadFonts } = useStore()
-  const { elements, selected, selection, panel } = useEditor()
+  const { elements, selected, selection, panel } = useEditorStill()
   const { value: ov, load, past, future, undo, redo } = useOverrides()
   const sel = elements.find((e) => e.id === selected)
   const many = selection.length > 1
@@ -107,7 +107,7 @@ export function Inspector() {
  * or thrown away. Nothing is dropped silently.
  */
 function EditsBanner() {
-  const { elements, staleMotions, ready } = useEditor()
+  const { elements, staleMotions, ready } = useEditorStill()
   const ov = useOverrides((s) => s.value)
   const { dropMotionEdits, moveEdits } = useOverrides()
   const [open, setOpen] = useState(false)

@@ -38,6 +38,9 @@ export function Segmented<T extends string>({
   )
 }
 
+/** a drag that edits (number scrubbing): the editor makes the whole drag one undo step (it sets these) */
+export const dragEdit = { begin: () => {}, end: () => {} }
+
 /** number input whose label can be dragged left/right to scrub the value (Figma style) */
 export function NumberField({
   value,
@@ -79,16 +82,25 @@ export function NumberField({
     const start = value ?? 0
     const el = e.currentTarget as HTMLElement
     el.setPointerCapture(e.pointerId)
+    // only real changes go out (a press without moving changes nothing)
+    let last = round(start)
+    dragEdit.begin()
     const move = (ev: PointerEvent) => {
       const mult = ev.shiftKey ? 10 : ev.altKey ? 0.1 : 1
-      onChange(round(clamp(start + Math.round((ev.clientX - startX) / 2) * step * mult)))
+      const next = round(clamp(start + Math.round((ev.clientX - startX) / 2) * step * mult))
+      if (next === last) return
+      last = next
+      onChange(next)
     }
     const up = () => {
       el.removeEventListener('pointermove', move)
       el.removeEventListener('pointerup', up)
+      el.removeEventListener('pointercancel', up)
+      dragEdit.end()
     }
     el.addEventListener('pointermove', move)
     el.addEventListener('pointerup', up)
+    el.addEventListener('pointercancel', up)
   }
   return (
     <div className="num" title={title}>

@@ -63,3 +63,8 @@ export function matchesLayer(e: LayerNode, label: string, q: string): boolean {
   const hay = `${label} ${e.text ?? ''} ${e.id} ${TYPE_NAMES[e.type] ?? e.type}`.toLowerCase()
   return words.every((w) => hay.includes(w))
 }
+
+/** layers seen at the playhead: shown (not hidden, not transparent) and on the canvas; the camera is not one */
+export function visibleNow(els: { id: string; type: string; visible: boolean; rect: { x: number; y: number; w: number; h: number } }[], w: number, h: number): string[] {
+  return els.filter((e) => e.type !== 'camera' && e.visible && e.rect.w > 0 && e.rect.h > 0 && e.rect.x < w && e.rect.y < h && e.rect.x + e.rect.w > 0 && e.rect.y + e.rect.h > 0).map((e) => e.id)
+}

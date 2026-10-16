@@ -146,6 +146,9 @@ export class SessionManager {
       onAudioCandidates: (projectId, list) => {
         writeText(join(projects.pathOf(projectId), '.studio', 'audio-candidates.json'), JSON.stringify(list))
         this.emit({ type: 'audio-candidates', projectId, list })
+        // …and a card in the chat to listen and pick
+        const l = this.live.get(projectId)
+        if (l) this.addApp(l, { id: newId(), at: nowIso(), role: 'audio', list })
       },
       onGenerated: (projectId, files, label) => this.showGenerated(projectId, files, label),
       onVoices: (projectId, card) => {
@@ -257,6 +260,29 @@ export class SessionManager {
     await this.send({ projectId, text: `내레이션 목소리는 「${v.name}」으로 할게요.`, detail: `고른 목소리: provider ${v.provider}, id ${v.id}${v.voiceType ? `, voice_type ${v.voiceType}` : ''}${v.source ? `, source ${v.source}` : ''}${v.engine ? `, engine ${v.engine}` : ''}${v.sample ? `, sample ${v.sample}` : ''}` })
     const now = this.live.get(projectId)?.appItems.find((x) => x.id === itemId)
     if (now?.role === 'voices') this.updateApp(this.live.get(projectId)!, { ...now, picked: voiceId })
+  }
+
+  /** the designer picked a music / sound-effect candidate on a chat card: Claude is told, then the card shows the pick */
+  async pickAudio(projectId: string, itemId: string, candidateId: string) {
+    const l = this.live.get(projectId)
+    const it = l?.appItems.find((x) => x.id === itemId)
+    if (!l || !it || it.role !== 'audio') throw new Error('이 후보 카드를 찾을 수 없어요.')
+    const c = it.list.items.find((x) => x.id === candidateId)
+    if (!c) throw new Error('그 후보를 찾을 수 없어요.')
+    const what = it.list.kind === 'bgm' ? '배경음악' : '효과음'
+    const detail = [
+      `고른 후보: ${c.title}${c.artist ? ` · ${c.artist}` : ''} (출처 ${c.source}${c.license ? `, 라이선스 ${c.license}` : ''})`,
+      c.file ? `듣기용 파일: ${c.file}` : '',
+      c.downloadUrl ? `download_url: ${c.downloadUrl}` : '',
+      c.previewUrl ? `preview_url: ${c.previewUrl}` : '',
+      c.pageUrl ? `page_url: ${c.pageUrl}` : '',
+      it.list.kind === 'bgm' ? 'Bring it in (ai_import, or the file) and make it THE background music: give the existing bgm element the new src (keep its data-ms-id) instead of adding a second track. Mark it data-ms-type="bgm" with a Korean data-ms-label.' : 'Bring it in (ai_import, or the file) and place it where it fits the motion: data-ms-id, data-ms-type="sfx", data-ms-sfx (its kind) and a Korean data-ms-label.',
+    ]
+      .filter(Boolean)
+      .join('\n')
+    await this.send({ projectId, text: `${what}은 「${c.title}」로 할게요.`, detail })
+    const now = this.live.get(projectId)?.appItems.find((x) => x.id === itemId)
+    if (now?.role === 'audio') this.updateApp(this.live.get(projectId)!, { ...now, picked: candidateId })
   }
 
   /**

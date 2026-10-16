@@ -79,6 +79,32 @@ export function setProps(items: { id: string; values: Partial<Record<KeyProp, nu
   if (statics.length) st.patchElements(statics, summaryKeys)
 }
 
+/**
+ * 기준점을 가운데로: the pivot back at the middle of the layer (anchor 0,0) while the layer stays
+ * where it is on screen — the position takes the difference, as when the anchor handle is dragged
+ * there (position keyframes are left alone, like that drag). One undo step.
+ */
+export function anchorToCenter(id: string) {
+  if (isLocked(id)) return
+  const ax = valueNow(id, 'anchorX')
+  const ay = valueNow(id, 'anchorY')
+  if (!ax && !ay) return
+  // the anchor's change in the layer's own space, and the same on screen (scaled, then turned)
+  const lx = -ax
+  const ly = -ay
+  const sx = valueNow(id, 'scaleX') || 1
+  const sy = valueNow(id, 'scaleY') || 1
+  const rad = (valueNow(id, 'rotate') * Math.PI) / 180
+  const dx = Math.cos(rad) * sx * lx - Math.sin(rad) * sy * ly
+  const dy = Math.sin(rad) * sx * lx + Math.cos(rad) * sy * ly
+  const values: Partial<Record<KeyProp, number>> = { anchorX: 0, anchorY: 0 }
+  if (!isKeyed(id, 'x') && !isKeyed(id, 'y')) {
+    values.x = Math.round((valueNow(id, 'x') + dx - lx) * 100) / 100
+    values.y = Math.round((valueNow(id, 'y') + dy - ly) * 100) / 100
+  }
+  setProps([{ id, values }], ['anchor'])
+}
+
 /** stopwatch on a group of properties (position = x+y, scale = scaleX+scaleY…) */
 /**
  * Keyframing a move, size or turn of a layer the composition lays out (flex, grid, flow): its group

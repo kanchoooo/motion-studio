@@ -24,6 +24,7 @@ import {
 } from '@shared/overrides'
 import { trackKeys, withTrack, type Track } from './tracks'
 import { onLeaveProject, studio, useStore } from '../../store'
+import { dragEdit } from '../../components/ui'
 import { blockedEdit } from './editLock'
 import { useEditor } from './editorStore'
 import { ask } from './player'
@@ -202,6 +203,13 @@ export function resetOverrides() {
 }
 
 function schedule(keys: string[], summary: string) {
+  // inside a drag: saved once, when it ends (no history version or preview reload in the middle of it)
+  if (gesture) {
+    keys.forEach((k) => gesture!.keys.add(k))
+    gesture.summary = summary
+    useOverrides.setState({ dirty: true })
+    return
+  }
   revision++
   pendingProject = useStore.getState().project?.meta.id ?? pendingProject
   useOverrides.setState({ dirty: true })
@@ -271,6 +279,7 @@ export const useOverrides = create<OverrideState>((set, get) => {
     load: (o) => set({ value: normalizeOverrides(structuredClone(o)), past: [], future: [] }),
     undo: () => {
       if (blockedEdit()) return
+      endEditGesture()
       const { past, value, future } = get()
       if (!past.length || !value) return
       const prev = past[past.length - 1]
@@ -280,6 +289,7 @@ export const useOverrides = create<OverrideState>((set, get) => {
     },
     redo: () => {
       if (blockedEdit()) return
+      endEditGesture()
       const { past, value, future } = get()
       if (!future.length || !value) return
       const next = future[0]
@@ -644,8 +654,14 @@ function mergeElement(prev: ElementOverride, patch: ElementOverride): ElementOve
 let lastPush = 0
 let lastKind = ''
 function pushUndo(cur: Overrides, kind = ''): Partial<OverrideState> {
-  const now = Date.now()
   const st = useOverrides.getState()
+  // a drag: one step, the value from before it — whatever kinds of edit it makes and however long it rests
+  if (gesture) {
+    if (gesture.pushed) return { future: [] }
+    gesture.pushed = true
+    return { past: [...st.past, cur].slice(-100), future: [] }
+  }
+  const now = Date.now()
   const coalesce = now - lastPush < 600 && kind === lastKind
   lastPush = now
   lastKind = kind
@@ -656,6 +672,57 @@ function breakUndoGroup() {
   lastPush = 0
   lastKind = ''
 }
+
+/**
+ * One drag, one undo step: between beginEditGesture() (the press that starts moving, scaling,
+ * turning or scrubbing something) and the release, every edit belongs to one step — the value from
+ * before the drag — and the save waits for the release. A drag that changed nothing leaves no step.
+ * The release ends it by itself (pointerup / pointercancel anywhere), so a gesture can never stay open.
+ */
+let gesture: { before: Overrides | null; pushed: boolean; keys: Set<string>; summary: string; stop: () => void } | null = null
+
+export function beginEditGesture() {
+  if (gesture) return
+  const release = () => setTimeout(endEditGesture, 0)
+  // a release that never comes (the window lost the pointer): the gesture still ends
+  const safety = setTimeout(endEditGesture, 60_000)
+  window.addEventListener('pointerup', release, true)
+  window.addEventListener('pointercancel', release, true)
+  window.addEventListener('blur', release)
+  gesture = {
+    before: useOverrides.getState().value,
+    pushed: false,
+    keys: new Set(),
+    summary: '',
+    stop: () => {
+      clearTimeout(safety)
+      window.removeEventListener('pointerup', release, true)
+      window.removeEventListener('pointercancel', release, true)
+      window.removeEventListener('blur', release)
+    },
+  }
+}
+
+export function endEditGesture() {
+  const g = gesture
+  if (!g) return
+  gesture = null
+  g.stop()
+  // the next edit (another drag, a nudge right after) is a step of its own
+  breakUndoGroup()
+  if (!g.pushed) return
+  const st = useOverrides.getState()
+  // it changed nothing after all (a press on a handle, a scrub back to where it was): no step
+  if (g.before && st.value && st.past[st.past.length - 1] === g.before && JSON.stringify(g.before) === JSON.stringify(st.value)) {
+    useOverrides.setState({ past: st.past.slice(0, -1) })
+    return
+  }
+  schedule([...g.keys], g.summary)
+}
+
+// number fields scrubbed by their label are drags too
+dragEdit.begin = beginEditGesture
+dragEdit.end = endEditGesture
 
 export function rgbToHex(c: string): string {
   const m = c.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/)

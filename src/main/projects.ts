@@ -3,7 +3,7 @@ import { basename, dirname, extname, join } from 'node:path'
 import { app, shell } from 'electron'
 import { emptyBrief, normalizeBrief, OUTPUT_PRESETS, type Asset, type AssetKind, type Brief, type OutputPresetId } from '@shared/brief'
 import { emptyOverrides, normalizeOverrides, overridesToScript, type Overrides } from '@shared/overrides'
-import { applyAudio, audioEnvelopes, applyLength } from './audio'
+import { applyAudio, audioEnvelopes, applyLength, markAudio } from './audio'
 import { videoEffects, withProcessedClips } from './videoFx'
 import { applyLayers } from './designerLayers'
 import type { ProjectMeta, ProjectState, ProjectSummary } from '@shared/project'
@@ -129,7 +129,9 @@ export function applyAudioEdits(dir: string, overrides?: Overrides): boolean {
   if (!existsSync(f.index(dir))) return false
   const html = readFileSync(f.index(dir), 'utf8')
   const o = overrides ?? normalizeOverrides(readJson<Overrides | null>(f.overrides(dir), null))
-  const next = applyLayers(applyLength(applyAudio(html, o, audioEnvelopes(dir, html, o)), o), o, videoEffects(dir, o, html))
+  // sounds Claude placed without the app's marks get them first (the Sound tab lists marked ones)
+  const marked = markAudio(html)
+  const next = applyLayers(applyLength(applyAudio(marked, o, audioEnvelopes(dir, marked, o)), o), o, videoEffects(dir, o, marked))
   if (next === html) return false
   writeText(f.index(dir), next)
   return true
