@@ -57,7 +57,9 @@ npm run dev        # 개발 모드 실행
 | `node tests/e2e/sound-marks.mjs` | 표시 없이 들어온 음악·효과음이 사운드 탭과 타임라인 "소리만"에 보이는지 (`MS_SANDBOX=<「앱 주문 런칭」 샌드박스>`, 사본에서) |
 | `node tests/e2e/sound-live.mjs` | 실제 Claude로 무료 배경음악 후보 → 대화창 카드에서 듣기 → 고르기 → 배경음악으로 교체·사운드 탭 표시 (`MS_SANDBOX=<신뢰된 샌드박스>`, 백업·복원, 사용량 소모) |
 | `node tests/e2e/edit-requests-live.mjs` | 실제 Claude(앱 기본 opus·high)로 편집 요청 확인: 배경 따로 떼기, 이름 없는 내용 → 이름 붙이기 요청, 새 요소 이름, 파일을 붙인 핀(교체·스타일·참고). 폴더 신뢰 질문은 테스트가 답하지 않으므로 이미 신뢰된 샌드박스 프로젝트를 쓰고, 백업했다가 되돌린다 (`MS_SANDBOX=<신뢰된 「앱 주문 런칭」 폴더가 있는 샌드박스>`, 사용량 소모) |
-| `npm run dist:mac` (`dist:mac-arm64`, `dist:mac-x64`) | Mac 설치 파일: 서명·공증 (`release/`, 6장 참고) |
+| `npm run dist:mac` (`dist:mac-arm64`, `dist:mac-x64`) | Mac 설치 파일: 서명·공증 (`release/`, 6장 참고). `--release`는 관제용 판(Intel)도 함께 올린다 (5-7장) |
+| `node tests/e2e/collect-flow.mjs` | 관제용 판: 결과물 모음 — console.json 없으면 아무 일 없음, 지난 결과물 채우기(clone), 관제에서 지우기 요청 → 앱에서도 지움, 새 내보내기·앱에서 지우기 따라가기 (`MS_CONSOLE=1 npx electron-vite build` 뒤, `MS_SANDBOX=<「앱 주문 런칭」 샌드박스>`, 사본에서) |
+| `node tests/e2e/web-flow.mjs` | 관제용 판: 웹 연결 — console.json으로 켜고 끄기, 숨은 시작, 토큰·CSP·막는 요청, 업로드·내려받기, 미리보기 중계(샌드박스·글꼴·소리), 관제 같은 중계를 거친 브라우저에서 화면·편집 저장·파일 올리기·내려받기, 종료 → 다시 연결 (`MS_CONSOLE=1` 빌드 뒤, `MS_SANDBOX=<「앱 주문 런칭」 샌드박스>`, 이 맥의 Chrome 사용) |
 | `npm run dist:win` | Windows 설치 파일 (미서명) |
 | `npm run registry` | 앱에 넣는 HyperFrames 레지스트리 사본 받기 (`resources/hf-registry`, 5-4장) |
 
@@ -194,6 +196,50 @@ poc/               Phase 0 기술 검증 기록 (RESULTS.md)
 - **Claude 도구**: `get_designer_edits`(규칙·propertyCatalog·own·freeze 포함), `update_designer_edits`(디자이너 값을 지우지 않고 고침: 병합, 키프레임 목록 교체, 잠금 거절 — `main/designerEdits.ts`), `clear_designer_edits`(`props`로 속성만 돌려받기). 프롬프트는 "디자이너 작업을 지우지 말고 그 값을 고쳐라".
 - **레이어 시간 이동·클릭·순서 (0.5 beta.5)**: 타임라인 막대는 `shiftLayers`(`shared/overrides.ts` `shiftElement`: Claude 움직임은 authored 초, 디자이너 키·인/아웃 등은 출력 초). 런타임 `applyElementTiming`이 공유 트윈을 대상별로 나누고(`splitTween`, stagger 간격 유지, from은 revert 후), 0초 초기 `set`은 두고, 0초 앞은 레이어째 멈추고, 클립 `data-start`도 옮긴 뒤 `refreshMotionTimes`로 표시 시간을 다시 잰다. 캔버스 클릭은 런타임 `hitAt`(판정 동안만 pointer-events 켬, `shownNow`·`paintsItself`). 레이어 순서·검색·⌘↑/⌘↓는 `shared/layers.ts` 하나. 편집 활성화 뒤 매 턴 `main/tidy.ts` `auditLayers`(페이지 스크립트 `AUDIT_SCRIPT`)와 `auditVerdict`.
 - **테스트**: `tests/e2e/layer-editing.mjs`(런타임 이동·상자·클릭, 헤드리스 크롬), `tests/e2e/edit-usability.mjs`(앱 화면: 목록·검색·클릭·우클릭·가이드·⌘↓·크기 스냅·막대 스냅), `tests/e2e/ae-engine.mjs`·`ae-engine2.mjs`·`ae-engine3.mjs`(미리보기와 내보낸 영상 픽셀까지), `tests/e2e/ae-editor.mjs`·`ae-editor2.mjs`·`ae-editor3.mjs`(클릭·드래그·단축키로 전 기능; 테스트 레이어는 `fixtures.mjs`), 단위 `ae-edits`, `props`, `designer-tools`, `audio-curve`. 임시 폴더는 테스트가 끝나면 지워진다(`tests/unit/tmp-setup.ts`, e2e `cleanupOnExit`).
+
+## 5-7. 관제용 판 (0.5.0-beta.9)
+
+관제(이 맥의 사용자 대시보드)에서 모션스튜디오를 브라우저로 쓰고, 모든 결과물을 한 폴더에 모으는 **관제 전용 판**이다.
+**일반 판(맥 M칩·Intel, 윈도우)에는 이 코드가 아예 들어가지 않는다.**
+
+**빌드 분리**
+- `MS_CONSOLE=1`로 빌드할 때만 들어간다. `electron.vite.config.ts`가 `__MS_CONSOLE__`(일반 판은 `false`)를 정의하고, 관제 코드는 모두 그 뒤에 있다.
+  - main: `index.ts`가 `console-mode.ts`를 `__MS_CONSOLE__`일 때만 불러온다. `ipc.ts`는 `handle`·`send` 두 곳에서만 `console-bridge.ts`로 넘긴다.
+  - renderer: 브라우저용 `web.html`(웹 shim → 앱)은 관제용 판 빌드에만 생긴다. 창은 그대로 `index.html`을 쓴다.
+- `node scripts/check-regular-build.mjs`: 일반 판 `out/`에 관제 코드가 없는지 검사한다. `build-mac.mjs`와 CI 빌드가 매번 돌린다.
+- 관제용 판은 일반 판과 **같은 앱**(이름·번들 id·데이터 폴더)이다. 관제 맥에서는 일반 판 대신 깔린다.
+- 업데이트: 관제용 판은 최신 릴리스의 `console-mac.yml`만 읽는다(generic 공급자, `updater.ts`). 일반 판은 전처럼 `latest-mac.yml`·`latest.yml`만 읽는다.
+- 빌드
+  - `node scripts/build-mac.mjs --release`: 일반 판(M칩·Intel) 다음에 관제용 판(Intel, zip)도 만들어 같은 릴리스에 올린다. 빼려면 `--no-console`.
+  - `--console`: 관제용 판만 만든다(`release/console/`). `--local --console`은 이 맥에 설치한다(사용자가 요청할 때만).
+
+**켜고 끄기** (관제용 판 안에서도 `console.json`이 있어야 켜진다)
+- 관제가 `<userData>/console.json` = `{"web":true,"collectDir":"…/모션스튜디오 결과물"}`을 쓴다.
+- 앱은 시작할 때 읽고, 바뀌면 따라간다(파일 감시 + 10초마다 확인).
+- `--hidden`으로 실행하면 창과 Dock 아이콘 없이 시작한다(웹 연결이 켜져 있을 때만). 업데이트로 다시 시작해도 숨은 채로 돌아온다.
+- 숨은 동안에는 업데이트를 스스로 설치한다. Claude 작업·내보내기가 없고, 10분 동안 웹 사용이 없을 때만 한다.
+
+**결과물 모음** (`collect.ts`)
+- 내보낸 영상·PNG 시퀀스·AE 패키지를 `<모음>/<폴더…>/<프로젝트>/<파일>`에 복제한다(APFS clone → 하드 링크 → 복사).
+- 처음 켜질 때 지난 결과물도 채운다. 색인은 `<모음>/.motionstudio/index.json`이다.
+- 앱에서 지우면 복제본도 지운다. 관제의 지우기 요청(`.motionstudio/delete-requests/*.json`)이 오면 앱에서도 지운다(원본은 휴지통으로).
+- 프로젝트 이름 바꾸기·옮기기를 따라가고, 지운 프로젝트의 복제본은 `orphan`으로 남긴다.
+- `<모음>/지난 결과물/`은 건드리지 않는다.
+
+**웹 연결** (`web.ts`)
+- 127.0.0.1의 임의 포트에서 연다. `<userData>/web-endpoint.json`(0600, 시작마다 새 토큰, 종료 때 지움)을 관제가 읽어 `X-MS-Token`을 붙여 중계한다.
+- 경로는 모두 상대 경로다. 관제는 `/api/console/studio/ms/` 아래로 중계한다.
+- 창과 **같은 IPC 핸들러**(`/api/invoke`)와 **같은 이벤트**(SSE `/api/events`)를 쓴다.
+- 브라우저에서 달라지는 것(`src/renderer/src/web/shim.ts`)
+  - 파일 고르기·끌어 놓기 → 업로드
+  - 폴더에서 보기 → 내려받기
+  - 링크 → 브라우저에서 열기
+  - 로그인 → "맥에서 해 주세요"
+  - 표시한 장면 캡처 → 앱이 그 시점 프레임에 표시를 그려서 만든다(`web-frame.ts`)
+  - 연결이 끊기면 "다시 연결하는 중" 표시, 다시 연결되면 새로고침
+- 미리보기는 `/preview/p/…`와 런타임만 중계한다(MCP·훅 경로는 막는다). `Content-Security-Policy: sandbox allow-scripts`로 별도 origin이 되고, 글꼴·fetch를 위해 `Access-Control-Allow-Origin: *`를 붙인다.
+- `terminal:write`가 열려 있어서 **웹 연결은 원격 조작과 같다**. 관제가 IP 제한 뒤에서만 중계한다.
+- 표: `src/shared/web-channels.ts`(preload와 같은지 `tests/unit/web-shim.test.ts`가 비교한다)
 
 ## 5-1. AI 서비스 연결
 

@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react'
 import { FolderOpen, Loader2, Share2, Sparkles } from 'lucide-react'
 import type { AgentEvent } from '@shared/api'
 import { Modal, Toggle } from '../components/ui'
-import { cleanError, studio, useStore } from '../store'
+import { cleanError, revealLabel, studio, useStore } from '../store'
 import { flushOverrides } from './editor/overrides'
 
 const mb = (n: number) => (n >= 1024 * 1024 * 1024 ? `${(n / 1024 / 1024 / 1024).toFixed(1)}GB` : `${Math.max(0.1, n / 1024 / 1024).toFixed(1)}MB`)
@@ -76,7 +76,7 @@ export function ShareModal({ onClose }: { onClose(): void }) {
           <>
             <button className="btn" onClick={() => studio.app.reveal(made.path)}>
               <FolderOpen size={14} />
-              폴더에서 보기
+              {revealLabel}
             </button>
             <button className="btn primary" onClick={onClose}>
               닫기

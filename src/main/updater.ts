@@ -16,6 +16,12 @@ function setup() {
   autoUpdater.autoInstallOnAppQuit = false
   autoUpdater.allowDowngrade = false
   autoUpdater.logger = null
+  // 관제용 판: its own update file on the newest release (console-mac.yml, the Intel build for the
+  // console's Mac); the regular builds read latest-mac.yml / latest.yml as before
+  if (__MS_CONSOLE__) {
+    autoUpdater.setFeedURL({ provider: 'generic', url: 'https://github.com/kanchoooo/motion-studio/releases/latest/download', channel: 'console' })
+    autoUpdater.allowDowngrade = false
+  }
 }
 
 const notesText = (n: unknown): string | undefined => {

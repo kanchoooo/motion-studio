@@ -67,3 +67,13 @@ module.exports = {
     notarize: canNotarize,
   },
 }
+
+// 관제용 판 (MS_CONSOLE=1; scripts/build-mac.mjs --console, and with every --release): the same app
+// (it replaces the regular one on the console's Mac: same name, id and data folder) with the
+// console's web connection built in. Its own file names and its own update file (console-mac.yml on
+// the newest release, read by src/main/updater.ts); the regular builds never look at it.
+if (process.env.MS_CONSOLE === '1') {
+  module.exports.artifactName = 'MotionStudio-Console-${version}-${os}-${arch}.${ext}'
+  module.exports.directories = { ...base.directories, output: 'release/console' }
+  module.exports.publish = { provider: 'generic', url: 'https://github.com/kanchoooo/motion-studio/releases/latest/download', channel: 'console' }
+}

@@ -55,6 +55,10 @@ if (process.platform === 'darwin') app.commandLine.appendSwitch('use-mock-keycha
 if (process.env.MS_USER_DATA) app.setPath('userData', process.env.MS_USER_DATA)
 
 app.whenReady().then(async () => {
+  // 관제용 판 only (MS_CONSOLE=1 builds): the regular builds do not contain it
+  const consoleMode = __MS_CONSOLE__ ? await import('./console-mode') : null
+  const hidden = __MS_CONSOLE__ ? consoleMode!.startsHidden() : false
+  if (hidden) app.dock?.hide()
   const previewBase = await startPreviewServer()
   // CSP: the app shell only talks to itself and the local preview server
   session.defaultSession.webRequest.onHeadersReceived((details, cb) => {
@@ -72,6 +76,16 @@ app.whenReady().then(async () => {
   // nothing in the app needs device permissions
   session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false))
   const sessions = registerIpc(() => win)
+  let confirmedQuit = false
+  const consoleCtl = __MS_CONSOLE__
+    ? consoleMode!.startConsole({
+        hidden,
+        getWindow: () => win,
+        createWindow: () => createWindow(previewBase),
+        quitState: () => ({ busy: sessions.busyProjects(), exporting: runningExports() }),
+        confirmQuit: (on) => (confirmedQuit = on),
+      })
+    : null
   // automated tests (isolated profile) can ask why the app would not quit
   if (process.env.MS_USER_DATA) {
     const g = globalThis as Record<string, unknown>
@@ -79,8 +93,7 @@ app.whenReady().then(async () => {
     // the review card for generated media, without spending AI credits
     g.__msShowGenerated = (projectId: string, files: { file: string; kind: string }[], label?: string) => sessions.showGenerated(projectId, files, label)
   }
-  createWindow(previewBase)
-  let confirmedQuit = false
+  if (!hidden) createWindow(previewBase)
   app.on('before-quit', (e) => {
     const busy = sessions.busyProjects()
     const exporting = runningExports()
@@ -103,7 +116,8 @@ app.whenReady().then(async () => {
     sessions.killAll()
   })
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow(previewBase)
+    if (consoleCtl?.isHidden()) consoleCtl.show()
+    else if (BrowserWindow.getAllWindows().length === 0) createWindow(previewBase)
   })
 })
 

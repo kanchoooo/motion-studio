@@ -43,9 +43,14 @@ import type { Framing, GenRequest, VideoGenRequest } from '@shared/assetGen'
 import { exportAePackage } from './ae/export'
 import { codexStatus } from './ai/codex'
 import { listWebFonts } from './webfonts'
+import * as consoleBridge from './console-bridge'
 
 export function registerIpc(getWindow: () => BrowserWindow | null): SessionManager {
-  const send = (channel: string, payload: unknown) => getWindow()?.webContents.send(channel, payload)
+  const send = (channel: string, payload: unknown) => {
+    getWindow()?.webContents.send(channel, payload)
+    // 관제용 판 only (MS_CONSOLE=1 builds): the web connection and the results collection see it too
+    if (__MS_CONSOLE__) consoleBridge.event(channel, payload)
+  }
   const agent = new SessionManager((e: AgentEvent) => send('agent:event', e))
   // follow Claude's file edits live while a turn is running
   setInterval(() => {
@@ -53,8 +58,11 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
       if (agent.pollComposition(id)) send('agent:event', { type: 'composition-changed', projectId: id } satisfies AgentEvent)
     }
   }, 1200)
-  const handle = <A extends unknown[], R>(channel: string, fn: (...args: A) => R | Promise<R>) =>
-    ipcMain.handle(channel, async (_e, ...args) => fn(...(args as A)))
+  const handle = <A extends unknown[], R>(channel: string, fn: (...args: A) => R | Promise<R>) => {
+    // 관제용 판 only: the web connection uses the same handlers (and the collection follows renames, deletes)
+    const f = __MS_CONSOLE__ ? (consoleBridge.handler(channel, fn as (...args: unknown[]) => unknown) as typeof fn) : fn
+    ipcMain.handle(channel, async (_e, ...args) => f(...(args as A)))
+  }
 
   // ---- app ----
   handle('app:checkUpdate', () => checkUpdate())
@@ -333,6 +341,10 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
   handle('terminal:snapshot', (id: string) => agent.snapshot(id))
   ipcMain.on('terminal:write', (_e, id: string, data: string) => agent.write(id, data))
   ipcMain.on('terminal:resize', (_e, id: string, cols: number, rows: number) => agent.resize(id, cols, rows))
+  if (__MS_CONSOLE__) {
+    consoleBridge.sendHandlers.set('terminal:write', (id: string, data: string) => agent.write(id, data))
+    consoleBridge.sendHandlers.set('terminal:resize', (id: string, cols: number, rows: number) => agent.resize(id, cols, rows))
+  }
 
   projects.onBriefChanged((id) => send('agent:event', { type: 'project-changed', projectId: id } satisfies AgentEvent))
 

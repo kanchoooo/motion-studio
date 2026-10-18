@@ -4,6 +4,11 @@
 //   --local: 개발 중 빠른 확인용. 이 맥의 CPU용 앱만 서명해서 만들고(공증·dmg·zip 없음, 이 맥에서 만든 앱이라 격리 표시가 없음)
 //            /Applications/MotionStudio.app 에 덮어써 설치한다. 열려 있던 앱은 정상 종료 후 다시 연다.
 //   --local --no-install: 빌드만 한다(테스트 중인 앱을 끄지 않게). 앱은 release/mac(-arm64)/MotionStudio.app
+//   --console: 관제용 판만 만든다 (MS_CONSOLE=1: 관제의 웹 연결·결과물 모음이 들어간 판, 기본 Intel용).
+//            일반 판과 같은 앱(이름·번들 id·데이터 폴더)이라 관제 맥에서는 일반 판 대신 깔리고,
+//            자기 업데이트 파일(console-mac.yml)로만 업데이트된다. 결과는 release/console/
+//            --local --console: 관제용 판을 이 맥의 /Applications/MotionStudio.app 에 설치
+//   --release 는 일반 판(M칩·Intel) 다음에 관제용 판(Intel)도 만들어 같은 릴리스에 올린다 (--no-console: 빼기)
 //
 // 미니미광장(scripts/build-mac.mjs)과 같은 서명 방식·키체인 안전 규칙을 쓴다.
 // 서명: ~/.minimi-signing/DeveloperID_Application.p12 (+ p12-password)
@@ -30,9 +35,15 @@ const p12 = join(dir, 'DeveloperID_Application.p12')
 const pwFile = join(dir, 'p12-password')
 const profile = process.env.APPLE_KEYCHAIN_PROFILE ?? 'minimi-notary'
 const local = process.argv.includes('--local')
+const release = process.argv.includes('--release')
+// 관제용 판: --console alone builds only it; a release builds it after the regular ones
+const consoleOnly = process.argv.includes('--console')
+const withConsole = consoleOnly || (release && !process.argv.includes('--no-console'))
+const CONSOLE_ARCH = 'x64'
 const ai = process.argv.indexOf('--arch')
-const archArg = ai > 0 ? process.argv[ai + 1] : local ? (process.arch === 'arm64' ? 'arm64' : 'x64') : 'both'
-if (local && process.argv.includes('--release')) throw new Error('--local 과 --release 는 같이 쓸 수 없어요')
+const archArg = ai > 0 ? process.argv[ai + 1] : consoleOnly ? CONSOLE_ARCH : local ? (process.arch === 'arm64' ? 'arm64' : 'x64') : 'both'
+if (local && release) throw new Error('--local 과 --release 는 같이 쓸 수 없어요')
+if (consoleOnly && release) throw new Error('--console 과 --release 는 같이 쓸 수 없어요 (--release 가 관제용 판도 만들어요)')
 const arches = archArg === 'both' ? ['arm64', 'x64'] : [archArg]
 if (!arches.every((a) => a === 'arm64' || a === 'x64')) throw new Error(`--arch 는 arm64, x64, both 중 하나예요: ${archArg}`)
 const LOCK = join(homedir(), '.minimi-signing', '.build.lock')
@@ -233,21 +244,35 @@ delete env.CSC_KEY_PASSWORD
 if (!notarize) delete env.APPLE_KEYCHAIN_PROFILE
 
 try {
-  await run('npx', ['electron-vite', 'build'])
   // the HyperFrames registry the app ships (same for every CPU; skipped when already this version)
   await run('node', ['scripts/fetch-registry.mjs'])
-  for (const arch of arches) {
-    const target = `darwin-${arch}`
-    // native packages for the target CPU (lets an Intel Mac build the M-chip app too)
-    await run('node', ['scripts/prepare-target.mjs', '--target', target])
-    await run('node', ['scripts/fetch-binaries.mjs', '--target', target])
-    await run('npx', ['electron-builder', '--config', 'electron-builder.config.cjs', '--mac', ...(local ? ['dir'] : ['dmg', 'zip']), `--${arch}`, '--publish', 'never'], { ...env, MS_TARGET_ARCH: arch })
-    // each run writes latest-mac.yml for its own CPU: keep it, they are merged below
-    if (existsSync('release/latest-mac.yml')) copyFileSync('release/latest-mac.yml', `release/latest-mac-${arch}.yml`)
+  if (!consoleOnly) {
+    await run('npx', ['electron-vite', 'build'])
+    // the regular build carries none of the 관제용 판's code
+    await run('node', ['scripts/check-regular-build.mjs'])
+    for (const arch of arches) {
+      const target = `darwin-${arch}`
+      // native packages for the target CPU (lets an Intel Mac build the M-chip app too)
+      await run('node', ['scripts/prepare-target.mjs', '--target', target])
+      await run('node', ['scripts/fetch-binaries.mjs', '--target', target])
+      await run('npx', ['electron-builder', '--config', 'electron-builder.config.cjs', '--mac', ...(local ? ['dir'] : ['dmg', 'zip']), `--${arch}`, '--publish', 'never'], { ...env, MS_TARGET_ARCH: arch })
+      // each run writes latest-mac.yml for its own CPU: keep it, they are merged below
+      if (existsSync('release/latest-mac.yml')) copyFileSync('release/latest-mac.yml', `release/latest-mac-${arch}.yml`)
+    }
+    if (!local) mergeUpdateInfo()
   }
-  if (!local) mergeUpdateInfo()
+  // 관제용 판: the same sources with MS_CONSOLE=1 (zip only: it installs over the regular app on the
+  // console's Mac and updates from console-mac.yml)
+  if (withConsole) {
+    const arch = consoleOnly ? arches[0] : CONSOLE_ARCH
+    await run('npx', ['electron-vite', 'build'], { ...process.env, MS_CONSOLE: '1' })
+    await run('node', ['scripts/prepare-target.mjs', '--target', `darwin-${arch}`])
+    await run('node', ['scripts/fetch-binaries.mjs', '--target', `darwin-${arch}`])
+    await run('npx', ['electron-builder', '--config', 'electron-builder.config.cjs', '--mac', local ? 'dir' : 'zip', `--${arch}`, '--publish', 'never'], { ...env, MS_TARGET_ARCH: arch, MS_CONSOLE: '1' })
+    if (!local && !existsSync('release/console/console-mac.yml')) throw new Error('release/console/console-mac.yml 이 없어요')
+  }
   // a quick self-check of what we are about to hand out
-  for (const app of ['release/mac/MotionStudio.app', 'release/mac-arm64/MotionStudio.app']) {
+  for (const app of ['release/mac/MotionStudio.app', 'release/mac-arm64/MotionStudio.app', 'release/console/mac/MotionStudio.app', 'release/console/mac-arm64/MotionStudio.app']) {
     if (!existsSync(app)) continue
     console.log(`\n▶ 확인: ${app}`)
     try {
@@ -267,14 +292,15 @@ try {
   cleanup()
 }
 
-if (process.argv.includes('--release')) publishRelease()
+if (release) publishRelease()
 pruneOldBuilds()
+const builtApp = `release/${consoleOnly ? 'console/' : ''}${arches[0] === 'arm64' ? 'mac-arm64' : 'mac'}/MotionStudio.app`
 if (local && !process.argv.includes('--no-install')) installLocal()
-else if (local) console.log(`\n▶ 빌드만 했어요(설치 안 함): ${arches[0] === 'arm64' ? 'release/mac-arm64' : 'release/mac'}/MotionStudio.app`)
+else if (local) console.log(`\n▶ 빌드만 했어요(설치 안 함): ${builtApp}`)
 
 /** --local: replaces /Applications/MotionStudio.app with the build (quits the open app first, reopens it after) */
 function installLocal() {
-  const built = arches[0] === 'arm64' ? 'release/mac-arm64/MotionStudio.app' : 'release/mac/MotionStudio.app'
+  const built = builtApp
   const target = '/Applications/MotionStudio.app'
   if (!existsSync(built)) throw new Error(`빌드한 앱이 없어요: ${built}`)
   const running = () => {
@@ -324,7 +350,10 @@ function mergeUpdateInfo() {
   console.log(`▶ 업데이트 정보: release/latest-mac.yml (${files.map((f) => f.url).join(', ')})`)
 }
 
-/** GitHub Releases v<version>: dmg (first install) + zip/blockmap/latest-mac.yml (auto-update) */
+/**
+ * GitHub Releases v<version>: dmg (first install) + zip/blockmap/latest-mac.yml (auto-update), and
+ * the 관제용 판's zip/blockmap/console-mac.yml (only the console's Mac reads that file)
+ */
 function publishRelease() {
   const version = JSON.parse(readFileSync('package.json', 'utf8')).version
   const tag = `v${version}`
@@ -335,6 +364,15 @@ function publishRelease() {
     .filter((f) => /\.(dmg|zip|blockmap|yml)$/.test(f))
     .map((f) => `release/${f}`)
   if (!assets.some((a) => a.endsWith('latest-mac.yml'))) throw new Error('release/latest-mac.yml이 없어요')
+  if (withConsole) {
+    const con = readdirSync('release/console')
+      .filter((f) => f.startsWith(`MotionStudio-Console-${version}-`) || f === 'console-mac.yml')
+      .filter((f) => /\.(zip|blockmap|yml)$/.test(f))
+      .map((f) => `release/console/${f}`)
+    const yml = con.find((a) => a.endsWith('console-mac.yml'))
+    if (!yml || String(yaml.load(readFileSync(yml, 'utf8')).version) !== version) throw new Error('release/console/console-mac.yml 이 이 버전이 아니에요')
+    assets.push(...con)
+  }
   const repo = 'kanchoooo/motion-studio'
   let exists = true
   try {
@@ -355,8 +393,9 @@ function pruneOldBuilds() {
   const version = JSON.parse(readFileSync('package.json', 'utf8')).version
   const repo = 'kanchoooo/motion-studio'
   const byVersion = new Map()
-  for (const f of readdirSync('release')) {
-    const m = f.match(/^MotionStudio-(?:Setup-)?(\d+\.\d+\.\d+)-/)
+  const here = ['release', 'release/console'].filter((d) => existsSync(d)).flatMap((d) => readdirSync(d).map((f) => join(d, f).slice('release/'.length)))
+  for (const f of here) {
+    const m = f.match(/^(?:console\/)?MotionStudio-(?:Setup-|Console-)?(\d+\.\d+\.\d+)-/)
     if (!m || m[1] === version) continue
     if (!byVersion.has(m[1])) byVersion.set(m[1], [])
     byVersion.get(m[1]).push(f)
@@ -369,7 +408,7 @@ function pruneOldBuilds() {
       console.log(`▶ 이전 빌드 ${v}: GitHub 릴리스가 없어서 남겨 둬요`)
       continue
     }
-    const gone = files.filter((f) => uploaded.some((a) => a.name === f && a.size === statSync(join('release', f)).size))
+    const gone = files.filter((f) => uploaded.some((a) => a.name === f.replace(/^console\//, '') && a.size === statSync(join('release', f)).size))
     for (const f of gone) unlinkSync(join('release', f))
     if (gone.length) console.log(`▶ 이전 빌드 ${v}: GitHub에 있는 ${gone.length}개 파일을 정리했어요`)
   }

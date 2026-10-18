@@ -220,6 +220,14 @@ export function removeRender(dir: string, renderId: string): void {
   writeJson(indexPath(dir), list.filter((x) => x.id !== renderId))
 }
 
+/** takes a render off the list without touching its file (결과물 모음: its file went to the Trash) */
+export function forgetRender(dir: string, renderId: string): RenderRecord | undefined {
+  const list = listRenders(dir)
+  const r = list.find((x) => x.id === renderId)
+  if (r) writeJson(indexPath(dir), list.filter((x) => x.id !== renderId))
+  return r
+}
+
 export { safeName }
 
 /** exports still running (the quit warning lists them; quitting cancels them) */

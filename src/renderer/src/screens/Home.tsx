@@ -7,7 +7,7 @@ import { ConnectionsModal } from '../components/ai/ConnectionsModal'
 import { NameModal } from '../components/NameModal'
 import type { ProjectSummary } from '@shared/project'
 import { Menu, relativeTime } from '../components/ui'
-import { studio, useStore } from '../store'
+import { onWeb, studio, useStore } from '../store'
 import { AppVersion } from '../components/AppVersion'
 import { ThemeSwitch } from '../components/ThemeSwitch'
 import { FolderTree, dropProject } from './home/FolderTree'
@@ -305,7 +305,7 @@ export function Home() {
                         items={[
                           { label: '이름 바꾸기', icon: <Pencil size={14} />, onClick: () => setRenaming(p) },
                           { label: '다른 폴더로 옮기기', icon: <FolderInput size={14} />, onClick: () => setMoving(p) },
-                          { label: '폴더에서 보기', icon: <FolderOpen size={14} />, onClick: () => studio.app.reveal(p.path) },
+                          ...(onWeb ? [] : [{ label: '폴더에서 보기', icon: <FolderOpen size={14} />, onClick: () => studio.app.reveal(p.path) }]),
                           {
                             label: '공유 파일로 내보내기',
                             icon: <Share2 size={14} />,

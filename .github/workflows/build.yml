@@ -40,6 +40,8 @@ jobs:
           key: hf-registry-${{ hashFiles('package-lock.json', 'scripts/fetch-registry.mjs') }}
       - run: node scripts/fetch-registry.mjs
       - run: npm run build
+      # the regular build carries none of the 관제용 판's code (that one is built on the console's Mac)
+      - run: node scripts/check-regular-build.mjs
       - run: node scripts/prepare-target.mjs --target ${{ matrix.target }}
       - run: node scripts/fetch-binaries.mjs --target ${{ matrix.target }}
       - run: npx electron-builder --config electron-builder.config.cjs ${{ matrix.args }} --publish never

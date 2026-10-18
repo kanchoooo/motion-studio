@@ -80,6 +80,8 @@ export class MsPlayer {
     f.width = String(width)
     f.height = String(height)
     f.setAttribute('scrolling', 'no')
+    // 관제용 판, in a browser: the preview is another origin, its sound needs the page's leave to play
+    if (__MS_CONSOLE__ && window.studio.internal?.web) f.allow = 'autoplay'
     f.style.cssText = `position:absolute;left:0;top:0;width:${width}px;height:${height}px;border:0;transform-origin:0 0;background:transparent;pointer-events:none;`
     f.src = src
     this.iframe = f

@@ -3,7 +3,7 @@ import { AlertCircle, AlertTriangle, CheckCircle2, ExternalLink, FolderOpen, Lay
 import type { AeProgress } from '@shared/api'
 import { FORMAT_LABELS, OUTPUT_PRESETS, type OutputFormat, type OutputQuality } from '@shared/brief'
 import { Field, Modal, Segmented, Toggle } from '../components/ui'
-import { studio, useStore } from '../store'
+import { onWeb, revealLabel, studio, useStore } from '../store'
 
 // the folder chosen last time, remembered on this computer
 const DIR_KEY = 'ms-export-dir'
@@ -47,7 +47,8 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
   const transparentOk = format === 'mov-prores4444' || format === 'webm-vp9' || format === 'png-sequence'
   const [fileName, setFileName] = useState('')
   const [versionName, setVersionName] = useState('')
-  const [saveDir, setSaveDir] = useState<string | null>(savedDir)
+  // in a browser (관제용 웹 연결) there is no folder to pick: the console's collection keeps every export
+  const [saveDir, setSaveDir] = useState<string | null>(onWeb ? null : savedDir)
   const chooseDir = async () => {
     const dir = await studio.app.pickFolder()
     if (!dir) return
@@ -111,7 +112,7 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
             {p?.phase === 'done' && p.record && (
               <button className="btn" onClick={() => studio.app.reveal(p.savedTo ?? `${project!.path}/${p.record!.file}`)}>
                 <FolderOpen size={14} />
-                폴더에서 보기
+                {revealLabel}
               </button>
             )}
             <button
@@ -163,31 +164,33 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
           <Field label="버전 이름 (선택)" hint="예: 광고주 1차 시안 — 이력에서 이 이름으로 찾을 수 있어요.">
             <input className="input" value={versionName} onChange={(e) => setVersionName(e.target.value)} placeholder="이름 없이 저장" />
           </Field>
-          <Field label="저장 위치" hint="어디에 저장해도 프로젝트의 결과물 탭에 함께 보관돼요. 고른 폴더는 다음에도 기억해요.">
-            <div className="row" style={{ gap: 6 }} data-testid="export-dir">
-              <div className="input row grow" style={{ gap: 6, height: 34, minWidth: 0, cursor: 'pointer' }} onClick={chooseDir} title={saveDir ?? undefined}>
-                <FolderOpen size={14} color="var(--text-3)" style={{ flex: 'none' }} />
-                <span className={`ellipsis small${saveDir ? '' : ' muted'}`} style={{ direction: saveDir ? 'rtl' : undefined, textAlign: 'left' }}>
-                  {saveDir ?? '결과물 보관함에만 저장'}
-                </span>
-              </div>
-              <button className="btn" onClick={chooseDir}>
-                {saveDir ? '바꾸기' : '폴더 고르기'}
-              </button>
-              {saveDir && (
-                <button
-                  className="icon-btn"
-                  title="폴더에 저장하지 않기"
-                  onClick={() => {
-                    setSaveDir(null)
-                    rememberDir(null)
-                  }}
-                >
-                  <X size={14} />
+          {!onWeb && (
+            <Field label="저장 위치" hint="어디에 저장해도 프로젝트의 결과물 탭에 함께 보관돼요. 고른 폴더는 다음에도 기억해요.">
+              <div className="row" style={{ gap: 6 }} data-testid="export-dir">
+                <div className="input row grow" style={{ gap: 6, height: 34, minWidth: 0, cursor: 'pointer' }} onClick={chooseDir} title={saveDir ?? undefined}>
+                  <FolderOpen size={14} color="var(--text-3)" style={{ flex: 'none' }} />
+                  <span className={`ellipsis small${saveDir ? '' : ' muted'}`} style={{ direction: saveDir ? 'rtl' : undefined, textAlign: 'left' }}>
+                    {saveDir ?? '결과물 보관함에만 저장'}
+                  </span>
+                </div>
+                <button className="btn" onClick={chooseDir}>
+                  {saveDir ? '바꾸기' : '폴더 고르기'}
                 </button>
-              )}
-            </div>
-          </Field>
+                {saveDir && (
+                  <button
+                    className="icon-btn"
+                    title="폴더에 저장하지 않기"
+                    onClick={() => {
+                      setSaveDir(null)
+                      rememberDir(null)
+                    }}
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+            </Field>
+          )}
           <div className="tiny faint">
             {out.width}×{out.height} · {out.fps}fps · {out.duration}초
           </div>
@@ -340,7 +343,7 @@ function AeSection({ pid, name, saveDir }: { pid: string; name: string; saveDir:
           </span>
           <button className="btn sm" onClick={() => studio.app.reveal(p.folder!)}>
             <FolderOpen size={13} />
-            폴더에서 보기
+            {revealLabel}
           </button>
         </div>
       )}

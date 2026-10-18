@@ -4,6 +4,10 @@ import type { AgentEvent, ChatItem, CurrentStoryboard, DoctorReport, ExportProgr
 import type { ProjectState, ProjectSummary } from '@shared/project'
 
 export const studio = window.studio
+/** 관제용 판's web connection: these screens in a browser (files are uploaded and downloaded, no Finder) */
+export const onWeb = __MS_CONSOLE__ && !!studio.internal?.web
+/** a file the app made: shown in the Finder, or downloaded in a browser */
+export const revealLabel = onWeb ? '내려받기' : '폴더에서 보기'
 
 export type Screen = 'update' | 'lock' | 'doctor' | 'home' | 'project'
 export type ProjectTab = 'brief' | 'editor' | 'results'

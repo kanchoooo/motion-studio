@@ -5,7 +5,7 @@ import { ChevronDown, ChevronRight, Clock, Folder, FolderOpen, FolderPlus, Home 
 import type { ProjectSummary } from '@shared/project'
 import { NameModal } from '../../components/NameModal'
 import { Menu } from '../../components/ui'
-import { studio, useStore } from '../../store'
+import { onWeb, studio, useStore } from '../../store'
 import { childrenOf, depthOf, folderName, parentOf, RECENT, within } from './folders'
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e))
@@ -115,7 +115,7 @@ export function FolderTree({ current, onSelect, onUseTemplate }: { current: stri
             items={[
               ...(depthOf(rel) < 4 ? [{ label: '안에 새 폴더', icon: <FolderPlus size={14} />, onClick: () => setNaming({ kind: 'new', parent: rel }) }] : []),
               { label: '이름 바꾸기', icon: <Pencil size={14} />, onClick: () => setNaming({ kind: 'rename', rel }) },
-              { label: 'Finder에서 보기', icon: <FolderOpen size={14} />, onClick: () => void studio.app.info().then((i) => studio.app.reveal(`${i.projectsDir}/${rel}`)) },
+              ...(onWeb ? [] : [{ label: 'Finder에서 보기', icon: <FolderOpen size={14} />, onClick: () => void studio.app.info().then((i) => studio.app.reveal(`${i.projectsDir}/${rel}`)) }]),
               {
                 label: '폴더 지우기',
                 icon: <Trash2 size={14} />,

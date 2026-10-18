@@ -5,7 +5,7 @@ import { NameModal } from '../../components/NameModal'
 import { formatBytes, Menu, Modal, relativeTime } from '../../components/ui'
 import { CompareModal } from './CompareModal'
 import { StorageModal } from './StorageModal'
-import { studio, useStore } from '../../store'
+import { revealLabel, studio, useStore } from '../../store'
 
 export function ResultsTab() {
   const { project, historyNonce, toast, setProject, setTab } = useStore()
@@ -116,7 +116,7 @@ export function ResultsTab() {
                     items={[
                       { label: '재생', icon: <Play size={14} />, onClick: () => setPlaying(r) },
                       { label: '이 결과물 상태로 되돌리기', icon: <RotateCcw size={14} />, onClick: () => restore(r.historyId, r.versionName ?? r.fileName) },
-                      { label: '폴더에서 보기', icon: <FolderOpen size={14} />, onClick: () => studio.app.reveal(`${project!.path}/${r.file}`) },
+                      { label: revealLabel, icon: <FolderOpen size={14} />, onClick: () => studio.app.reveal(`${project!.path}/${r.file}`) },
                       {
                         label: '삭제',
                         icon: <Trash2 size={14} />,
@@ -197,7 +197,7 @@ export function ResultsTab() {
           <div className="row">
             <button className="btn" onClick={() => studio.app.reveal(`${project!.path}/${playing.file}`)}>
               <FolderOpen size={14} />
-              폴더에서 보기
+              {revealLabel}
             </button>
             <div className="grow" />
             <button className="btn primary" onClick={async () => {
