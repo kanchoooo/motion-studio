@@ -1,7 +1,7 @@
 {
   "name": "motion-studio",
   "productName": "모션스튜디오",
-  "version": "0.5.0-beta.8",
+  "version": "0.5.0-beta.9",
   "private": true,
   "description": "디자이너용 대화형 모션 영상 제작 도구",
   "main": "./out/main/index.js",
