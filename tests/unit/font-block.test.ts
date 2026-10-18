@@ -39,6 +39,12 @@ describe('font block', () => {
     expect(changed.match(/ms:fonts \(/g)).toHaveLength(1)
     expect(withFontBlock(once, '')).not.toContain('data-ms-fonts')
   })
+  it('a block put in before an indented </head> stays as it is on the next pass', () => {
+    const indented = page.replace('</head>', '  </head>')
+    const once = withFontBlock(indented, linkedFontFaces(comp, indented))!
+    expect(withFontBlock(once, linkedFontFaces(comp, once))).toBeNull()
+    expect(withFontBlock(once, '')).toBe(indented)
+  })
   it('finds families kept in custom properties, in the font shorthand with any unit, and in SVG text', () => {
     const html = `<style>:root{--brand:'Nanum Square'} .a{font-family:var(--brand), sans-serif} .b{font: 700 2rem/1.2 "Gmarket Sans"}</style><svg><text font-family="Black Han Sans">가</text></svg>`
     expect(usedFamilies(html, emptyOverrides()).sort()).toEqual(['Black Han Sans', 'Gmarket Sans', 'Nanum Square'])

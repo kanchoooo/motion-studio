@@ -108,7 +108,8 @@ export function linkedFontFaces(compDir: string, html: string): string {
 export function withFontBlock(html: string, faces: string): string | null {
   const block = faces ? `${OPEN}\n<style data-ms-fonts>\n${faces}\n</style>\n${CLOSE}\n` : ''
   let out: string
-  if (BLOCK.test(html)) out = html.replace(BLOCK, block)
+  // the block keeps the indent it was put in with (the one before </head>), so a second pass changes nothing
+  if (BLOCK.test(html)) out = html.replace(BLOCK, (m) => (block ? m.match(/^[ \t]*/)![0] + block : m.match(/^[ \t]*/)![0]))
   else if (!block) return null
   else {
     // at the end of the head (after the stylesheets it repeats)

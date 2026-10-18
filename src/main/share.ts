@@ -69,8 +69,9 @@ export async function exportShare(dir: string, dest: string, opts: ShareOptions)
   const out = createWriteStream(tmp)
   let bytes = 0
   let failed: Error | null = null
+  // 'close', not 'finish': on Windows a file still open cannot be moved
   const done = new Promise<void>((resolve, reject) => {
-    out.on('finish', resolve)
+    out.on('close', resolve)
     out.on('error', reject)
   })
   const zip = new Zip((err, chunk, final) => {
@@ -107,12 +108,25 @@ export async function exportShare(dir: string, dest: string, opts: ShareOptions)
     await done
     if (failed) throw failed
     rmSync(dest, { force: true })
-    renameSync(tmp, dest)
+    await renameWhenFree(tmp, dest)
     return { files: files.length + 3, bytes }
   } catch (e) {
     out.destroy()
     rmSync(tmp, { force: true })
     throw e
+  }
+}
+
+/** Windows: a virus scanner can hold a file it just saw for a moment, so the rename is tried again a few times */
+async function renameWhenFree(from: string, to: string): Promise<void> {
+  for (let i = 0; ; i++) {
+    try {
+      return renameSync(from, to)
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code
+      if (process.platform !== 'win32' || i >= 10 || !(code === 'EPERM' || code === 'EACCES' || code === 'EBUSY')) throw e
+      await new Promise((r) => setTimeout(r, 100 + i * 50))
+    }
   }
 }
 
@@ -145,7 +159,8 @@ export async function importShare(file: string, folder = ''): Promise<string> {
       const ws = createWriteStream(target)
       writes.push(
         new Promise((resolve, reject) => {
-          ws.on('finish', resolve)
+          // closed, not only written: the folder is renamed after, and Windows refuses that while a file in it is open
+          ws.on('close', resolve)
           ws.on('error', reject)
         }),
       )
@@ -171,7 +186,7 @@ export async function importShare(file: string, folder = ''): Promise<string> {
     const name = safeName(manifest.name ?? '공유받은 프로젝트', '공유받은 프로젝트')
     let taken = 0
     const dir = uniquePath((n) => ((taken = n), join(base, `${name}${n ? ` ${n + 1}` : ''}.msproj`)))
-    renameSync(tmp, dir)
+    await renameWhenFree(tmp, dir)
     // one with the same name is already here: the copy is told apart by its name too ("… 2")
     const shownName = taken ? `${name} ${taken + 1}` : name
     const shared = readJson<Partial<ProjectMeta>>(join(dir, 'project.json'), {})
