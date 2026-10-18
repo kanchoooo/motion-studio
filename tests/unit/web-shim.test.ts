@@ -10,7 +10,7 @@ function fromPreload() {
   const events: Record<string, Record<string, string>> = {}
   const sends: Record<string, Record<string, string>> = {}
   let ns = ''
-  for (const line of preload.split('\n')) {
+  for (const line of preload.split(/\r?\n/)) {
     const open = line.match(/^ {2}(\w+): \{$/)
     if (open) ns = open[1]
     const m = line.match(/^ {4}(\w+): \([^)]*\) => (invoke|subscribe<[^>]+>|ipcRenderer\.send)\('([^']+)'/)
