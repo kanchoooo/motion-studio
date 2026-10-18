@@ -125,6 +125,45 @@ export async function saveResultMedia(compositionDir: string, prefix: string, re
   return saved
 }
 
+/** the first bytes of a real sound file (not a web page or an error saved under an .mp3 name) */
+export function looksLikeAudio(head: Buffer): boolean {
+  const s = (a: number, b: number) => head.subarray(a, b).toString('latin1')
+  return (
+    s(0, 3) === 'ID3' || // mp3 with tags
+    (head[0] === 0xff && (head[1] & 0xe0) === 0xe0) || // mp3 / aac frame
+    (s(0, 4) === 'RIFF' && s(8, 12) === 'WAVE') ||
+    s(4, 8) === 'ftyp' || // m4a, mp4
+    s(0, 4) === 'OggS' ||
+    s(0, 4) === 'fLaC' ||
+    (head[0] === 0x1a && head[1] === 0x45 && head[2] === 0xdf && head[3] === 0xa3) // webm
+  )
+}
+
+const AUDIO_EXT: Record<string, string> = { 'audio/mpeg': '.mp3', 'audio/mp3': '.mp3', 'audio/wav': '.wav', 'audio/x-wav': '.wav', 'audio/wave': '.wav', 'audio/mp4': '.m4a', 'audio/x-m4a': '.m4a', 'audio/aac': '.aac', 'audio/ogg': '.ogg', 'audio/flac': '.flac', 'audio/webm': '.webm' }
+
+/**
+ * A listening copy of a candidate's preview (music, effect, voice) in composition/assets/candidates/:
+ * the chat card plays it from the project, so a link that needs a sign-in, expires or blocks other
+ * players still plays. Returns the composition path; throws (in Korean) when it is not a sound file.
+ */
+export async function saveListeningCopy(compositionDir: string, url: string, base: string): Promise<string> {
+  if (!/^https:\/\//.test(url)) throw new Error('https 주소가 아니에요.')
+  const res = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(30_000) })
+  if (!res.ok) throw new Error(`받지 못했어요 (${res.status}).`)
+  const type = (res.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase()
+  if (type.startsWith('text/') || type.includes('json') || type.includes('mpegurl')) throw new Error(`소리 파일이 아니에요 (${type}).`)
+  const data = Buffer.from(await res.arrayBuffer())
+  if (data.length > 40 * 1024 * 1024) throw new Error('미리듣기로 받기에는 너무 커요.')
+  if (!looksLikeAudio(data.subarray(0, 16))) throw new Error('받은 내용이 소리 파일이 아니에요.')
+  let ext = extname(new URL(url).pathname).toLowerCase()
+  if (!/^\.(mp3|wav|m4a|aac|ogg|flac|webm)$/.test(ext)) ext = AUDIO_EXT[type] ?? '.mp3'
+  const dir = join(compositionDir, 'assets', 'candidates')
+  mkdirSync(dir, { recursive: true })
+  const name = `${base.replace(/[^\w-]+/g, '-').slice(0, 40) || 'preview'}-${shortId().slice(0, 6)}${ext}`
+  writeFileSync(join(dir, name), data)
+  return `assets/candidates/${name}`
+}
+
 /** downloads one URL (e.g. a track Claude found on Artlist) into the project */
 export async function importUrl(compositionDir: string, url: string, prefix: string): Promise<SavedMedia> {
   if (!/^https:\/\//.test(url)) throw new Error('https 주소만 가져올 수 있어요.')

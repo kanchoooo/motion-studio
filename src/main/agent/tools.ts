@@ -13,7 +13,7 @@ import { directionForClaude } from '@shared/direction'
 import { activeAccount } from '../ai/accounts'
 import { codexImage, codexStatus } from '../ai/codex'
 import { callTool, connectedProviders, listTools } from '../ai/connect'
-import { importUrl, saveResultMedia } from '../ai/media'
+import { importUrl, saveListeningCopy, saveResultMedia } from '../ai/media'
 import { aiSettings } from '../ai/settings'
 import { keptArgs, recordGenerated } from '../ai/generated'
 import { sfxLibrary, useBuiltinSfx } from '../audio'
@@ -21,6 +21,7 @@ import { listReferences, MAX_RANGE_FRAMES, rangeSheets, referenceFramesAt, refer
 import { auditComposition } from '../audit'
 import { isKeyProp, PROPS, unsetStatic } from '@shared/overrides'
 import { mergeDesignerPatch } from '../designerEdits'
+import { approvalOf, askFirst, designerLayers } from './designerGuard'
 import { fullCheck, lastElements } from '../checks'
 import { listFonts } from '../fonts'
 import * as history from '../history'
@@ -100,6 +101,13 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
   const server = new McpServer({ name: 'studio', version: '1.0.0' })
   const dir = () => projects.pathOf(projectId)
   const st = () => projects.state(projectId)
+  const compositionHtml = () => {
+    try {
+      return readFileSync(join(projects.pathOf(projectId), 'composition', 'index.html'), 'utf8')
+    } catch {
+      return ''
+    }
+  }
 
   server.registerTool(
     'get_brief',
@@ -206,7 +214,8 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
             rules: [
               'LOCKED layers (locked list) are final: never change, move, retime, restyle, remove or re-create them, in code or CSS, and do not touch what is inside them (their parts and children too). If the designer asks for a change to a locked layer, say it is locked and ask them to unlock it in the timeline.',
               "The designer's edits sit on top of your code (the app wraps each data-ms-id element). Keep each data-ms-id so they keep applying.",
-              "Never throw the designer's work away to make your change. When what you must change is a value the designer set (it is in edits: a fixed value, keyframes, an own property, a wiggle, a counter, a mask…), change THAT value with update_designer_edits; change your code for everything else. clear_designer_edits is only for when the designer asks you to redo a layer from scratch or to hand it (or some of its properties) back to your code.",
+              "Layers in edits (and the designer's own layers) are THEIRS: change them — their code, position, size, timing or the designer's values — only when the designer's request is about that layer. Work around them otherwise. If something on one of them looks wrong, ask the designer first (in Korean, naming the layer) and change it only after they agree; the app refuses unasked changes.",
+              "Never throw the designer's work away. When the designer asks you to change a value they set (a fixed value, keyframes, an own property, a wiggle, a counter, a mask…), change THAT value with update_designer_edits; change your code for everything else. clear_designer_edits is only for when the designer asks you to redo a layer from scratch or to hand it (or some of its properties) back to your code.",
               "own: properties of YOUR motion the designer took over (GSAP property names on the element itself). They play from the designer's absolute keyframes; your tweens of those properties are ignored. Adjust them with update_designer_edits (own), or hand them back (clear_designer_edits with props) only when asked.",
               "Character parts are layers \"<character layer>::<part id>\" (x, y in drawing units, rotate about the part's data-pivot, scale): added on top of your acting. A character's acting parameters (--lid, --look-x…) can be owned too.",
               'The camera ("__camera") moves, zooms (scaleX/scaleY), turns and shakes (wiggle) the whole picture.',
@@ -249,7 +258,7 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
     'update_designer_edits',
     {
       description:
-        "Change the designer's own edits of one layer instead of throwing them away: fixed values (transform, style, effects, mask…), keyframes (keys: designer properties; own: properties of your motion they took over), loops, wiggle, a number counter, in/out, text… The patch is merged (a property's keyframe list is replaced as a whole; null removes a field). For a layer the designer added, `layer` changes its text, box or file. Locked layers are refused. Use it to adjust what the designer set, or to animate a layer the designer added.",
+        "Change the designer's own edits of one layer instead of throwing them away: fixed values (transform, style, effects, mask…), keyframes (keys: designer properties; own: properties of your motion they took over), loops, wiggle, a number counter, in/out, text… The patch is merged (a property's keyframe list is replaced as a whole; null removes a field). For a layer the designer added, `layer` changes its text, box or file. Locked layers are refused, and so are the designer's layers when their request is not about them (ask them first). Use it when the designer asks you to adjust what they set, or to animate a layer they added.",
       inputSchema: {
         id: z.string().describe('data-ms-id, "<layer>::<part>" for a character part, or "__camera"'),
         patch: z.record(z.string(), z.unknown()).default({}).describe('ElementOverride fields: transform, style, effects, mask, keys, own, loops, wiggle, counter, trim, textAnim, inPoint, outPoint, hidden, label, text, src'),
@@ -260,6 +269,10 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
     async ({ id, patch, layer, reason }) => {
       const cur = st().overrides
       if (cur.elements[id]?.locked) return text(`Refused: "${id}" is locked by the designer. Ask them to unlock it in the timeline.`)
+      // the designer's own layers change only when this request is about them (designerGuard.ts)
+      const ok = approvalOf(projectId)
+      const theirs = designerLayers(cur, compositionHtml())
+      if (!ok.all && theirs.has(id) && !ok.ids.has(id)) return text(`Refused. ${askFirst([theirs.get(id)!])}`)
       const next = structuredClone(cur)
       const { merged, problems } = mergeDesignerPatch(next.elements[id] ?? {}, patch)
       next.elements[id] = merged
@@ -272,6 +285,8 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
         }
       }
       await projects.saveOverrides(projectId, next, `Claude가 직접 수정 값을 고쳤어요: ${reason}`, 'claude')
+      // the editor holds a copy: it reloads before the designer's next change is saved over this one
+      projects.notifyChanged(projectId)
       return text([`Updated the designer's edits of ${id}.`, ...problems].join('\n'))
     },
   )
@@ -280,7 +295,7 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
     'clear_designer_edits',
     {
       description:
-        "Hand a layer (or some of its properties) back to your code: removes the designer's manual edits on these layers (and removes layers / copies the designer added), or with `props` only those properties (designer properties like x, color, blur, or properties of your motion they took over like y, rotation, --mouth-open). Use it only when the designer asks for it. Locked layers are refused.",
+        "Hand a layer (or some of its properties) back to your code: removes the designer's manual edits on these layers (and removes layers / copies the designer added), or with `props` only those properties (designer properties like x, color, blur, or properties of your motion they took over like y, rotation, --mouth-open). Use it only when the designer asks for it. Locked layers are refused, and the designer's layers when their request is not about them.",
       inputSchema: {
         ids: z.array(z.string()).min(1).max(100),
         props: z.array(z.string()).optional().describe('only these properties (otherwise every edit of the layer)'),
@@ -290,7 +305,11 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
     async ({ ids, props, reason }) => {
       const cur = st().overrides
       const refused = ids.filter((id) => cur.elements[id]?.locked)
-      const take = new Set(ids.filter((id) => !refused.includes(id)))
+      // the designer's own layers are handed back only when this request is about them (designerGuard.ts)
+      const ok = approvalOf(projectId)
+      const theirs = designerLayers(cur, compositionHtml())
+      const unasked = ok.all ? [] : ids.filter((id) => !refused.includes(id) && theirs.has(id) && !ok.ids.has(id))
+      const take = new Set(ids.filter((id) => !refused.includes(id) && !unasked.includes(id)))
       const next = structuredClone(cur)
       if (props?.length) {
         for (const id of take) {
@@ -311,11 +330,15 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
         for (const k of Object.keys(next.order)) next.order[k] = next.order[k].filter((id) => !take.has(id) || !cur.layers.some((l) => l.id === id))
         for (const key of Object.keys(next.motions)) if (take.has(key.slice(0, key.lastIndexOf('#')))) delete next.motions[key]
       }
-      if (take.size) await projects.saveOverrides(projectId, next, `Claude가 직접 수정을 넘겨받았어요: ${reason}`, 'claude')
+      if (take.size) {
+        await projects.saveOverrides(projectId, next, `Claude가 직접 수정을 넘겨받았어요: ${reason}`, 'claude')
+        projects.notifyChanged(projectId)
+      }
       return text(
         [
           take.size ? (props?.length ? `Cleared ${props.join(', ')} on ${[...take].join(', ')}. Your code decides these properties again.` : `Cleared: ${[...take].join(', ')}. Your code decides these layers again.`) : '',
           refused.length ? `Refused (locked by the designer): ${refused.join(', ')}. Ask them to unlock in the timeline if this is really what they want.` : '',
+          unasked.length ? `Refused. ${askFirst(unasked.map((id) => theirs.get(id)!))}` : '',
         ]
           .filter(Boolean)
           .join('\n'),
@@ -983,7 +1006,7 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
     'show_audio_candidates',
     {
       description:
-        "Let the designer LISTEN to music or sound-effect candidates before one is settled: a card in the chat (and the list in the Sound tab) with a play button per candidate; their pick comes back as a message. Use it for any source — Artlist results, free libraries that allow commercial use without attribution, a file you made. Each candidate needs something to play: preview_url (a direct audio link you checked) or file (a listening copy you downloaded into the composition, e.g. assets/candidates/upbeat-1.mp3). Give source and license for free music. After calling this, briefly say what you found and END YOUR TURN.",
+        "Let the designer LISTEN to music or sound-effect candidates before one is settled: a card in the chat (and the list in the Sound tab) with a play button per candidate; their pick comes back as a message. Use it for any source — Artlist results, free libraries that allow commercial use without attribution, a file you made. Each candidate needs something to play: preview_url (a direct https audio link — the app downloads a listening copy into the project, so it must download without signing in) or file (a listening copy you downloaded into the composition, e.g. assets/candidates/upbeat-1.mp3). Give source and license for free music. After calling this, briefly say what you found and END YOUR TURN.",
       inputSchema: {
         query: z.string().describe('what was looked for, in Korean'),
         kind: z.enum(['bgm', 'sfx']),
@@ -1008,11 +1031,27 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
           .max(30),
       },
     },
-    async ({ query, kind, source, items }) => {
-      // every candidate can be heard: a link, or a sound file that exists in the composition
+    async ({ query, kind, source, items: asked }) => {
+      // every candidate can be heard: a sound file in the project — a link's preview is downloaded
+      // (the chat plays it from there: a link that needs a sign-in, expires or blocks other players still plays)
       const okFile = (f?: string) => !!f && /^[\w./ -]+\.(mp3|wav|m4a|aac|ogg|flac|webm)$/i.test(f) && !f.includes('..') && existsSync(join(dir(), 'composition', f))
-      const deaf = items.find((it) => !(it.preview_url && /^https?:\/\//.test(it.preview_url)) && !okFile(it.file))
-      if (deaf) return text(`「${deaf.title}」: give preview_url (a direct http(s) audio link) or file (a sound file inside composition/, e.g. assets/candidates/x.mp3) so the designer can listen.`)
+      const deaf = asked.find((it) => !(it.preview_url && /^https:\/\//.test(it.preview_url)) && !okFile(it.file))
+      if (deaf) return text(`「${deaf.title}」: give preview_url (a direct https audio link) or file (a sound file inside composition/, e.g. assets/candidates/x.mp3) so the designer can listen.`)
+      const failed: string[] = []
+      const items = (
+        await Promise.all(
+          asked.map(async (it) => {
+            if (okFile(it.file)) return it
+            try {
+              return { ...it, file: await saveListeningCopy(join(dir(), 'composition'), it.preview_url!, `${kind}-${it.id ?? it.title}`) }
+            } catch (e) {
+              failed.push(`「${it.title}」 (${e instanceof Error ? e.message : String(e)})`)
+              return null
+            }
+          }),
+        )
+      ).filter((it): it is NonNullable<typeof it> => !!it)
+      if (!items.length) return text(`None of the previews could be downloaded to play in the app: ${failed.join(', ')}. Give direct https audio links that download without signing in, or download listening copies into composition/assets/candidates/ yourself and pass file.`)
       hooks.onAudioCandidates(projectId, {
         id: Math.random().toString(36).slice(2, 10),
         at: new Date().toISOString(),
@@ -1034,7 +1073,14 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
           file: okFile(it.file) ? it.file : undefined,
         })),
       })
-      return text('대화창과 사운드 탭에 후보를 보여줬어요. 디자이너가 들어 보고 고르면 메시지로 알려 줘요. 이번 턴은 여기서 마무리하세요.')
+      return text(
+        [
+          '대화창과 사운드 탭에 후보를 보여줬어요. 디자이너가 들어 보고 고르면 메시지로 알려 줘요. 이번 턴은 여기서 마무리하세요.',
+          failed.length ? `These could not be downloaded to play, so they were left out: ${failed.join(', ')}. Tell the designer briefly (in Korean) that those were left out.` : '',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      )
     },
   )
 
@@ -1081,12 +1127,17 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
     async ({ label, script, voices }) => {
       // a local voice is heard from its sample: a sound file inside the composition
       const hasSample = (v: (typeof voices)[number]) => !!v.sample && /^[\w./-]+\.(wav|mp3|m4a|aac|ogg|flac)$/i.test(v.sample) && !v.sample.includes('..') && existsSync(join(dir(), 'composition', v.sample))
-      const bad = voices.find((v) => v.provider === 'local' && !hasSample(v) && !(v.preview_url && /^https?:\/\//.test(v.preview_url)))
-      if (bad) return text(`「${bad.name}」: a local voice needs sample = the take you made (a composition path to a sound file that exists, e.g. assets/generated/voice-melo-1.wav), or — for a model not installed yet — preview_url = its official demo clip.`)
+      const bad = voices.find((v) => v.provider === 'local' && !hasSample(v) && !(v.preview_url && /^https:\/\//.test(v.preview_url)))
+      if (bad) return text(`「${bad.name}」: a local voice needs sample = the take you made (a composition path to a sound file that exists, e.g. assets/generated/voice-melo-1.wav), or — for a model not installed yet — preview_url = its official demo clip (https).`)
+      // a preview link is heard from a copy in the project (a service's link may need a sign-in or expire);
+      // a service voice without any preview gets a sample made on request in the card (it uses credits)
+      const listen = await Promise.all(
+        voices.map((v) => (!hasSample(v) && v.preview_url && /^https:\/\//.test(v.preview_url) ? saveListeningCopy(join(dir(), 'composition'), v.preview_url, `voice-${v.id}`).catch(() => undefined) : Promise.resolve(undefined))),
+      )
       hooks.onVoices(projectId, {
         label,
         script,
-        voices: voices.map((v) => ({ provider: v.provider, id: v.id, name: v.name, description: v.description, gender: v.gender, previewUrl: v.preview_url, voiceType: v.voice_type, source: v.source, engine: v.engine, sample: hasSample(v) ? v.sample : undefined })),
+        voices: voices.map((v, i) => ({ provider: v.provider, id: v.id, name: v.name, description: v.description, gender: v.gender, previewUrl: v.preview_url, voiceType: v.voice_type, source: v.source, engine: v.engine, sample: hasSample(v) ? v.sample : undefined, listen: listen[i] })),
       })
       return text('목소리 후보를 디자이너에게 보여줬어요. 들어 보고 고르면 메시지로 알려 줘요. 이번 턴은 여기서 마무리하세요.')
     },

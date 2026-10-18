@@ -833,37 +833,168 @@
       textNodes(el).forEach(function (n, i) { if (o.textRuns[i] != null) n.nodeValue = String(o.textRuns[i]) })
     } else if (o.text != null) {
       el.__msTextApplied = true
-      el.textContent = ''
-      String(o.text).split('\n').forEach(function (line, i) {
-        if (i) el.appendChild(document.createElement('br'))
-        el.appendChild(document.createTextNode(line))
-      })
+      // a text with parts inside (a highlight bar, a styled word, a box around the words): only the
+      // characters that changed are replaced, so the parts — and the size they give — stay
+      if (!hasParts(el) || !editInPlace(el, String(o.text))) {
+        el.textContent = ''
+        String(o.text).split('\n').forEach(function (line, i) {
+          if (i) el.appendChild(document.createElement('br'))
+          el.appendChild(document.createTextNode(line))
+        })
+      }
     }
     if (o.highlights && o.highlights.length && !el.__msHighlighted) {
       el.__msHighlighted = true
       o.highlights.forEach(highlight.bind(null, el))
     }
   }
-  /** a word (or phrase) of a text in its own colour / weight: every place it appears */
+  /** inside the text: elements other than line breaks */
+  function hasParts(el) {
+    for (var i = 0; i < el.children.length; i++) if (el.children[i].tagName !== 'BR') return true
+    return false
+  }
+  /**
+   * The designer's new words put into the text's own parts: the characters that differ from the
+   * page's (spaces and line breaks aside) replace them where they are; a new line break becomes <br>.
+   * False when it cannot be done that way (a removed line break, no text): the text is then replaced.
+   */
+  function editInPlace(el, text) {
+    var chars = [], before = ''
+    textNodes(el).forEach(function (n) {
+      var v = n.nodeValue
+      for (var i = 0; i < v.length; i++) if (!/\s/.test(v[i])) { chars.push({ n: n, i: i }); before += v[i] }
+    })
+    if (!chars.length) return false
+    var at = [], after = ''
+    for (var j = 0; j < text.length; j++) if (!/\s/.test(text[j])) { at.push(j); after += text[j] }
+    // line breaks: where they fall between characters (counted without spaces)
+    var breaksOf = function (t) {
+      var out = {}, k = 0
+      for (var m = 0; m < t.length; m++) {
+        if (t[m] === '\n') out[k] = 1
+        else if (!/\s/.test(t[m])) k++
+      }
+      return out
+    }
+    var was = breaksOf(el.innerText || ''), now = breaksOf(text)
+    for (var w in was) if (!now[w] && +w > 0 && +w < before.length) return false
+    // what changed, character by character (a common-subsequence diff): each changed stretch is
+    // replaced where it is, so an edit inside a styled word stays inside it
+    var n0 = before.length, m0 = after.length
+    if (n0 * m0 > 4000000) return false
+    var L = []
+    for (var i1 = 0; i1 <= n0; i1++) L.push(new Uint16Array(m0 + 1))
+    for (var a1 = n0 - 1; a1 >= 0; a1--) for (var b1 = m0 - 1; b1 >= 0; b1--) L[a1][b1] = before[a1] === after[b1] ? L[a1 + 1][b1 + 1] + 1 : Math.max(L[a1 + 1][b1], L[a1][b1 + 1])
+    var hunks = [], x = 0, y = 0, open = null
+    while (x < n0 || y < m0) {
+      if (x < n0 && y < m0 && before[x] === after[y]) {
+        if (open) hunks.push(open), (open = null)
+        x++, y++
+      } else {
+        if (!open) open = { i0: x, i1: x, j0: y, j1: y }
+        if (y < m0 && (x === n0 || L[x][y + 1] >= L[x + 1][y])) open.j1 = ++y
+        else open.i1 = ++x
+      }
+    }
+    if (open) hunks.push(open)
+    // the later ones first: changing a part keeps the offsets before it
+    for (var h = hunks.length - 1; h >= 0; h--) {
+      var k = hunks[h]
+      var put = k.j0 < k.j1 ? text.slice(at[k.j0], at[k.j1 - 1] + 1).replace(/\n/g, ' ') : ''
+      if (k.i0 < k.i1) {
+        // the changed characters go from each part they are in; the new ones take the first one's place
+        var segs = []
+        for (var c = k.i0; c < k.i1; c++) {
+          var g = segs[segs.length - 1]
+          if (g && g.n === chars[c].n) g.b = chars[c].i + 1
+          else segs.push({ n: chars[c].n, a: chars[c].i, b: chars[c].i + 1 })
+        }
+        for (var sg = segs.length - 1; sg >= 0; sg--) {
+          var v = segs[sg].n.nodeValue
+          segs[sg].n.nodeValue = v.slice(0, segs[sg].a) + (sg === 0 ? put : '') + v.slice(segs[sg].b)
+        }
+      } else if (put) {
+        // only added: right after the character before it (or before the first one)
+        var ref = k.i0 > 0 ? chars[k.i0 - 1] : chars[0]
+        var v2 = ref.n.nodeValue
+        var cut = k.i0 > 0 ? ref.i + 1 : ref.i
+        ref.n.nodeValue = v2.slice(0, cut) + put + v2.slice(cut)
+      }
+    }
+    // a new line break between two characters: a <br> there
+    var added = Object.keys(now).filter(function (k) { return !was[k] && +k > 0 && +k < after.length })
+    if (added.length) {
+      var now2 = [], s2 = ''
+      textNodes(el).forEach(function (n) {
+        var v = n.nodeValue
+        for (var i = 0; i < v.length; i++) if (!/\s/.test(v[i])) { now2.push({ n: n, i: i }); s2 += v[i] }
+      })
+      added.sort(function (a, b) { return b - a }).forEach(function (k) {
+        var c3 = now2[+k]
+        if (!c3) return
+        var rest = c3.n.splitText(c3.i)
+        rest.parentNode.insertBefore(document.createElement('br'), rest)
+      })
+    }
+    return true
+  }
+  /** a word (or phrase) of a text in its own colour / weight: every place it appears (or one, nth) */
   function highlight(el, h) {
     var word = String(h && h.text || '')
     if (!word) return
+    if (typeof h.nth === 'number') return highlightAt(el, h)
     textNodes(el).forEach(function (n) {
       var node = n
       for (var guard = 0; guard < 50; guard++) {
         var at = node.nodeValue.indexOf(word)
         if (at < 0) return
         var mid = node.splitText(at), rest = mid.splitText(word.length)
-        var span = document.createElement('span')
-        span.setAttribute('data-ms-highlight', '')
-        if (h.color) span.style.setProperty('color', col(h.color), 'important')
-        if (h.weight) span.style.setProperty('font-weight', String(num(h.weight, 700)), 'important')
-        if (h.underline) span.style.setProperty('text-decoration', 'underline', 'important')
-        mid.parentNode.insertBefore(span, mid)
-        span.appendChild(mid)
+        wrapHighlight(mid, h)
         node = rest
       }
     })
+  }
+  function wrapHighlight(node, h) {
+    var span = document.createElement('span')
+    span.setAttribute('data-ms-highlight', '')
+    if (h.color) span.style.setProperty('color', col(h.color), 'important')
+    if (h.weight) span.style.setProperty('font-weight', String(num(h.weight, 700)), 'important')
+    if (h.underline) span.style.setProperty('text-decoration', 'underline', 'important')
+    node.parentNode.insertBefore(span, node)
+    span.appendChild(node)
+  }
+  /**
+   * The part the designer dragged over: the nth place of the text, matched without spaces and line
+   * breaks (the text box shows them differently from the page), across styled parts and lines.
+   */
+  function highlightAt(el, h) {
+    var needle = String(h.text).replace(/\s+/g, '')
+    if (!needle) return
+    var chars = [], s = ''
+    textNodes(el).forEach(function (n) {
+      var v = n.nodeValue
+      for (var i = 0; i < v.length; i++) if (!/\s/.test(v[i])) { chars.push({ n: n, i: i }); s += v[i] }
+    })
+    // counted without overlaps, as the editor counts
+    var at = -1, from = 0
+    for (var k = 0; k <= Math.max(0, Math.floor(h.nth)); k++) {
+      at = s.indexOf(needle, from)
+      if (at < 0) return
+      from = at + needle.length
+    }
+    // from its first to its last character in each text node (spaces between them included)
+    var segs = []
+    for (var j = at; j < at + needle.length; j++) {
+      var c = chars[j], last = segs[segs.length - 1]
+      if (last && last.n === c.n) last.b = c.i + 1
+      else segs.push({ n: c.n, a: c.i, b: c.i + 1 })
+    }
+    // the later parts first: splitting a node keeps the earlier offsets
+    for (var q = segs.length - 1; q >= 0; q--) {
+      var g = segs[q], mid = g.a ? g.n.splitText(g.a) : g.n
+      if (g.b - g.a < mid.nodeValue.length) mid.splitText(g.b - g.a)
+      wrapHighlight(mid, h)
+    }
   }
   function mediaOf(el) {
     if (/^(IMG|VIDEO)$/.test(el.tagName)) return el

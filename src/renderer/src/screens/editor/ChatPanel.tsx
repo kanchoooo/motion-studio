@@ -919,31 +919,45 @@ function StoryboardCard({ item }: { item: Extract<ChatItem, { role: 'storyboard'
 /** narration voices Claude suggests: listen, then pick one (Claude is told) */
 const mmss = (s?: number) => (s == null ? '' : `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`)
 
-/** music or sound-effect candidates: listen to each in the chat, pick one (Claude brings it in) */
-function AudioCard({ item }: { item: Extract<ChatItem, { role: 'audio' }> }) {
-  const { project, toast } = useStore()
+/** one candidate at a time; a failure says why and never leaves the button on "pause" */
+function useListen(toast: (t: string, k?: 'error' | 'info' | 'success') => void) {
   const [playing, setPlaying] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
   const audio = useRef<HTMLAudioElement | null>(null)
-  // listening copies Claude put in the project are played from there
-  const [base, setBase] = useState('')
-  useEffect(() => {
-    if (item.list.items.some((c) => c.file)) void studio.projects.fileUrl(project!.meta.id, '').then(setBase)
-  }, [item.list.items, project])
   useEffect(() => () => audio.current?.pause(), [])
-  const urlOf = (c: (typeof item.list.items)[number]) => (c.file ? (base ? `${base}composition/${c.file}` : undefined) : c.previewUrl)
+  const fail = (a: HTMLAudioElement) => {
+    if (audio.current !== a) return
+    setPlaying(null)
+    const why = a.error?.code === 4 ? '이 파일 형식을 재생할 수 없어요' : a.error?.code === 2 ? '파일을 받지 못했어요' : '재생할 수 없어요'
+    toast(`미리듣기를 재생하지 못했어요. (${why})`, 'error')
+  }
   const play = (id: string, url?: string) => {
     audio.current?.pause()
     if (!url || playing === id) return setPlaying(null)
     const a = new Audio(url)
     audio.current = a
-    a.onended = () => setPlaying(null)
-    void a.play().catch(() => {
-      setPlaying(null)
-      toast('미리듣기를 재생하지 못했어요.', 'error')
-    })
+    a.onended = () => audio.current === a && setPlaying(null)
+    a.onerror = () => fail(a)
+    void a.play().catch(() => fail(a))
     setPlaying(id)
   }
+  const stop = () => {
+    audio.current?.pause()
+    setPlaying(null)
+  }
+  return { playing, play, stop }
+}
+
+/** music or sound-effect candidates: listen to each in the chat, pick one (Claude brings it in) */
+function AudioCard({ item }: { item: Extract<ChatItem, { role: 'audio' }> }) {
+  const { project, toast } = useStore()
+  const [busy, setBusy] = useState(false)
+  const { playing, play, stop } = useListen(toast)
+  // listening copies in the project (the app downloads the previews) are played from there
+  const [base, setBase] = useState('')
+  useEffect(() => {
+    if (item.list.items.some((c) => c.file)) void studio.projects.fileUrl(project!.meta.id, '').then(setBase)
+  }, [item.list.items, project])
+  const urlOf = (c: (typeof item.list.items)[number]) => (c.file ? (base ? `${base}composition/${c.file}` : undefined) : c.previewUrl)
   const bgm = item.list.kind === 'bgm'
   return (
     <div className="card fade-in" style={{ padding: 10, display: 'flex', flexDirection: 'column', gap: 8 }} data-testid="audio-card">
@@ -976,8 +990,7 @@ function AudioCard({ item }: { item: Extract<ChatItem, { role: 'audio' }> }) {
                 disabled={busy || !!item.picked}
                 onClick={async () => {
                   setBusy(true)
-                  audio.current?.pause()
-                  setPlaying(null)
+                  stop()
                   try {
                     await studio.agent.pickAudio(project!.meta.id, item.id, c.id)
                   } catch (e) {
@@ -1000,24 +1013,32 @@ function AudioCard({ item }: { item: Extract<ChatItem, { role: 'audio' }> }) {
 
 function VoicesCard({ item }: { item: Extract<ChatItem, { role: 'voices' }> }) {
   const { project, toast } = useStore()
-  const [playing, setPlaying] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const audio = useRef<HTMLAudioElement | null>(null)
-  // local voices (an open-source model Claude ran here) are heard from their sample in the project
+  const { playing, play } = useListen(toast)
+  // a local voice's sample, or the copy of a service's preview the app downloaded: played from the project
   const [base, setBase] = useState('')
   useEffect(() => {
-    if (item.voices.some((v) => v.sample)) void studio.projects.fileUrl(project!.meta.id, '').then(setBase)
+    if (item.voices.some((v) => v.sample || v.listen)) void studio.projects.fileUrl(project!.meta.id, '').then(setBase)
   }, [item.voices, project])
-  useEffect(() => () => audio.current?.pause(), [])
-  const urlOf = (v: (typeof item.voices)[number]) => (v.sample ? (base ? `${base}composition/${v.sample}` : undefined) : v.previewUrl)
-  const play = (id: string, url?: string) => {
-    audio.current?.pause()
-    if (!url || playing === id) return setPlaying(null)
-    const a = new Audio(url)
-    audio.current = a
-    a.onended = () => setPlaying(null)
-    void a.play().catch(() => toast('미리듣기를 재생하지 못했어요.', 'error'))
-    setPlaying(id)
+  const local = (f?: string) => (f ? (base ? `${base}composition/${f}` : undefined) : undefined)
+  // a service voice with no preview: a short sample made on request (it uses the service's credits)
+  const [made, setMade] = useState<Record<string, string>>({})
+  const [making, setMaking] = useState<string | null>(null)
+  const urlOf = (v: (typeof item.voices)[number]) => local(v.sample) ?? local(v.listen) ?? v.previewUrl ?? made[v.id]
+  const canMake = (v: (typeof item.voices)[number]) => v.provider !== 'local' && !urlOf(v)
+  const makeSample = async (v: (typeof item.voices)[number]) => {
+    if (v.provider === 'local') return
+    if (!confirm('이 목소리는 미리듣기가 없어서 짧은 샘플을 한 번 만들어요(서비스 크레딧이 조금 쓰여요). 만들까요?')) return
+    setMaking(v.id)
+    try {
+      const url = await studio.ai.ttsSample({ ...v, provider: v.provider }, (item.script ?? '').trim().slice(0, 80) || '안녕하세요. 이 목소리로 내레이션을 읽어 볼게요.')
+      setMade((m) => ({ ...m, [v.id]: url }))
+      play(v.id, url)
+    } catch (e) {
+      toast(errText(e), 'error')
+    } finally {
+      setMaking(null)
+    }
   }
   return (
     <div className="card fade-in" style={{ padding: 10, display: 'flex', flexDirection: 'column', gap: 8 }} data-testid="voices-card">
@@ -1029,8 +1050,14 @@ function VoicesCard({ item }: { item: Extract<ChatItem, { role: 'voices' }> }) {
       <div className="col" style={{ gap: 4 }}>
         {item.voices.map((v) => (
           <div key={v.id} className="row" style={{ gap: 8, padding: '4px 6px', borderRadius: 8, background: item.picked === v.id ? 'var(--accent-soft)' : 'var(--surface-2)' }}>
-            <button className="icon-btn" disabled={!urlOf(v)} title={urlOf(v) ? '들어 보기' : '미리듣기가 없어요'} onClick={() => play(v.id, urlOf(v))}>
-              {playing === v.id ? <Pause size={13} /> : <Play size={13} />}
+            <button
+              className="icon-btn"
+              disabled={(!urlOf(v) && !canMake(v)) || making === v.id}
+              title={urlOf(v) ? '들어 보기' : canMake(v) ? '샘플을 만들어 들어 보기 (크레딧이 조금 쓰여요)' : '미리듣기가 없어요'}
+              onClick={() => (urlOf(v) ? play(v.id, urlOf(v)) : void makeSample(v))}
+              data-testid="voice-play"
+            >
+              {making === v.id ? <Loader2 size={13} className="spin" /> : playing === v.id ? <Pause size={13} /> : <Play size={13} />}
             </button>
             <div className="col grow" style={{ gap: 0, minWidth: 0 }}>
               <span className="small ellipsis">{v.name}</span>

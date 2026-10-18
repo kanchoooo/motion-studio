@@ -2,6 +2,7 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { app, BrowserWindow, dialog, nativeTheme, session, shell } from 'electron'
 import { registerIpc } from './ipc'
+import type { AudioCandidateList } from '@shared/ai'
 import { cancelAllExports, runningExports } from './renders'
 import { isDev } from './paths'
 import { startPreviewServer } from './preview-server'
@@ -92,6 +93,8 @@ app.whenReady().then(async () => {
     g.__msQuitState = () => ({ exporting: runningExports(), busy: sessions.busyProjects() })
     // the review card for generated media, without spending AI credits
     g.__msShowGenerated = (projectId: string, files: { file: string; kind: string }[], label?: string) => sessions.showGenerated(projectId, files, label)
+    // a sound candidate card in the chat (as Claude's show_audio_candidates makes it), without Claude
+    g.__msShowAudio = (projectId: string, list: AudioCandidateList) => sessions.showAudio(projectId, list)
   }
   if (!hidden) createWindow(previewBase)
   app.on('before-quit', (e) => {

@@ -58,6 +58,8 @@ npm run dev        # 개발 모드 실행
 | `node tests/e2e/sound-live.mjs` | 실제 Claude로 무료 배경음악 후보 → 대화창 카드에서 듣기 → 고르기 → 배경음악으로 교체·사운드 탭 표시 (`MS_SANDBOX=<신뢰된 샌드박스>`, 백업·복원, 사용량 소모) |
 | `node tests/e2e/edit-requests-live.mjs` | 실제 Claude(앱 기본 opus·high)로 편집 요청 확인: 배경 따로 떼기, 이름 없는 내용 → 이름 붙이기 요청, 새 요소 이름, 파일을 붙인 핀(교체·스타일·참고). 폴더 신뢰 질문은 테스트가 답하지 않으므로 이미 신뢰된 샌드박스 프로젝트를 쓰고, 백업했다가 되돌린다 (`MS_SANDBOX=<신뢰된 「앱 주문 런칭」 폴더가 있는 샌드박스>`, 사용량 소모) |
 | `npm run dist:mac` (`dist:mac-arm64`, `dist:mac-x64`) | Mac 설치 파일: 서명·공증 (`release/`, 6장 참고). `--release`는 관제용 판(Intel)도 함께 올린다 (5-7장) |
+| `node tests/e2e/runtime-text.mjs` | 런타임: 안에 요소가 있는 글자의 단어를 바꿔도 구조·크기 유지, 새 줄바꿈, 드래그한 부분만 색(그 자리, 꾸밈 걸침), 단어 강조(모든 곳) |
+| `node tests/e2e/feedback-4.mjs` | 사용 피드백 4차: 글자 일부만 색(편집 화면), 상자 글자 수정, 다른 쪽 변경이 다음 편집에 지워지지 않음, 대화창 소리 카드 재생·실패 안내, 글꼴 블록 (`MS_SANDBOX=<「앱 주문 런칭」 샌드박스>`, 사본에서) |
 | `node tests/e2e/collect-flow.mjs` | 관제용 판: 결과물 모음 — console.json 없으면 아무 일 없음, 지난 결과물 채우기(clone), 관제에서 지우기 요청 → 앱에서도 지움, 새 내보내기·앱에서 지우기 따라가기 (`MS_CONSOLE=1 npx electron-vite build` 뒤, `MS_SANDBOX=<「앱 주문 런칭」 샌드박스>`, 사본에서) |
 | `node tests/e2e/web-flow.mjs` | 관제용 판: 웹 연결 — console.json으로 켜고 끄기, 숨은 시작, 토큰·CSP·막는 요청, 업로드·내려받기, 미리보기 중계(샌드박스·글꼴·소리), 관제 같은 중계를 거친 브라우저에서 화면·편집 저장·파일 올리기·내려받기, 종료 → 다시 연결 (`MS_CONSOLE=1` 빌드 뒤, `MS_SANDBOX=<「앱 주문 런칭」 샌드박스>`, 이 맥의 Chrome 사용) |
 | `npm run dist:win` | Windows 설치 파일 (미서명) |
@@ -240,6 +242,24 @@ poc/               Phase 0 기술 검증 기록 (RESULTS.md)
 - 미리보기는 `/preview/p/…`와 런타임만 중계한다(MCP·훅 경로는 막는다). `Content-Security-Policy: sandbox allow-scripts`로 별도 origin이 되고, 글꼴·fetch를 위해 `Access-Control-Allow-Origin: *`를 붙인다.
 - `terminal:write`가 열려 있어서 **웹 연결은 원격 조작과 같다**. 관제가 IP 제한 뒤에서만 중계한다.
 - 표: `src/shared/web-channels.ts`(preload와 같은지 `tests/unit/web-shim.test.ts`가 비교한다)
+
+## 5-8. 직접 수정 보호·저장 합치기·글꼴 (0.5.0-beta.10)
+- **디자이너 레이어 보호**(`agent/designerGuard.ts`)
+  - 디자이너가 직접 고친 레이어(이름·잠금만 바꾼 것 제외)와 디자이너가 추가한 레이어가 대상이에요.
+  - 요청마다 허용 범위를 정해요(`approvalFor`). 표시한 레이어, 메시지에 이름이 나온 레이어, Claude가 물은 뒤 짧게 "네"라고 답한 경우의 그 레이어가 허용돼요. "직접 고친 것도 바꿔도 돼" 같은 말, 앱의 요청, 베리에이션 재구성은 전부 허용이에요.
+  - Claude의 `update_designer_edits`·`clear_designer_edits`는 허용 밖이면 거절해요.
+  - PreToolUse 훅(Edit/MultiEdit/Write)은 composition의 HTML 편집이 그 레이어의 마크업이나 그 레이어를 가리키는 코드(CSS 규칙, 트윈 문장)를 바꾸면 되돌려 보내요.
+- **저장 합치기**(`shared/overridesMerge.ts`)
+  - 편집 화면은 수정값 전체와 함께 기준(base)을 보내요.
+  - 디스크가 그사이 바뀌었으면 레이어(그리고 소리 편집·모션 편집·쌓는 순서 등) 단위로 합쳐요. 같은 레이어를 양쪽에서 바꿨으면 디자이너 쪽이 이겨요.
+  - 합쳐진 결과는 편집 화면이 다시 받아요.
+- **글꼴 블록**(`fontcss.ts` `withFontBlock`)
+  - HyperFrames는 렌더할 때 페이지 본문에 `@font-face`가 없는 글꼴에 자기 규칙(설치 글꼴의 굵기를 파일 이름으로 추측)을 덧붙여요.
+  - 그래서 페이지가 연결한 로컬 스타일시트의 `@font-face`를 `index.html`의 `<!-- ms:fonts -->` 블록에도 넣어요(`refreshFontCss`).
+- **글자 수정**(`ms-runtime.js` `editInPlace`)
+  - 안에 요소가 있는 글자는 바뀐 글자만 그 자리에서 바꿔요.
+  - 드래그로 고른 부분의 색은 `highlights[].nth`(그 자리, 띄어쓰기 무시)로 저장해요.
+- **소리 후보**: `saveListeningCopy`가 미리듣기를 `composition/assets/candidates/`에 받아요(앞부분 바이트로 소리 파일인지 확인). 공유 파일에서는 빠져요.
 
 ## 5-1. AI 서비스 연결
 

@@ -128,6 +128,8 @@ export type VoiceChoice = Omit<AiVoiceInfo, 'provider'> & {
   sample?: string
   /** local: the model and its licence, e.g. "MeloTTS-Korean · MIT · 이 Mac에서 무료" */
   engine?: string
+  /** a listening copy of the service's preview, downloaded into the project (composition path) */
+  listen?: string
 }
 
 export interface AiVoiceInfo {

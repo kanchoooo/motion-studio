@@ -48,6 +48,7 @@ import {
   type WiggleProp,
 } from '@shared/overrides'
 import { makeTimeMap } from '@shared/timeRemap'
+import { noSpace, placeOf } from '@shared/textPlace'
 import { FontSelect } from '../../components/FontSelect'
 import { ColorField, NumberField, Segmented, Toggle } from '../../components/ui'
 import { cleanError, studio, useStore } from '../../store'
@@ -661,6 +662,9 @@ function TextSection({ id }: { id: string }) {
   useEffect(() => {
     if (document.activeElement !== box.current) setText(current)
   }, [current])
+  // a part dragged over in the box: only it takes another colour / weight
+  const [sel, setSel] = useState<{ start: number; end: number } | null>(null)
+  useEffect(() => setSel(null), [id])
   const patch = (style: ElementStyle, key: string) => patchElement(id, label, { style }, [key])
   const commitText = () => {
     if (text === current) return
@@ -676,7 +680,15 @@ function TextSection({ id }: { id: string }) {
         className="textarea"
         rows={Math.min(12, Math.max(3, text.split('\n').length + 1))}
         value={text}
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => {
+          setText(e.target.value)
+          setSel(null)
+        }}
+        onSelect={(e) => {
+          const t = e.currentTarget
+          if (t.selectionEnd > t.selectionStart && t.value.slice(t.selectionStart, t.selectionEnd).trim()) setSel({ start: t.selectionStart, end: t.selectionEnd })
+          else if (document.activeElement === t) setSel(null)
+        }}
         onBlur={commitText}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) (e.target as HTMLTextAreaElement).blur()
@@ -685,6 +697,11 @@ function TextSection({ id }: { id: string }) {
         style={{ minHeight: 76, fontSize: 14, lineHeight: 1.5, resize: 'vertical' }}
         data-testid="layer-text"
       />
+      {sel && text === current ? (
+        <SelectionStyle id={id} text={text} sel={sel} />
+      ) : (
+        <div className="tiny faint">글자 일부를 드래그해서 고르면 그 부분만 색과 굵기를 바꿀 수 있어요.</div>
+      )}
       {!layer && el.runs && <TextRuns id={id} runs={el.runs} />}
       <Highlights id={id} />
       <TimedText id={id} />
@@ -1138,6 +1155,40 @@ function TextRuns({ id, runs }: { id: string; runs: string[] }) {
   )
 }
 
+
+/** the part dragged over in the text box: its own colour / weight, only there */
+function SelectionStyle({ id, text, sel }: { id: string; text: string; sel: { start: number; end: number } }) {
+  const list = useOverrides((s) => s.value?.elements[id]?.highlights) ?? []
+  const { patchElement } = useOverrides()
+  const part = text.slice(sel.start, sel.end)
+  const nth = placeOf(text, sel.start, part)
+  const at = list.findIndex((h) => h.nth === nth && noSpace(h.text) === noSpace(part))
+  const cur = at >= 0 ? list[at] : null
+  const apply = (patch: Partial<NonNullable<typeof cur>>) => {
+    const h = { ...(cur ?? { text: part.trim(), nth }), ...patch }
+    const next = at >= 0 ? list.map((x, i) => (i === at ? h : x)) : [...list, h]
+    patchElement(id, labelOf(id), { highlights: next }, ['text'])
+  }
+  return (
+    <div className="col" style={{ gap: 4, padding: 8, borderRadius: 8, background: 'var(--surface-2)' }} data-testid="selection-style">
+      <div className="tiny muted ellipsis" title={part}>
+        고른 글자 「{part.trim()}」만 바꿔요
+      </div>
+      <div className="row small" style={{ gap: 4 }}>
+        <ColorField value={cur?.color ?? '#ff5c00'} onChange={(color) => apply({ color })} />
+        <button className={`icon-btn${cur?.weight ? ' active' : ''}`} title="굵게" onClick={() => apply({ weight: cur?.weight ? undefined : 800 })} data-testid="selection-bold">
+          B
+        </button>
+        {cur && (
+          <button className="icon-btn" title="원래대로" onClick={() => patchElement(id, labelOf(id), { highlights: list.length > 1 ? list.filter((_, i) => i !== at) : null }, ['text'])}>
+            <Trash2 size={12} />
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
 /** words in their own colour / weight wherever they appear */
 function Highlights({ id }: { id: string }) {
   const list = useOverrides((s) => s.value?.elements[id]?.highlights) ?? []
@@ -1148,8 +1199,9 @@ function Highlights({ id }: { id: string }) {
     <div className="col" style={{ gap: 4 }} data-testid="highlights">
       {list.map((h, i) => (
         <div key={i} className="row small" style={{ gap: 4 }}>
-          <span className="ellipsis" style={{ width: 70 }} title={h.text}>
+          <span className="ellipsis" style={{ width: 70 }} title={h.nth != null ? `${h.text} (${h.nth + 1}번째 자리만)` : `${h.text} (나오는 곳 모두)`}>
             {h.text}
+            {h.nth != null && <span className="tiny faint"> · {h.nth + 1}번째</span>}
           </span>
           <ColorField value={h.color ?? '#ff5c00'} onChange={(color) => set(list.map((x, j) => (j === i ? { ...x, color } : x)))} />
           <button className={`icon-btn${h.weight ? ' active' : ''}`} title="굵게" onClick={() => set(list.map((x, j) => (j === i ? { ...x, weight: x.weight ? undefined : 800 } : x)))}>

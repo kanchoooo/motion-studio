@@ -6,6 +6,7 @@ import type { HistoryEntry } from '@shared/project'
 import { NameModal } from '../../components/NameModal'
 import { Menu, relativeTime } from '../../components/ui'
 import { studio, useStore } from '../../store'
+import { flushOverrides } from '../editor/overrides'
 
 const ACTOR = {
   designer: { icon: User, label: '디자이너', color: 'var(--accent)' },
@@ -35,6 +36,8 @@ export function HistoryPanel({ onClose }: { onClose(): void }) {
     const label = e.versionName ?? e.summary
     if (!confirm(`"${label}" 상태로 되돌릴까요?\n지금 상태도 이력에 남아서 언제든 다시 돌아올 수 있어요.`)) return
     try {
+      // edits waiting to be saved go into the history first (a later save would undo the restore)
+      await flushOverrides()
       setProject(await studio.history.restore(pid, e.id))
       toast('되돌렸어요', 'success')
       void load()
@@ -46,6 +49,7 @@ export function HistoryPanel({ onClose }: { onClose(): void }) {
     const what = { composition: '영상', overrides: '직접 수정값', brief: '브리프' }[scope]
     if (!confirm(`"${e.versionName ?? e.summary}" 시점의 ${what}만 되돌릴까요?\n나머지는 지금 상태 그대로 두고, 지금 상태도 이력에 남아요.`)) return
     try {
+      await flushOverrides()
       setProject(await studio.history.restorePartial(pid, e.id, scope))
       toast(`${what}만 되돌렸어요`, 'success')
       void load()

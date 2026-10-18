@@ -9,7 +9,7 @@ import { LayerEditor } from './LayerEditor'
 import { LayerList } from './LayerList'
 import { MotionPanel } from './MotionPanel'
 import { MultiEditor } from './MultiEditor'
-import { lastSaved, useOverrides } from './overrides'
+import { lastSaved, syncRemoteChange, useOverrides } from './overrides'
 import { SoundPanel } from './SoundPanel'
 
 /** "+ 레이어": what the designer can add by hand (Claude makes everything else) */
@@ -32,9 +32,11 @@ export function Inspector() {
   const locked = useEditLocked()
 
   useEffect(() => {
-    // take the saved overrides unless the designer has unsaved edits (restore, Claude turn, first open);
-    // our own save coming back — or the same edits read again from disk — is skipped so the undo history survives
-    if (!project || useOverrides.getState().dirty || project.overrides === lastSaved) return
+    // take the saved overrides (restore, Claude turn, first open); our own save coming back — or the same
+    // edits read again from disk — is skipped so the undo history survives. With unsaved edits the editor
+    // saves now: they are merged with the change on disk and the result comes back.
+    if (!project || project.overrides === lastSaved) return
+    if (useOverrides.getState().dirty) return syncRemoteChange()
     const cur = useOverrides.getState().value
     if (cur && JSON.stringify(cur) === JSON.stringify(project.overrides)) return
     load(project.overrides)

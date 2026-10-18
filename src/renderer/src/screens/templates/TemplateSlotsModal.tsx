@@ -5,6 +5,7 @@ import type { TemplateSlot, TemplateValues } from '@shared/api'
 import { Modal } from '../../components/ui'
 import { studio, useStore } from '../../store'
 import { changedValues, SlotForm } from './SlotForm'
+import { flushOverrides } from '../editor/overrides'
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
@@ -24,6 +25,7 @@ export function TemplateSlotsModal({ onClose }: { onClose(): void }) {
   const apply = async () => {
     setBusy(true)
     try {
+      await flushOverrides()
       setProject(await studio.templates.apply(pid, changed, check))
       toast(Object.values(changed).some((v) => v.script) || check ? '바꿨어요. 나머지는 Claude가 마무리하고 있어요.' : '템플릿 칸을 바꿨어요', 'success')
       onClose()

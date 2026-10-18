@@ -5,10 +5,12 @@
 // app allows at once. Files the app manages stay denied by the session's deny
 // rules in both modes (those never reach this hook).
 import { randomUUID } from 'node:crypto'
-import { realpathSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { isAbsolute, join, relative, resolve as resolvePath } from 'node:path'
 import type { AgentPermission, PermissionAsk } from '@shared/api'
+import type { Overrides } from '@shared/overrides'
+import { approvalOf, askFirst, designerLayers, pageAfter, touchedLayers } from './designerGuard'
 
 export type PermissionAnswer = 'allow' | 'always' | 'deny'
 
@@ -238,19 +240,49 @@ export async function handleHook(req: IncomingMessage, res: ServerResponse, path
 const REVIEWER = /(^|:)motion-reviewer$/
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
 
-/** PreToolUse (Agent only): the reviewer thinks as hard as the session */
+/**
+ * PreToolUse: the reviewer thinks as hard as the session (Agent); an edit of a page that reaches a
+ * layer the designer edited by hand is sent back unless the designer asked for it (Edit, Write)
+ */
 async function handlePreTool(req: IncomingMessage, res: ServerResponse, path: string): Promise<boolean> {
   const m = path.match(/^\/hook\/([a-f0-9]+)\/pretool$/)
   const projectId = m ? hooks?.projectFor(m[1]) : undefined
   const body = await readJson(req)
   const pass = () => res.writeHead(200, { 'Content-Type': 'application/json' }).end('{}')
-  if (!hooks || !projectId || body.tool_name !== 'Agent') return (pass(), true)
   const input = (body.tool_input && typeof body.tool_input === 'object' ? body.tool_input : {}) as Record<string, unknown>
+  if (hooks && projectId && (body.tool_name === 'Edit' || body.tool_name === 'MultiEdit' || body.tool_name === 'Write')) {
+    const why = designerLayerEdit(projectId, String(body.tool_name), input)
+    if (why) res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: why } }))
+    else pass()
+    return true
+  }
+  if (!hooks || !projectId || body.tool_name !== 'Agent') return (pass(), true)
   // its own definition has no effort, and an effort Claude picked for it is replaced with the one set in the chat panel
   const effort = hooks.effortOf?.(projectId)
   if (!REVIEWER.test(String(input.subagent_type ?? '')) || !effort || !EFFORTS.includes(effort) || input.effort === effort) return (pass(), true)
   res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', updatedInput: { ...input, effort } } }))
   return true
+}
+
+/** an edit of a composition page that changes a layer the designer edited, unasked: what Claude is told (else null) */
+function designerLayerEdit(projectId: string, tool: string, input: Record<string, unknown>): string | null {
+  try {
+    const ok = approvalOf(projectId)
+    if (ok.all) return null
+    const dir = hooks!.dirOf(projectId)
+    const file = typeof input.file_path === 'string' ? resolvePath(dir, input.file_path) : ''
+    const rel = relative(join(dir, 'composition'), file)
+    if (!file || rel.startsWith('..') || isAbsolute(rel) || !/\.html$/i.test(file) || !existsSync(file)) return null
+    const before = readFileSync(file, 'utf8')
+    const after = pageAfter(tool, input, before)
+    if (after == null) return null
+    const ov = JSON.parse(readFileSync(join(dir, 'overrides.json'), 'utf8')) as Overrides
+    const theirs = designerLayers(ov, before)
+    const touched = touchedLayers(before, after, theirs).filter((id) => !ok.ids.has(id))
+    return touched.length ? askFirst(touched.map((id) => theirs.get(id)!)) : null
+  } catch {
+    return null
+  }
 }
 
 /** /hook/<token>/permission — true when the request was ours */

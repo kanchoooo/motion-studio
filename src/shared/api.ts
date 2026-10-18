@@ -142,6 +142,8 @@ export interface SendMessageInput {
   detail?: string
   /** the app asks (편집 정리): shown as the app's note, not as the designer's words */
   fromApp?: boolean
+  /** the request is about the whole video (a variation's re-layout): the designer's layers may change too */
+  approveAll?: boolean
 }
 
 export type AgentModel = '' | 'fable' | 'opus' | 'sonnet' | 'haiku'
@@ -376,7 +378,8 @@ export interface StudioApi {
     remove(path: string): Promise<void>
     saveBrief(projectId: string, brief: Brief): Promise<ProjectState>
     importAssets(projectId: string, files: string[], opts?: { psd?: 'flat' | 'layers' }): Promise<Asset[]>
-    saveOverrides(projectId: string, overrides: Overrides, summary: string): Promise<ProjectState>
+    /** base: the edits the editor's copy started from (a change made on disk since is merged, not written over) */
+    saveOverrides(projectId: string, overrides: Overrides, summary: string, base?: Overrides | null): Promise<ProjectState>
     previewUrl(projectId: string): Promise<{ src: string; runtimeSrc: string; base: string }>
     check(projectId: string): Promise<CheckFinding[]>
     reportElements(projectId: string, elements: { id: string; label: string; movable: boolean }[]): Promise<void>

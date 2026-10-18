@@ -6,6 +6,7 @@ import { formatBytes, Menu, Modal, relativeTime } from '../../components/ui'
 import { CompareModal } from './CompareModal'
 import { StorageModal } from './StorageModal'
 import { revealLabel, studio, useStore } from '../../store'
+import { flushOverrides } from '../editor/overrides'
 
 export function ResultsTab() {
   const { project, historyNonce, toast, setProject, setTab } = useStore()
@@ -35,6 +36,8 @@ export function ResultsTab() {
   const restore = async (entryId: string, label: string) => {
     if (!confirm(`"${label}" 상태로 되돌릴까요?\n지금 상태도 이력에 남아서 언제든 다시 돌아올 수 있어요.`)) return
     try {
+      // edits waiting to be saved go into the history first (a later save would undo the restore)
+      await flushOverrides()
       setProject(await studio.history.restore(pid, entryId))
       toast('되돌렸어요. 편집 화면에서 확인해 보세요.', 'success')
       void load()

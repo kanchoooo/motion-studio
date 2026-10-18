@@ -246,7 +246,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
   })
   handle('projects:saveBrief', (id: string, brief: Brief) => projects.saveBrief(id, brief))
   handle('projects:importAssets', (id: string, files: string[], opts?: { psd?: 'flat' | 'layers' }) => projects.importAssets(id, files, opts))
-  handle('projects:saveOverrides', (id: string, o: Overrides, summary: string) => projects.saveOverrides(id, o, summary))
+  handle('projects:saveOverrides', (id: string, o: Overrides, summary: string, base?: Overrides) => projects.saveOverrides(id, o, summary, 'designer', base ?? undefined))
   handle('projects:previewUrl', (id: string) => {
     const dir = projects.pathOf(id)
     projects.refreshFontCss(dir)

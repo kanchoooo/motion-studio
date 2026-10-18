@@ -3,11 +3,12 @@ import { basename, dirname, extname, join } from 'node:path'
 import { app, shell } from 'electron'
 import { emptyBrief, normalizeBrief, OUTPUT_PRESETS, type Asset, type AssetKind, type Brief, type OutputPresetId } from '@shared/brief'
 import { emptyOverrides, normalizeOverrides, overridesToScript, type Overrides } from '@shared/overrides'
+import { mergeOverrides } from '@shared/overridesMerge'
 import { applyAudio, audioEnvelopes, applyLength, markAudio } from './audio'
 import { videoEffects, withProcessedClips } from './videoFx'
 import { applyLayers } from './designerLayers'
 import type { ProjectMeta, ProjectState, ProjectSummary } from '@shared/project'
-import { fontCss } from './fontcss'
+import { fontCss, linkedFontFaces, withFontBlock } from './fontcss'
 import { importPsd } from './psd'
 import * as history from './history'
 import { probeMedia, thumbnailFromVideo } from './media'
@@ -144,6 +145,11 @@ export function refreshFontCss(dir: string, overrides?: Overrides): string[] {
   const { css, missing } = fontCss(html, o)
   const target = join(f.comp(dir), 'ms', 'fonts.css')
   if (!existsSync(target) || readFileSync(target, 'utf8') !== css) writeText(target, css)
+  // the same faces in the page itself, so a render uses them too (fontcss.ts withFontBlock)
+  if (html) {
+    const next = withFontBlock(html, linkedFontFaces(f.comp(dir), html))
+    if (next) writeText(f.index(dir), next)
+  }
   return missing
 }
 
@@ -268,9 +274,18 @@ export async function saveBrief(projectId: string, brief: Brief): Promise<Projec
   return state(projectId)
 }
 
-export async function saveOverrides(projectId: string, overrides: Overrides, summary: string, actor: 'designer' | 'claude' = 'designer'): Promise<ProjectState> {
+/**
+ * `base`: the edits the editor's copy started from. When the file changed since (Claude, a restore…),
+ * the copy is merged in rather than written over that change (overridesMerge.ts).
+ */
+export async function saveOverrides(projectId: string, overrides: Overrides, summary: string, actor: 'designer' | 'claude' = 'designer', base?: Overrides): Promise<ProjectState> {
   const dir = pathOf(projectId)
   overrides = normalizeOverrides(overrides)
+  if (base) {
+    const disk = normalizeOverrides(readJson<Overrides | null>(f.overrides(dir), null))
+    const from = normalizeOverrides(structuredClone(base))
+    if (JSON.stringify(disk) !== JSON.stringify(from)) overrides = normalizeOverrides(mergeOverrides(from, overrides, disk))
+  }
   writeJson(f.overrides(dir), overrides)
   // Claude's clips with a speed change show the processed file (videoFx.ts)
   const html = existsSync(f.index(dir)) ? readFileSync(f.index(dir), 'utf8') : ''

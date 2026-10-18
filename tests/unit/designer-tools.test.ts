@@ -17,6 +17,9 @@ describe('designer edits for Claude', async () => {
   const projects = await import('../../src/main/projects')
   const { buildStudioServer } = await import('../../src/main/agent/tools')
   const { staticFindings } = await import('../../src/main/checks')
+  const guard = await import('../../src/main/agent/designerGuard')
+  // what the designer's request was about (the session sets this when a message is delivered)
+  const askedAbout = (...ids: string[]) => guard.setApproval(p.meta.id, { all: false, ids: new Set(ids) })
   const p = await projects.createProject({ name: '잠금', presetId: 'shorts-9x16', duration: 10 })
   // a composition with three layers of Claude's
   const index = join(p.path, 'composition', 'index.html')
@@ -42,7 +45,22 @@ describe('designer edits for Claude', async () => {
     expect(r.rules.join(' ')).toMatch(/LOCKED layers/)
   })
 
+  it("the designer's layers change only when the request is about them (Claude asks first otherwise)", async () => {
+    askedAbout()
+    const r = await call('update_designer_edits', { id: 'title', patch: { transform: { y: 99 } }, reason: '제목 내리기' })
+    expect(r).toMatch(/Refused/)
+    expect(r).toMatch(/「제목」/)
+    expect(r).toMatch(/ask the designer first/)
+    expect(projects.state(p.meta.id).overrides.elements.title.transform).toEqual({ y: 40 })
+    expect(await call('clear_designer_edits', { ids: ['title', 'Lmine'], reason: 'x' })).toMatch(/Refused[\s\S]*「제목」/)
+    expect(projects.state(p.meta.id).overrides.elements.title.keys?.opacity).toHaveLength(2)
+    expect(projects.state(p.meta.id).overrides.layers).toHaveLength(1)
+    // a layer nobody edited is Claude's to change as before
+    expect(await call('update_designer_edits', { id: 'cta', patch: { transform: { x: 4 } }, reason: '버튼' })).toMatch(/Updated/)
+  })
+
   it("update_designer_edits changes the designer's values instead of clearing them, refuses locked ones", async () => {
+    askedAbout('title', 'logo', 'Lmine')
     const r = await call('update_designer_edits', { id: 'title', patch: { transform: { y: 80 }, own: { rotation: [{ t: 0, v: 0 }, { t: 1, v: 45 }] } }, reason: '제목 내리기' })
     expect(r).toMatch(/Updated/)
     const t = projects.state(p.meta.id).overrides.elements.title
@@ -58,6 +76,7 @@ describe('designer edits for Claude', async () => {
   })
 
   it('clear_designer_edits with props hands back only those properties', async () => {
+    askedAbout('title', 'logo', 'Lmine', 'cta')
     const r = await call('clear_designer_edits', { ids: ['title'], props: ['rotation', 'y'], reason: '회전은 다시 코드로' })
     expect(r).toMatch(/Cleared rotation, y on title/)
     const t = projects.state(p.meta.id).overrides.elements.title
@@ -67,11 +86,13 @@ describe('designer edits for Claude', async () => {
   })
 
   it('clear_designer_edits hands layers back, refuses locked ones', async () => {
+    guard.setApproval(p.meta.id, { all: true, ids: new Set() })
     const r = await call('clear_designer_edits', { ids: ['logo', 'title', 'Lmine', 'Dcopy'], reason: '제목을 다시 잡으려고' })
     expect(r).toMatch(/Cleared: title, Lmine, Dcopy/)
     expect(r).toMatch(/Refused \(locked by the designer\): logo/)
     const after = projects.state(p.meta.id).overrides
-    expect(Object.keys(after.elements)).toEqual(['logo'])
+    // (cta: Claude's own change in the test above, not asked to clear)
+    expect(Object.keys(after.elements).sort()).toEqual(['cta', 'logo'])
     expect(after.layers).toEqual([])
     expect(after.duplicates).toEqual([])
     // the managed block goes with the layer

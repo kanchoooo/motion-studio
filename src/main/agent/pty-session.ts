@@ -15,7 +15,7 @@ import { dirname, join } from 'node:path'
 import * as pty from 'node-pty'
 import type { AgentEvent, ChatItem, CurrentStoryboard, SendMessageInput, SessionState, Storyboard } from '@shared/api'
 import type { FeedbackMark } from '@shared/project'
-import { AI_PROVIDERS } from '@shared/ai'
+import { AI_PROVIDERS, type AudioCandidateList } from '@shared/ai'
 import { CAMERA_ID } from '@shared/overrides'
 import { aiSettings } from '../ai/settings'
 import { claudeEnv } from '../claude-env'
@@ -32,6 +32,7 @@ import { endPermissions } from './permissions'
 import { sessionPath } from './cliShims'
 import { COMPOSITION_CONTRACT, HANDOFF_NOTE, HANDOFF_REQUEST, NAME_NEW_REQUEST, splitRequest, STUDIO_PROMPT, TIDY_REQUEST } from './prompt'
 import { listReferences } from '../references'
+import { approvalFor, designerLayers, setApproval } from './designerGuard'
 import { assignMaterial, carryAssignments, readStoryboard, withMaterialIds, writeStoryboard } from '../storyboard'
 import { repairCompositionHead } from '../headFix'
 import { auditLayers, auditVerdict, tidyAfter, tidyBefore, type LayerAudit } from '../tidy'
@@ -165,6 +166,12 @@ export class SessionManager {
   }
 
   /** a card in the chat for media Claude generated (the designer keeps, discards or applies it) */
+  /** automated tests: a sound candidate card in the chat */
+  showAudio(projectId: string, list: AudioCandidateList) {
+    const l = this.live.get(projectId)
+    if (l) this.addApp(l, { id: newId(), at: nowIso(), role: 'audio', list })
+  }
+
   showGenerated(projectId: string, files: { file: string; kind: string }[], label?: string) {
     const l = this.live.get(projectId)
     if (l) this.addApp(l, { id: newId(), at: nowIso(), role: 'generated', files, label, status: 'pending' })
@@ -443,7 +450,8 @@ export class SessionManager {
       hooks: {
         PermissionRequest: [{ matcher: '*', hooks: [{ type: 'http', url: `${previewBase()}/hook/${mcpTokenFor(projectId)}/permission`, timeout: 900 }] }],
         // no quality gates: the reviewer agent (when the designer asks for a review) gets the session's reasoning effort
-        PreToolUse: [{ matcher: 'Agent', hooks: [{ type: 'http', url: `${previewBase()}/hook/${mcpTokenFor(projectId)}/pretool`, timeout: 30 }] }],
+        // edits of the composition: a layer the designer edited by hand changes only when asked (designerGuard.ts)
+        PreToolUse: [{ matcher: 'Agent|Edit|MultiEdit|Write', hooks: [{ type: 'http', url: `${previewBase()}/hook/${mcpTokenFor(projectId)}/pretool`, timeout: 30 }] }],
       },
       // replies and the notes between tool calls in the designer's language
       language: 'Korean',
@@ -590,7 +598,7 @@ export class SessionManager {
     try {
       setFamilyStatus(next.projectId, 'working')
       this.emit({ type: 'family-changed', projectId: next.projectId })
-      await this.send({ projectId: next.projectId, text: next.text })
+      await this.send({ projectId: next.projectId, text: next.text, approveAll: true })
     } catch (e) {
       try {
         setFamilyStatus(next.projectId, 'error')
@@ -882,6 +890,15 @@ export class SessionManager {
     if (now.attention === 'login') throw new Error('Claude 로그인이 필요해요. 환경 점검에서 로그인해 주세요.')
     if (now.status === 'starting') throw new Error('Claude가 아직 준비 중이에요. 잠시 뒤 다시 보내 주세요.')
     if (now.status === 'exited') throw new Error('Claude가 종료됐어요. 터미널의 "다시 시작"을 누른 뒤 보내 주세요.')
+    // which of the designer's own layers this request lets Claude change (designerGuard.ts)
+    try {
+      const ov = projects.state(projectId).overrides
+      const page = existsSync(join(l.dir, 'composition', 'index.html')) ? readFileSync(join(l.dir, 'composition', 'index.html'), 'utf8') : ''
+      const lastAsk = this.transcript(projectId).filter((x) => x.role === 'assistant').pop()
+      setApproval(projectId, input.approveAll ? { all: true, ids: new Set() } : approvalFor(input, designerLayers(ov, page), lastAsk?.role === 'assistant' ? lastAsk.text : undefined))
+    } catch {
+      setApproval(projectId, { all: false, ids: new Set() })
+    }
 
     // storyboard materials the designer changed after approval go along with this message
     const sbNow = input.fromApp ? null : readStoryboard(l.dir)

@@ -174,6 +174,11 @@ export interface TextCounter {
 
 export interface TextHighlight {
   text: string
+  /**
+   * only the n-th place this text appears (0 = the first), counted without spaces and line breaks
+   * (a part the designer dragged over in the text box); without it every place
+   */
+  nth?: number
   color?: string
   weight?: number
   underline?: boolean

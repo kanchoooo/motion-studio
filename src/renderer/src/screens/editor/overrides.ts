@@ -157,6 +157,10 @@ let revision = 0
 /** the overrides object our own last save produced (so it is not re-loaded over the undo history) */
 export let lastSaved: Overrides | null = null
 let saving: Promise<void> | null = null
+/** the edits on disk this copy started from: a change made there meanwhile is merged on save, not written over */
+let base: Overrides | null = null
+/** a debounced save is waiting */
+let timerPending = false
 
 async function flush() {
   const st = useOverrides.getState()
@@ -168,15 +172,21 @@ async function flush() {
   const rev = revision
   useOverrides.setState({ reload: false })
   try {
-    const next = await studio.projects.saveOverrides(pid, st.value, summary)
+    const sent = st.value
+    const next = await studio.projects.saveOverrides(pid, sent, summary, base)
     lastSaved = next.overrides
+    base = next.overrides
+    // something else changed the edits meanwhile (Claude, a restore): merged on disk — the editor takes it
+    // (unless the designer went on editing during the save: their next save merges again)
+    const merged = rev === revision && JSON.stringify(next.overrides) !== JSON.stringify(normalizeOverrides(structuredClone(sent)))
+    if (merged) useOverrides.setState({ value: normalizeOverrides(structuredClone(next.overrides)), past: [], future: [] })
     if (rev === revision) {
       useOverrides.setState({ dirty: false })
       pendingProject = null
     }
     if (useStore.getState().project?.meta.id === pid) {
       useStore.getState().setProject(next)
-      if (reload) useStore.setState({ previewNonce: useStore.getState().previewNonce + 1 })
+      if (reload || merged) useStore.setState({ previewNonce: useStore.getState().previewNonce + 1 })
       useStore.setState({ historyNonce: useStore.getState().historyNonce + 1 })
     }
   } catch (e) {
@@ -189,16 +199,26 @@ async function flush() {
 /** saves pending edits now (before closing or switching projects) */
 export async function flushOverrides() {
   clearTimeout(timer)
+  timerPending = false
   if (saving) await saving
   if (useOverrides.getState().dirty) await flush()
+}
+
+/** the edits on disk changed while the editor has unsaved ones: saved now (merged), and taken back */
+export function syncRemoteChange() {
+  // a drag in progress saves (and merges) when it ends
+  if (gesture) return
+  void flushOverrides()
 }
 
 /** a different project: start from its own edits with an empty undo history */
 export function resetOverrides() {
   clearTimeout(timer)
+  timerPending = false
   summaries = []
   pendingProject = null
   lastSaved = null
+  base = null
   useOverrides.setState({ value: null, past: [], future: [], dirty: false, reload: false })
 }
 
@@ -207,6 +227,8 @@ function schedule(keys: string[], summary: string) {
   if (gesture) {
     keys.forEach((k) => gesture!.keys.add(k))
     gesture.summary = summary
+    // a save already running must not mark these changes saved
+    revision++
     useOverrides.setState({ dirty: true })
     return
   }
@@ -216,7 +238,9 @@ function schedule(keys: string[], summary: string) {
   summaries = [...summaries.filter((s) => s !== summary), summary]
   if (keys.some((k) => NEEDS_RELOAD.has(k))) useOverrides.setState({ reload: true })
   clearTimeout(timer)
+  timerPending = true
   timer = setTimeout(() => {
+    timerPending = false
     saving = flush().finally(() => (saving = null))
   }, keys.some((k) => NEEDS_RELOAD.has(k)) ? 350 : 700)
 }
@@ -276,7 +300,10 @@ export const useOverrides = create<OverrideState>((set, get) => {
     dirty: false,
     pending: new Set(),
     reload: false,
-    load: (o) => set({ value: normalizeOverrides(structuredClone(o)), past: [], future: [] }),
+    load: (o) => {
+      base = o
+      set({ value: normalizeOverrides(structuredClone(o)), past: [], future: [] })
+    },
     undo: () => {
       if (blockedEdit()) return
       endEditGesture()
@@ -679,7 +706,7 @@ function breakUndoGroup() {
  * before the drag — and the save waits for the release. A drag that changed nothing leaves no step.
  * The release ends it by itself (pointerup / pointercancel anywhere), so a gesture can never stay open.
  */
-let gesture: { before: Overrides | null; pushed: boolean; keys: Set<string>; summary: string; stop: () => void } | null = null
+let gesture: { before: Overrides | null; pushed: boolean; keys: Set<string>; summary: string; wasDirty: boolean; stop: () => void } | null = null
 
 export function beginEditGesture() {
   if (gesture) return
@@ -691,6 +718,7 @@ export function beginEditGesture() {
   window.addEventListener('blur', release)
   gesture = {
     before: useOverrides.getState().value,
+    wasDirty: useOverrides.getState().dirty,
     pushed: false,
     keys: new Set(),
     summary: '',
@@ -714,7 +742,9 @@ export function endEditGesture() {
   const st = useOverrides.getState()
   // it changed nothing after all (a press on a handle, a scrub back to where it was): no step
   if (g.before && st.value && st.past[st.past.length - 1] === g.before && JSON.stringify(g.before) === JSON.stringify(st.value)) {
-    useOverrides.setState({ past: st.past.slice(0, -1) })
+    // and nothing waits to be saved because of it (a "dirty" left behind would stop the editor taking
+    // Claude's next change, and the next save would write it away)
+    useOverrides.setState({ past: st.past.slice(0, -1), ...(!g.wasDirty && !timerPending && !saving ? { dirty: false } : {}) })
     return
   }
   schedule([...g.keys], g.summary)
