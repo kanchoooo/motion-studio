@@ -1,5 +1,6 @@
 // Designer edits applied on top of Claude's composition by ms-runtime.js.
 import type { KeyProp, WiggleProp } from './props'
+import { keysAt } from './props'
 export * from './ease'
 export * from './props'
 // Claude makes the video; the designer edits it like in After Effects: every value here
@@ -212,8 +213,32 @@ export interface AudioEdit {
   duration?: number
   volume?: number
   muted?: boolean
+  /** taken out of the video by the designer (silent and off the lists; it can be brought back) */
+  removed?: boolean
   /** volume over time (output seconds, 0–2): music ducking under a voice… */
   volumeKeys?: Keyframe[]
+}
+
+/**
+ * 구간 지우기: volume keys that take a sound out between a and b (output seconds) with a short fade on
+ * each side, keeping the volume it had around the section; keys inside the section go.
+ */
+export function cutVolumeSection(keys: Keyframe[], base: number, a: number, b: number, fade = 0.12): Keyframe[] {
+  const from = Math.min(a, b)
+  const to = Math.max(a, b)
+  const sorted = [...keys].sort((x, y) => x.t - y.t)
+  const at = (t: number) => Number(keysAt(sorted, t) ?? base)
+  const round = (n: number) => Math.round(n * 1000) / 1000
+  const before = at(from - fade)
+  const after = at(to + fade)
+  const kept = sorted.filter((k) => k.t < from - fade - 1e-4 || k.t > to + fade + 1e-4)
+  const cut: Keyframe[] = [
+    ...(from - fade > 0 ? [{ t: round(from - fade), v: round(before), e: 'linear' as const }] : []),
+    { t: round(Math.max(0, from)), v: 0, e: 'hold' as const },
+    { t: round(to), v: 0, e: 'linear' as const },
+    { t: round(to + fade), v: round(after), e: 'linear' as const },
+  ]
+  return [...kept, ...cut].sort((x, y) => x.t - y.t)
 }
 
 /** background music the designer added (several allowed) */

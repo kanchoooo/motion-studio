@@ -108,6 +108,8 @@ export type AgentEvent =
   | { type: 'storyboard-changed'; projectId: string; current: CurrentStoryboard | null }
   /** Claude found music / sound effects for the designer to audition */
   | { type: 'audio-candidates'; projectId: string; list: AudioCandidateList }
+  /** the handoff memo Claude saved for a project share */
+  | { type: 'handoff-ready'; projectId: string; markdown: string }
   /** Claude is waiting for the designer's permission (asks: every open question; added: the new one) */
   | { type: 'permissions'; projectId: string; asks: PermissionAsk[]; added?: PermissionAsk }
 
@@ -362,6 +364,12 @@ export interface StudioApi {
     /** the video uses another file in place of an asset (composition-relative paths); returns how many places changed */
     replaceAssetFile(projectId: string, from: string, to: string): Promise<number>
     open(path: string): Promise<ProjectState>
+    /** 프로젝트 공유: the handoff memo saved for this project ('' when none yet) */
+    handoff(projectId: string): Promise<string>
+    /** packs the project into a share file (asks where when no dest); null when cancelled */
+    exportShare(projectId: string, opts: { references: boolean; candidates: boolean; memo: string }, dest?: string): Promise<{ path: string; files: number; bytes: number } | null>
+    /** unpacks a share file (asks which when no file) into a new project and opens it; null when cancelled */
+    importShare(file?: string, folder?: string): Promise<ProjectState | null>
     /** current state of an already-open project (no side effects) */
     state(projectId: string): Promise<ProjectState>
     rename(projectId: string, name: string): Promise<ProjectState>
@@ -429,6 +437,8 @@ export interface StudioApi {
     pickVoice(projectId: string, itemId: string, voiceId: string): Promise<void>
     /** the designer picked a music / sound-effect candidate on a chat card: Claude is told */
     pickAudio(projectId: string, itemId: string, candidateId: string): Promise<void>
+    /** 프로젝트 공유: Claude writes the handoff memo (it arrives as a 'handoff-ready' event) */
+    requestHandoff(projectId: string): Promise<void>
     /** 편집 활성화: makes the video editable by hand ('asked': Claude is naming the layers now) */
     activateEditing(projectId: string): Promise<'ready' | 'asked'>
     /** 배경 따로 떼기: Claude splits a text layer from its coloured box */

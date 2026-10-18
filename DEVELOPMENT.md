@@ -52,6 +52,8 @@ npm run dev        # 개발 모드 실행
 | `npm run test:live` | 실제 Claude로 브리프 → 콘티 → 제작까지 (사용량 소모) |
 | `node tests/e2e/variations-quick.mjs` 등 | 기존 프로젝트로 베리에이션·사운드·기능 검수 (`MS_SANDBOX=<live-flow 폴더>`) |
 | `node tests/e2e/youtube-ref.mjs` | 유튜브 주소를 레퍼런스로 실제로 내려받기(인터넷 필요, 계정·사용량 없음): 일반 영상·쇼츠, 없는 영상의 안내 (`MS_SANDBOX=<「앱 주문 런칭」 샌드박스>`, 사본에서) |
+| `node tests/e2e/share-flow.mjs` | 프로젝트 공유: 공유 창(메모 직접 입력) → 파일 내용(넣는 것·빼는 것) → 홈에서 열기 → 새 프로젝트·인계 메모 안내 (`MS_SANDBOX=<「앱 주문 런칭」 샌드박스>`, 사본에서) |
+| `node tests/e2e/share-live.mjs` | 실제 Claude로 인계 메모 작성 → 공유 파일 → 받는 쪽 새 세션이 메모를 읽고 이어받는지 (`MS_SANDBOX=<신뢰된 샌드박스>`, 백업·복원, 사용량 소모) |
 | `node tests/e2e/sound-marks.mjs` | 표시 없이 들어온 음악·효과음이 사운드 탭과 타임라인 "소리만"에 보이는지 (`MS_SANDBOX=<「앱 주문 런칭」 샌드박스>`, 사본에서) |
 | `node tests/e2e/sound-live.mjs` | 실제 Claude로 무료 배경음악 후보 → 대화창 카드에서 듣기 → 고르기 → 배경음악으로 교체·사운드 탭 표시 (`MS_SANDBOX=<신뢰된 샌드박스>`, 백업·복원, 사용량 소모) |
 | `node tests/e2e/edit-requests-live.mjs` | 실제 Claude(앱 기본 opus·high)로 편집 요청 확인: 배경 따로 떼기, 이름 없는 내용 → 이름 붙이기 요청, 새 요소 이름, 파일을 붙인 핀(교체·스타일·참고). 폴더 신뢰 질문은 테스트가 답하지 않으므로 이미 신뢰된 샌드박스 프로젝트를 쓰고, 백업했다가 되돌린다 (`MS_SANDBOX=<신뢰된 「앱 주문 런칭」 폴더가 있는 샌드박스>`, 사용량 소모) |

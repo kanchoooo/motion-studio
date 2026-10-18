@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { ChevronDown, FileAudio, Music, Plus, RotateCcw, Trash2, Volume2, VolumeX, Wand2 } from 'lucide-react'
+import { ChevronDown, FileAudio, Music, Plus, RotateCcw, Scissors, Trash2, Undo2, Volume2, VolumeX, Wand2 } from 'lucide-react'
 import type { AudioClipInfo, SfxInfo } from '@shared/api'
-import { keysAt, type BgmTrack, type Keyframe } from '@shared/overrides'
+import { cutVolumeSection, keysAt, type BgmTrack, type Keyframe } from '@shared/overrides'
 import { Menu, NumberField, Toggle } from '../../components/ui'
 import { studio, useStore } from '../../store'
 import { useEditor, useEditorStill } from './editorStore'
@@ -49,16 +49,19 @@ export function SoundPanel() {
   const { project, toast } = useStore()
   const pid = project!.meta.id
   const { audio, selectedAudio } = useEditorStill()
-  const { value: ov, setBgm } = useOverrides()
+  const { value: ov, setBgm, patchAudio } = useOverrides()
   const [lib, setLib] = useState<SfxInfo[]>([])
   useEffect(() => {
     void studio.projects.sfxLibrary().then(setLib)
   }, [])
   if (!ov) return null
 
-  const bgmClaude = audio.filter((a) => a.kind === 'bgm' && !a.managed)
-  const sfx = audio.filter((a) => a.kind === 'sfx')
-  const voice = audio.filter((a) => a.kind === 'voice')
+  // sounds the designer took out are off the lists (brought back from 지운 소리)
+  const gone = (id: string) => !!ov.audio[id]?.removed
+  const removed = audio.filter((a) => gone(a.id) && !a.managed)
+  const bgmClaude = audio.filter((a) => a.kind === 'bgm' && !a.managed && !gone(a.id))
+  const sfx = audio.filter((a) => a.kind === 'sfx' && !gone(a.id))
+  const voice = audio.filter((a) => a.kind === 'voice' && !gone(a.id))
   const groups = [...new Set(sfx.map((s) => s.group ?? '기타'))]
   const sel = audio.find((a) => a.id === selectedAudio)
   const selTrack = ov.bgm.find((t) => t.id === selectedAudio)
@@ -133,6 +136,63 @@ export function SoundPanel() {
         {groups.map((g) => (
           <SfxGroup key={g} group={g} clips={sfx.filter((s) => (s.group ?? '기타') === g)} lib={lib} />
         ))}
+      </div>
+      {removed.length > 0 && (
+        <div className="col" style={{ gap: 6 }} data-testid="removed-sounds">
+          <span className="section-label">지운 소리 · {removed.length}개</span>
+          {removed.map((a) => (
+            <div key={a.id} className="row card" style={{ padding: '6px 10px', background: 'var(--surface-2)', opacity: 0.75 }}>
+              <span className="col grow" style={{ gap: 0, minWidth: 0 }}>
+                <span className="small ellipsis">{a.label}</span>
+                <span className="tiny faint ellipsis">{a.kind === 'bgm' ? '배경음악' : a.kind === 'voice' ? '내레이션' : '효과음'} · {a.start.toFixed(1)}초~</span>
+              </span>
+              <button className="btn sm" onClick={() => patchAudio(a.id, { removed: undefined }, `${a.label}: 되살리기`)} data-testid="sound-restore">
+                <Undo2 size={13} />
+                되살리기
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * 구간 지우기: the sound is taken out between two moments (a short fade on each side) — the work area
+ * when there is one, else from the playhead on. It is written as volume keys, which stay editable.
+ */
+function SectionCut({ keys, base, onCut }: { keys: Keyframe[]; base: number; onCut: (keys: Keyframe[], from: number, to: number) => void }) {
+  // the section follows the work area / the paused playhead until the designer types one
+  const time = useEditor((s) => (s.playing ? -1 : s.time))
+  const workArea = useEditor((s) => s.workArea)
+  const d = useEditor((s) => s.duration) || 1
+  const [typed, setTyped] = useState(false)
+  const [from, setFromRaw] = useState(0)
+  const [to, setToRaw] = useState(1)
+  useEffect(() => {
+    if (typed || time < 0) return
+    setFromRaw(workArea ? workArea.a : time)
+    setToRaw(workArea ? workArea.b : Math.min(d, time + 1))
+  }, [time, workArea, d, typed])
+  const setFrom = (v: number) => (setTyped(true), setFromRaw(v))
+  const setTo = (v: number) => (setTyped(true), setToRaw(v))
+  return (
+    <div className="col" style={{ gap: 6 }} data-testid="section-cut">
+      <div className="tiny muted">구간 지우기 (이 구간만 소리를 빼요 · 작업 영역이 있으면 그 구간)</div>
+      <div className="row" style={{ gap: 6 }}>
+        <NumberField label="부터" unit="초" min={0} max={d} step={0.1} precision={2} value={from} onChange={setFrom} />
+        <NumberField label="까지" unit="초" min={0} max={d} step={0.1} precision={2} value={to} onChange={setTo} />
+        <button
+          className="btn sm"
+          style={{ flex: 'none' }}
+          disabled={Math.abs(to - from) < 0.05}
+          onClick={() => onCut(cutVolumeSection(keys, base, from, to), Math.min(from, to), Math.max(from, to))}
+          data-testid="section-cut-run"
+        >
+          <Scissors size={13} />
+          빼기
+        </button>
       </div>
     </div>
   )
@@ -292,14 +352,35 @@ function ClipEditor({ clip, lib, count }: { clip: AudioClipInfo; lib: SfxInfo[];
         <VolumeSlider value={e.volume ?? clip.volume} onCommit={(volume) => patchAudio(clip.id, { volume, muted: false }, `${clip.label}: 볼륨`)} />
       </div>
       <VolumeKeys keys={e.volumeKeys ?? []} base={e.volume ?? clip.volume} onChange={(volumeKeys) => patchAudio(clip.id, { volumeKeys: volumeKeys.length ? volumeKeys : undefined }, `${clip.label}: 볼륨 키프레임`)} />
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 6 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 6 }}>
         <NumberField title="이 소리가 나오는 시점" label="시점" unit="초" value={e.start ?? clip.start} step={0.05} precision={2} min={0} onChange={(start) => patchAudio(clip.id, { start }, `${clip.label}: 시점`)} />
+        <NumberField title="이 소리가 나오는 길이 (줄이면 끝을 잘라요)" label="길이" unit="초" value={e.duration ?? clip.duration} step={0.1} precision={2} min={0.05} onChange={(duration) => patchAudio(clip.id, { duration }, `${clip.label}: 길이`)} />
       </div>
-      <div className="row">
+      <SectionCut keys={e.volumeKeys ?? []} base={e.volume ?? clip.volume} onCut={(volumeKeys, a, b) => patchAudio(clip.id, { volumeKeys }, `${clip.label}: ${a.toFixed(1)}~${b.toFixed(1)}초 소리 빼기`)} />
+      <div className="row" style={{ flexWrap: 'wrap' }}>
         <button className="btn sm" onClick={() => patchAudio(clip.id, { muted: !muted }, `${clip.label}: ${muted ? '소리 켜기' : '음소거'}`)}>
           {muted ? <Volume2 size={13} /> : <VolumeX size={13} />}
           {muted ? '소리 켜기' : '음소거'}
         </button>
+        {e.removed ? (
+          <button className="btn sm" onClick={() => patchAudio(clip.id, { removed: undefined }, `${clip.label}: 되살리기`)} data-testid="sound-restore">
+            <Undo2 size={13} />
+            되살리기
+          </button>
+        ) : (
+          <button
+            className="btn sm danger"
+            onClick={() => {
+              patchAudio(clip.id, { removed: true }, `${clip.label}: 지우기`)
+              useEditor.setState({ selectedAudio: null })
+            }}
+            title="영상에서 이 소리를 빼요 (사운드 탭의 '지운 소리'에서 되살릴 수 있어요 · Delete 키)"
+            data-testid="sound-remove"
+          >
+            <Trash2 size={13} />
+            {clip.kind === 'bgm' ? '이 배경음악 빼기' : clip.kind === 'voice' ? '이 내레이션 빼기' : '이 효과음 빼기'}
+          </button>
+        )}
         {ov?.audio[clip.id] && (
           <button className="btn sm ghost" onClick={() => patchAudio(clip.id, null, `${clip.label}: 원래대로`)}>
             <RotateCcw size={13} />
@@ -376,6 +457,7 @@ function BgmEditor({ track }: { track: BgmTrack }) {
         <VolumeSlider value={track.volume} onCommit={(volume) => update({ volume }, '볼륨')} />
       </div>
       <VolumeKeys keys={track.volumeKeys ?? []} base={track.volume} onChange={(volumeKeys) => update({ volumeKeys: volumeKeys.length ? volumeKeys : undefined }, '볼륨 키프레임')} />
+      <SectionCut keys={track.volumeKeys ?? []} base={track.volume} onCut={(volumeKeys, a, b) => update({ volumeKeys }, `${a.toFixed(1)}~${b.toFixed(1)}초 소리 빼기`)} />
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
         <NumberField title="서서히 커지는 시간" label="페이드 인" unit="초" value={track.fadeIn} min={0} max={10} step={0.1} precision={1} onChange={(fadeIn) => update({ fadeIn }, '페이드 인')} />
         <NumberField title="서서히 작아지는 시간" label="페이드 아웃" unit="초" value={track.fadeOut} min={0} max={10} step={0.1} precision={1} onChange={(fadeOut) => update({ fadeOut }, '페이드 아웃')} />

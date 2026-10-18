@@ -467,3 +467,21 @@ export async function freeLayout(id: string): Promise<boolean> {
   useOverrides.getState().setFree(r.group, r.group === '__root' ? '화면 전체' : labelOf(r.group), { size: r.size, kids: r.kids })
   return true
 }
+
+/**
+ * Takes a sound out of the video (Delete on a sound picked in the timeline or the Sound tab): music the
+ * designer added goes from their tracks, a sound Claude placed is marked removed (it can be brought back).
+ */
+export function removeSound(id: string) {
+  const st = useOverrides.getState()
+  const ov = st.value
+  if (!ov) return
+  const track = ov.bgm.find((t) => t.id === id)
+  if (track) st.setBgm(ov.bgm.filter((t) => t.id !== id), `배경음악 삭제: ${track.label}`)
+  else {
+    const clip = useEditor.getState().audio.find((a) => a.id === id)
+    if (!clip || clip.managed) return
+    st.patchAudio(id, { removed: true }, `${clip.label}: 지우기`)
+  }
+  useEditor.setState({ selectedAudio: null })
+}

@@ -73,7 +73,8 @@ export function OutputPopup({ onClose }: { onClose(): void }) {
           })}
         </div>
       </Field>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
+      {/* minmax(0, …): a number field's input would otherwise keep its natural width and push out of the popup */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10 }}>
         <Field label="가로">
           <NumberField value={o.width} onChange={(width) => set({ width, preset: 'custom' })} label="W" unit="px" min={64} max={7680} step={2} />
         </Field>

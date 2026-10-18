@@ -35,6 +35,9 @@ const api: StudioApi & { internal: { previewBase: string } } = {
   },
   projects: {
     list: () => invoke('projects:list'),
+    handoff: (id) => invoke('projects:handoff', id),
+    exportShare: (id, opts, dest) => invoke('projects:exportShare', id, opts, dest),
+    importShare: (file, folder) => invoke('projects:importShare', file, folder),
     renameAt: (path, name) => invoke('projects:renameAt', path, name),
     webFonts: (id) => invoke('projects:webFonts', id),
     onChanged: (cb) => subscribe<null>('projects:changed', cb),
@@ -92,6 +95,7 @@ const api: StudioApi & { internal: { previewBase: string } } = {
     assignFiles: (id, materialId, files) => invoke('agent:assignFiles', id, materialId, files),
     pickVoice: (id, itemId, voiceId) => invoke('agent:pickVoice', id, itemId, voiceId),
     pickAudio: (id, itemId, candidateId) => invoke('agent:pickAudio', id, itemId, candidateId),
+    requestHandoff: (id) => invoke('agent:requestHandoff', id),
     activateEditing: (id) => invoke('agent:activateEditing', id),
     splitLayer: (id, layerId) => invoke('agent:splitLayer', id, layerId),
     setModel: (id, opts) => invoke('agent:setModel', id, opts),

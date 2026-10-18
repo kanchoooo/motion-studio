@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyAudio, audioKind, markAudio, parseAudio } from '../../src/main/audio'
+import { applyAudio, audioKind, doubleQuoted, markAudio, parseAudio } from '../../src/main/audio'
 import { emptyOverrides } from '@shared/overrides'
 
 const html = `<body><div id="root" data-composition-id="main" data-start="0" data-duration="8">
@@ -143,10 +143,28 @@ describe('sounds Claude placed without the app marks still show in the Sound tab
     ])
     // the rest of each tag stays as Claude wrote it
     expect(out).toContain('src="assets/generated/calm-piano.mp3" data-start="0" data-duration="15" data-volume="0.5"')
-    expect(out).toContain("src='assets/generated/pop.wav' data-start='1.2'")
+    expect(out).toContain('src="assets/generated/pop.wav" data-start="1.2"')
     expect(out).toContain('<audio data-ms-id="sfx-ding-1" data-ms-type="sfx" data-ms-sfx="ding" data-ms-label="띵" src="assets/sfx/ding.wav"></audio>')
     expect(out).toContain('<audio data-ms-id="bgm-x" data-ms-managed="true" src="assets/m.mp3"></audio>')
     // once marked, nothing more to do
     expect(markAudio(out)).toBe(out)
+  })
+})
+
+describe('sound tags Claude wrote with other quotes', () => {
+  it('are read attribute by attribute into double quotes (text inside a value untouched)', () => {
+    expect(doubleQuoted(`<audio id='a' src='x y.wav' data-ms-label="휙 a=b c" data-volume=0.5 loop>`)).toBe(`<audio id="a" src="x y.wav" data-ms-label="휙 a=b c" data-volume="0.5" loop>`)
+    expect(doubleQuoted(`<audio data-ms-label='say "hi"' src="a.mp3?x=1">`)).toBe(`<audio data-ms-label="say &quot;hi&quot;" src="a.mp3?x=1">`)
+    const ok = `<audio data-ms-id="a" src="a.wav">`
+    expect(doubleQuoted(ok)).toBe(ok)
+  })
+
+  it('a muted or removed one keeps its file (it used to lose src)', () => {
+    const html = markAudio(`<div data-composition-id="main"><audio id='fx' src='assets/sfx/swipe.wav' data-start='3.1' data-duration='0.6'></audio></div>`)
+    const out = applyAudio(html, { ...emptyOverrides(), audio: { fx: { removed: true } } })
+    const tag = out.match(/<audio[^>]*>/)![0]
+    expect(tag).toContain('src="assets/sfx/swipe.wav"')
+    expect(tag).toContain('data-volume="0"')
+    expect(tag.match(/\sid=/g)!.length).toBe(1)
   })
 })

@@ -795,9 +795,11 @@ export function Timeline() {
 
   /** volume keyframes of a sound (a designer music track or one of Claude's) */
   const volumeKeysOf = (id: string) => ov?.bgm.find((t) => t.id === id)?.volumeKeys ?? ov?.audio[id]?.volumeKeys ?? []
-  const bgm = audio.filter((a) => a.kind === 'bgm')
-  const sfx = audio.filter((a) => a.kind === 'sfx')
-  const voice = audio.filter((a) => a.kind === 'voice')
+  // sounds the designer took out are not drawn (they come back from the Sound tab)
+  const kept = audio.filter((a) => !ov?.audio[a.id]?.removed)
+  const bgm = kept.filter((a) => a.kind === 'bgm')
+  const sfx = kept.filter((a) => a.kind === 'sfx')
+  const voice = kept.filter((a) => a.kind === 'voice')
   if (bgm.length) {
     rows.push(
       <div key="l-bgm" className="tl-layer" style={{ paddingLeft: 8 }} onClick={() => useEditor.setState({ panel: 'sound' })}>
@@ -811,6 +813,7 @@ export function Timeline() {
             className="tl-bar"
             title={`${a.label} · ${a.start.toFixed(1)}초~`}
             onPointerDown={() => useEditor.setState({ panel: 'sound', selectedAudio: a.id })}
+            data-audio={a.id}
             style={{ left: px(a.start), width: Math.max(4, px(Math.min(d - a.start, a.duration ?? d - a.start))), background: a.volume === 0 ? 'var(--surface-3)' : 'rgba(52,194,122,0.22)', color: 'var(--success)', outline: selectedAudio === a.id ? '1px solid var(--success)' : 'none', cursor: 'pointer' }}
           >
             <Waveform base={ed.compBase} src={a.src} from={a.mediaStart ?? 0} length={Math.min(d - a.start, a.duration ?? d - a.start)} color={a.volume === 0 ? 'var(--text-3)' : 'rgba(52,194,122,0.4)'} />
@@ -834,6 +837,7 @@ export function Timeline() {
             className="tl-bar"
             title={`${a.label} · ${a.start.toFixed(2)}초~`}
             onPointerDown={() => useEditor.setState({ panel: 'sound', selectedAudio: a.id })}
+            data-audio={a.id}
             style={{ left: px(map.toOutput(a.start)), width: Math.max(4, px(a.duration ?? 1)), outline: selectedAudio === a.id ? '1px solid var(--accent)' : 'none', cursor: 'pointer', opacity: a.volume === 0 ? 0.4 : 1 }}
           >
             <Waveform base={ed.compBase} src={a.src} from={a.mediaStart ?? 0} length={a.duration ?? 1} color="color-mix(in srgb, var(--accent) 40%, transparent)" />
@@ -862,6 +866,7 @@ export function Timeline() {
             <div
               title={`${a.label} · ${a.start.toFixed(2)}초`}
               onPointerDown={() => useEditor.setState({ panel: 'sound', selectedAudio: a.id })}
+            data-audio={a.id}
               style={{ position: 'absolute', left: px(map.toOutput(a.start)) - 6, top: 7, width: 12, height: 12, transform: 'rotate(45deg)', borderRadius: 2, background: a.volume === 0 ? 'var(--surface-3)' : selectedAudio === a.id ? 'var(--warning)' : 'rgba(245,165,36,0.7)', cursor: 'pointer' }}
             />
           </Fragment>

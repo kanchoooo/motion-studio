@@ -28,6 +28,7 @@ import { snapshot } from '../hyperframes'
 import { addRegistryItem, describeItem, registryItems, searchRegistry } from '../registry'
 import { bin } from '../paths'
 import * as projects from '../projects'
+import { writeText } from '../util'
 import { characterParts, checkCharacterFolder, embedCharacter, readCharacter, tagCharacter } from '../character/convert'
 import { addWebFont, listWebFonts } from '../webfonts'
 import { layoutSnapshot, measureLayout } from '../editReady'
@@ -49,6 +50,8 @@ export interface ToolHooks {
   onGenerated(projectId: string, files: { file: string; kind: string }[], label?: string): void
   /** a line in the chat from the app (e.g. the output spec Claude changed with the designer) */
   onNotice?(projectId: string, text: string): void
+  /** the handoff memo Claude wrote for a share (the designer reviews it before the file is made) */
+  onHandoff?(projectId: string, markdown: string): void
 }
 
 const PROVIDER = z.enum(['higgsfield', 'magnific'])
@@ -1032,6 +1035,19 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
         })),
       })
       return text('대화창과 사운드 탭에 후보를 보여줬어요. 디자이너가 들어 보고 고르면 메시지로 알려 줘요. 이번 턴은 여기서 마무리하세요.')
+    },
+  )
+
+  server.registerTool(
+    'save_handoff',
+    {
+      description: "Save the handoff memo the app asked for (프로젝트 공유): Korean Markdown for the next designer's new Claude session. The designer reviews and edits it before the share file is made.",
+      inputSchema: { markdown: z.string().min(40).max(20_000) },
+    },
+    async ({ markdown }) => {
+      writeText(join(dir(), '.studio', 'handoff.md'), markdown.trim() + '\n')
+      hooks.onHandoff?.(projectId, markdown.trim())
+      return text('인계 메모를 저장했어요. 디자이너가 검토한 뒤 공유 파일을 만들어요. 이번 턴은 여기서 마무리하세요.')
     },
   )
 

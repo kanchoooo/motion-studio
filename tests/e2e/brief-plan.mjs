@@ -77,6 +77,10 @@ try {
   let o = (await state()).brief.output
   check('출력 사양: a ratio preset is saved', o.width === 1080 && o.height === 1080, JSON.stringify(o))
   check('출력 사양 holds only ratio, size, length, fps', (await win.getByTestId('output-popup').getByText(/파일 형식|품질|배경|세이프존|소리/).count()) === 0)
+  // the size and length fields stay inside the popup
+  const pop = await win.getByTestId('output-popup').boundingBox()
+  const nums = await win.getByTestId('output-popup').locator('.num').evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); return { l: r.left, r: r.right } }))
+  check('가로 · 세로 · 길이 stay inside the popup', nums.length === 3 && nums.every((n) => n.l >= pop.x && n.r <= pop.x + pop.width - 8), JSON.stringify({ pop, nums }))
   await shot('02-output')
   await win.getByTestId('output-popup').getByText('출력 사양', { exact: true }).click()
   await win.keyboard.press('Escape')

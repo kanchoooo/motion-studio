@@ -39,6 +39,8 @@ interface State {
   /** what Claude is waiting for the designer to allow */
   asks: PermissionAsk[]
   aiOpen: boolean
+  /** the 프로젝트 공유 window (also opened from a Home card) */
+  shareOpen: boolean
   /** the export dialog is open (otherwise the result is announced with a toast) */
   exportOpen: boolean
   /** the storyboard (콘티) the designer works with, and its material assignments */
@@ -98,6 +100,7 @@ export const useStore = create<State>((set, get) => ({
   audioCandidates: null,
   asks: [],
   aiOpen: false,
+  shareOpen: false,
   exportOpen: false,
   storyboard: null,
   refsNonce: 0,

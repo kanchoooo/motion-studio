@@ -30,7 +30,7 @@ import { refreshThumbnail } from '../thumbnail'
 import { mcpTokenFor, setToolHooks } from './mcp-http'
 import { endPermissions } from './permissions'
 import { sessionPath } from './cliShims'
-import { COMPOSITION_CONTRACT, NAME_NEW_REQUEST, splitRequest, STUDIO_PROMPT, TIDY_REQUEST } from './prompt'
+import { COMPOSITION_CONTRACT, HANDOFF_NOTE, HANDOFF_REQUEST, NAME_NEW_REQUEST, splitRequest, STUDIO_PROMPT, TIDY_REQUEST } from './prompt'
 import { listReferences } from '../references'
 import { assignMaterial, carryAssignments, readStoryboard, withMaterialIds, writeStoryboard } from '../storyboard'
 import { repairCompositionHead } from '../headFix'
@@ -156,6 +156,7 @@ export class SessionManager {
         if (l) this.addApp(l, { id: newId(), at: nowIso(), role: 'voices', ...card })
       },
       onBuildStart: (projectId) => this.buildStarted(projectId),
+      onHandoff: (projectId, markdown) => this.emit({ type: 'handoff-ready', projectId, markdown }),
       onNotice: (projectId, text) => {
         const l = this.live.get(projectId)
         if (l) this.addApp(l, { id: newId(), at: nowIso(), role: 'notice', text })
@@ -260,6 +261,13 @@ export class SessionManager {
     await this.send({ projectId, text: `내레이션 목소리는 「${v.name}」으로 할게요.`, detail: `고른 목소리: provider ${v.provider}, id ${v.id}${v.voiceType ? `, voice_type ${v.voiceType}` : ''}${v.source ? `, source ${v.source}` : ''}${v.engine ? `, engine ${v.engine}` : ''}${v.sample ? `, sample ${v.sample}` : ''}` })
     const now = this.live.get(projectId)?.appItems.find((x) => x.id === itemId)
     if (now?.role === 'voices') this.updateApp(this.live.get(projectId)!, { ...now, picked: voiceId })
+  }
+
+  /** 프로젝트 공유: Claude writes the handoff memo (save_handoff); the designer reviews it in the share window */
+  async requestHandoff(projectId: string) {
+    const l = this.live.get(projectId)
+    if (!l || l.state.status !== 'ready') throw new Error('Claude가 작업을 마치고 대기 중일 때 요약을 받을 수 있어요.')
+    await this.deliver({ projectId, fromApp: true, text: '다른 디자이너에게 넘길 인계 메모를 써 주세요.', detail: HANDOFF_REQUEST })
   }
 
   /** the designer picked a music / sound-effect candidate on a chat card: Claude is told, then the card shows the pick */
@@ -405,7 +413,9 @@ export class SessionManager {
     // the one an older version wrote goes, a BRIEF.md Claude wrote itself stays
     dropAppBriefDoc(dir)
     const promptFile = join(studioDir, 'system-prompt.md')
-    writeText(promptFile, STUDIO_PROMPT)
+    // a project someone shared: the session starts from their handoff memo
+    const handedOver = !!meta.sharedFrom && existsSync(join(studioDir, 'handoff.md'))
+    writeText(promptFile, handedOver ? STUDIO_PROMPT + HANDOFF_NOTE : STUDIO_PROMPT)
     // subagents do not get the appended prompt: they read the composition rules from here
     writeText(join(studioDir, 'motion-studio-rules.md'), `# Motion Studio — composition rules\n\nYou are building a video inside Motion Studio. composition/ is the HyperFrames project, composition/index.html the root. Run the HyperFrames CLI as \`hyperframes <command>\` inside composition/. Do not run init, render, preview, publish or skills update.\n\n${COMPOSITION_CONTRACT}`)
     // Artlist signs in through Claude Code itself (/mcp in the terminal): the app never sees its token

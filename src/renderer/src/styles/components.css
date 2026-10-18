@@ -119,6 +119,7 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
+  min-width: 0;
 }
 .field > label,
 .field-label {
@@ -135,6 +136,7 @@
 .num {
   display: flex;
   align-items: center;
+  min-width: 0;
   height: 30px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);

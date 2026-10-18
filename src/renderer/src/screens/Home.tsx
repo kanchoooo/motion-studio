@@ -2,7 +2,7 @@
 // the open folder's sub-folders and projects on the right, and the three ways to start:
 // 새 프로젝트 (from scratch or from a template), 베리에이션 만들기, 템플릿 만들기.
 import { useEffect, useMemo, useState } from 'react'
-import { AlertCircle, Check, ChevronRight, Clapperboard, Clock, Copy, FolderInput, FolderOpen, LayoutTemplate, Loader2, MoreHorizontal, Pencil, Plus, Settings2, Sparkles, Trash2 } from 'lucide-react'
+import { AlertCircle, Check, ChevronRight, Clapperboard, Clock, Copy, FileDown, FolderInput, FolderOpen, LayoutTemplate, Loader2, MoreHorizontal, Pencil, Plus, Settings2, Share2, Sparkles, Trash2 } from 'lucide-react'
 import { ConnectionsModal } from '../components/ai/ConnectionsModal'
 import { NameModal } from '../components/NameModal'
 import type { ProjectSummary } from '@shared/project'
@@ -88,9 +88,32 @@ export function Home() {
   )
   const crumbs = recent ? [RECENT] : ['', ...folder.split('/').filter(Boolean).map((_, i, a) => a.slice(0, i + 1).join('/'))]
   const here = recent ? '' : folder
+  /** 공유 파일 열기: a project another designer shared, into this folder (a file dropped here too) */
+  const openShare = async (file?: string) => {
+    try {
+      const st = await studio.projects.importShare(file, here)
+      if (!st) return
+      await refreshProjects()
+      await openProject(st.path)
+      toast('공유받은 프로젝트를 열었어요. Claude가 인계 메모를 먼저 읽고 시작해요.', 'success')
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), 'error')
+    }
+  }
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <div
+      style={{ height: '100%', display: 'flex', flexDirection: 'column' }}
+      onDragOver={(e) => {
+        if ([...e.dataTransfer.items].some((i) => i.kind === 'file')) e.preventDefault()
+      }}
+      onDrop={(e) => {
+        const f = [...e.dataTransfer.files].map((x) => studio.app.pathForFile(x)).find((x) => /\.msshare$/i.test(x))
+        if (!f) return
+        e.preventDefault()
+        void openShare(f)
+      }}
+    >
       {aiOpen && <ConnectionsModal onClose={() => useStore.setState({ aiOpen: false })} />}
       {renaming && <NameModal title="프로젝트 이름 바꾸기" initial={renaming.name} confirm="바꾸기" onSubmit={(name) => rename(renaming, name)} onClose={() => setRenaming(null)} />}
       {moving && <MoveModal project={moving} onMove={(to) => move(moving, to)} onClose={() => setMoving(null)} />}
@@ -145,6 +168,10 @@ export function Home() {
               <button className="btn lg" onClick={() => setTemplating(true)} disabled={!projects.some((p) => p.hasVideo)} title="완성한 영상에서 바꿀 글자·이미지·내레이션을 골라 템플릿으로 저장해요" data-testid="new-template">
                 <LayoutTemplate size={15} />
                 템플릿 만들기
+              </button>
+              <button className="btn lg" onClick={() => void openShare()} title="다른 디자이너가 보낸 공유 파일(.msshare)을 열어 이어서 작업해요 (이 화면에 끌어 놓아도 돼요)" data-testid="open-share">
+                <FileDown size={15} />
+                공유 파일 열기
               </button>
             </div>
           </div>
@@ -279,6 +306,14 @@ export function Home() {
                           { label: '이름 바꾸기', icon: <Pencil size={14} />, onClick: () => setRenaming(p) },
                           { label: '다른 폴더로 옮기기', icon: <FolderInput size={14} />, onClick: () => setMoving(p) },
                           { label: '폴더에서 보기', icon: <FolderOpen size={14} />, onClick: () => studio.app.reveal(p.path) },
+                          {
+                            label: '공유 파일로 내보내기',
+                            icon: <Share2 size={14} />,
+                            onClick: async () => {
+                              await openProject(p.path)
+                              useStore.setState({ shareOpen: true })
+                            },
+                          },
                           {
                             label: '휴지통으로 이동',
                             icon: <Trash2 size={14} />,

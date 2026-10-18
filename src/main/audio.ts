@@ -72,10 +72,29 @@ const KIND_LABEL = { bgm: '배경음악', voice: '내레이션', sfx: '효과음
  * data-ms-type, data-ms-label) when Claude left them out — attributes only, nothing plays
  * differently. The app's own music block is left alone.
  */
+/**
+ * Every attribute value in double quotes (the app's sound edits read and write that form). The
+ * attributes are read one after another, so text inside a quoted value is never taken for one.
+ */
+export function doubleQuoted(tag: string): string {
+  const open = tag.match(/^<audio\b/i)?.[0]
+  if (!open) return tag
+  const close = tag.match(/\s*\/?>$/)?.[0] ?? ''
+  const body = tag.slice(open.length, tag.length - close.length)
+  const out = body.replace(/(\s+)([^\s"'=<>`/]+)(?:\s*=\s*("[^"]*"|'[^']*'|[^\s"'=<>`]+))?/g, (_m, sp: string, name: string, v?: string) => {
+    if (v == null) return `${sp}${name}`
+    const val = v.startsWith('"') ? v.slice(1, -1) : v.startsWith("'") ? v.slice(1, -1).replace(/"/g, '&quot;') : v
+    return `${sp}${name}="${val}"`
+  })
+  return `${open}${out}${close}`
+}
+
 export function markAudio(html: string): string {
   const used = new Set([...html.matchAll(/\sdata-ms-id\s*=\s*["']([^"']+)["']/gi)].map((m) => m[1]))
   let n = 0
-  return html.replace(/<audio\b[^>]*>/gi, (tag) => {
+  return html.replace(/<audio\b[^>]*>/gi, (raw) => {
+    // Claude may write src='…': the app's edits would not find it and write an empty one
+    const tag = doubleQuoted(raw)
     if (anyAttr(tag, 'data-ms-managed') === 'true') return tag
     const type = anyAttr(tag, 'data-ms-type')
     const hasId = !!anyAttr(tag, 'data-ms-id')
@@ -293,7 +312,7 @@ export function audioEnvelopes(dir: string, html: string, o: Overrides): Record<
     const tag = m[0]
     const id = attr(tag, 'data-ms-id')
     const e = id ? o.audio?.[id] : undefined
-    if (!id || !e?.volumeKeys?.length || attr(tag, 'data-ms-managed') === 'true') continue
+    if (!id || !e?.volumeKeys?.length || e.removed || attr(tag, 'data-ms-managed') === 'true') continue
     const group = attr(tag, 'data-ms-sfx')
     const g = group ? o.sfxGroups?.[group] : undefined
     const src = e.src ?? g?.src ?? attr(tag, 'data-ms-original-src') ?? attr(tag, 'src') ?? ''
@@ -319,7 +338,8 @@ export function applyAudio(html: string, o: Overrides, env: Record<string, strin
     const e = o.audio?.[id]
     const src = e?.src ?? g?.src ?? original
     let volume = e?.volume ?? g?.volume ?? parseFloat(originalVolume)
-    if (e?.muted) volume = 0
+    // muted, or taken out of the video by the designer: silent (the element stays, so it can come back)
+    if (e?.muted || e?.removed) volume = 0
     let next = tag
     // a volume curve: the app's file has it (from the clip's start, at full volume)
     const curve = env[id]

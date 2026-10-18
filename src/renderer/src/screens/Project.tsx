@@ -1,11 +1,12 @@
 import { useState } from 'react'
-import { ArrowLeft, Copy, Download, LayoutTemplate, Radio, Sparkles, SquareTerminal } from 'lucide-react'
+import { ArrowLeft, Copy, Download, LayoutTemplate, Radio, Share2, Sparkles, SquareTerminal } from 'lucide-react'
 import { ConnectionsModal } from '../components/ai/ConnectionsModal'
 import { ThemeSwitch } from '../components/ThemeSwitch'
 import { studio, useStore, type ProjectTab } from '../store'
 import { BriefTab } from './brief/BriefTab'
 import { EditorTab } from './editor/EditorTab'
 import { ExportModal } from './ExportModal'
+import { ShareModal } from './ShareModal'
 import { ResultsTab } from './history/ResultsTab'
 import { FamilyMenu } from './variations/FamilyMenu'
 import { VariationModal } from './variations/VariationModal'
@@ -19,7 +20,7 @@ const TABS: { id: ProjectTab; label: string }[] = [
 ]
 
 export function Project() {
-  const { project, tab, setTab, closeProject, session, terminalOpen, setTerminal, exportProgress, aiOpen } = useStore()
+  const { project, tab, setTab, closeProject, session, terminalOpen, setTerminal, exportProgress, aiOpen, shareOpen } = useStore()
   const [exporting, setExporting] = useState(false)
   const [varying, setVarying] = useState(false)
   const [templating, setTemplating] = useState(false)
@@ -78,6 +79,10 @@ export function Project() {
               템플릿 칸
             </button>
           )}
+          <button className="btn sm" onClick={() => useStore.setState({ shareOpen: true })} title="다른 디자이너가 이어서 작업할 수 있게 파일 하나로 만들기 (대화 기록은 넣지 않아요)" data-testid="share-open">
+            <Share2 size={14} />
+            공유
+          </button>
           <button className="btn sm" disabled={!project.hasVideo} onClick={() => setVarying(true)} title="다른 크기·길이 버전 만들기">
             <Copy size={14} />
             베리에이션
@@ -97,6 +102,7 @@ export function Project() {
         {tab === 'results' && <ResultsTab />}
       </div>
       {exporting && <ExportModal onClose={() => setExporting(false)} />}
+      {shareOpen && <ShareModal onClose={() => useStore.setState({ shareOpen: false })} />}
       {varying && <VariationModal onClose={() => setVarying(false)} />}
       {templating && <TemplateCreateModal folder="" sourcePath={project.path} onClose={() => setTemplating(false)} />}
       {slots && <TemplateSlotsModal onClose={() => setSlots(false)} />}

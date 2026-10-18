@@ -37,6 +37,8 @@ export interface ProjectMeta {
    * conversation (the editor only shows it); missing: an older project — always editable.
    */
   editable?: boolean
+  /** came from a share file (프로젝트 공유): its Claude session starts with the handoff memo */
+  sharedFrom?: { at: string; appVersion: string }
 }
 
 export interface ProjectSummary {

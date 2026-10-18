@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
+import { exportShare, HANDOFF_FILE, importShare, SHARE_EXT } from './share'
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron'
 import type { AgentEvent, ExportOptions, ExportProgress, SendMessageInput, AgentPermission, HelperContext, TemplateValues } from '@shared/api'
 import type { Asset, Brief } from '@shared/brief'
@@ -196,6 +197,38 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
   handle('projects:webFonts', (id: string) => listWebFonts(projects.pathOf(id)).map((f) => ({ family: f.family, weights: f.weights })))
   handle('projects:create', (input: Parameters<typeof projects.createProject>[0]) => projects.createProject(input))
   handle('projects:open', (path: string) => projects.openProject(path))
+  // 프로젝트 공유: one file for another designer (the conversation and messages stay here)
+  handle('projects:handoff', (id: string) => {
+    const f = join(projects.pathOf(id), HANDOFF_FILE)
+    return existsSync(f) ? readFileSync(f, 'utf8') : ''
+  })
+  handle('projects:exportShare', async (id: string, opts: { references: boolean; candidates: boolean; memo: string }, dest?: string) => {
+    const st = projects.state(id)
+    let target = dest
+    if (!target) {
+      const win = getWindow()
+      const o: Electron.SaveDialogOptions = { defaultPath: join(app.getPath('downloads'), `${st.meta.name}.${SHARE_EXT}`), filters: [{ name: '모션스튜디오 공유 파일', extensions: [SHARE_EXT] }] }
+      const r = win ? await dialog.showSaveDialog(win, o) : await dialog.showSaveDialog(o)
+      if (r.canceled || !r.filePath) return null
+      target = r.filePath.endsWith(`.${SHARE_EXT}`) ? r.filePath : `${r.filePath}.${SHARE_EXT}`
+    }
+    const r = await exportShare(st.path, target, opts)
+    return { path: target, ...r }
+  })
+  handle('projects:importShare', async (file?: string, folder?: string) => {
+    let source = file
+    if (!source) {
+      const win = getWindow()
+      const o: Electron.OpenDialogOptions = { properties: ['openFile'], filters: [{ name: '모션스튜디오 공유 파일', extensions: [SHARE_EXT] }] }
+      const r = win ? await dialog.showOpenDialog(win, o) : await dialog.showOpenDialog(o)
+      if (r.canceled || !r.filePaths[0]) return null
+      source = r.filePaths[0]
+    }
+    if (!source.toLowerCase().endsWith(`.${SHARE_EXT}`)) throw new Error('모션스튜디오 공유 파일(.msshare)을 골라 주세요.')
+    const dir = await importShare(source, folder ?? '')
+    send('projects:changed', null)
+    return projects.openProject(dir)
+  })
   handle('projects:state', (id: string) => projects.state(id))
   handle('projects:rename', (id: string, name: string) => projects.renameProject(id, name))
   handle('projects:remove', (path: string) => {
@@ -257,6 +290,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
   })
   handle('agent:pickVoice', (id: string, itemId: string, voiceId: string) => agent.pickVoice(id, itemId, voiceId))
   handle('agent:pickAudio', (id: string, itemId: string, candidateId: string) => agent.pickAudio(id, itemId, candidateId))
+  handle('agent:requestHandoff', (id: string) => agent.requestHandoff(id))
   // 편집 활성화: the video becomes editable by hand (Claude names the layers if needed)
   handle('agent:activateEditing', (id: string) => agent.activateEditing(id))
   handle('agent:splitLayer', (id: string, layerId: string) => agent.splitLayer(id, layerId))

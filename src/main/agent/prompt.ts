@@ -83,3 +83,25 @@ The video is built. Make it editable for the designer WITHOUT changing how anyth
 - Skip an element when an id would change how it looks (e.g. a face inside a 3D scene) — it stays part of its group.
 - The app photographs the same moments before and after and compares them.
 - Reply in one short Korean line (e.g. "편집할 수 있게 레이어 이름을 정리했어요.").`
+
+/** 프로젝트 공유: the memo the next designer's Claude session starts from (they never see this conversation) */
+export const HANDOFF_REQUEST = `# 인계 메모 (앱이 보낸 요청)
+The designer is handing this project to another designer, who continues it with a NEW Claude session that never sees this conversation. Write the handoff memo for that session, in Korean Markdown (about 30–70 lines), and save it with save_handoff. Do not change the video.
+
+Include, briefly and concretely:
+- 목표: what the video is for, audience, length and format, the tone it aims at
+- 확정된 결정과 이유: concept, structure, copy that is final, what was tried and dropped (and why)
+- 스타일 규칙: colours, fonts, motion character, sound (music / effects / narration and their settings)
+- 지금 영상: scene by scene what is on screen and when (layer names where useful)
+- 소재: where images, clips, music and voices came from, with their licences and limits
+- 디자이너가 직접 고친 것과 잠근 레이어 (get_designer_edits)
+- 남은 일: open requests, ideas not done yet, known problems
+- 이어서 작업할 때 주의할 점
+
+Privacy: no quotes of the designer's messages, no names, contacts, accounts or usage, nothing about this conversation itself beyond the decisions. Write it as facts for a colleague.`
+
+/** a shared project's session: the memo comes first */
+export const HANDOFF_NOTE = `
+
+## 인계받은 프로젝트
+This project was handed over from another designer. Before anything else, read .studio/handoff.md (their handoff memo) and continue from it; the earlier conversation is not available. Tell the designer in one or two Korean sentences what you understood and ask what to do next.`

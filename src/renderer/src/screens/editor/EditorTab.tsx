@@ -11,7 +11,7 @@ import { listedLayers, neighbourLayer } from '@shared/layers'
 import { clampSize, fitLayout, LAYOUT_DEFAULTS, useLayout, useWindowSize } from './layout'
 import { Preview } from './Preview'
 import { EASY_EASE } from '@shared/overrides'
-import { copySelection, deleteSelection, duplicateSelection, isLocked, jumpKey, labelOf, nudge, paste, reorder, splitAtPlayhead, toggleLockSelection, trimToPlayhead } from './edit'
+import { copySelection, deleteSelection, duplicateSelection, isLocked, jumpKey, labelOf, nudge, paste, removeSound, reorder, splitAtPlayhead, toggleLockSelection, trimToPlayhead } from './edit'
 import { useOverrides } from './overrides'
 import { canvasView } from './Preview'
 import { Timeline } from './Timeline'
@@ -78,6 +78,8 @@ export function EditorTab({ active }: { active: boolean }) {
           for (const id of [...new Set(ed.selectedKeys.map((k) => k.id))]) st.removeKeys(id, labelOf(id), ed.selectedKeys.filter((k) => k.id === id))
           return useEditor.setState({ selectedKeys: [] })
         }
+        // a sound picked in the timeline or the Sound tab: taken out of the video
+        if (ed.panel === 'sound' && ed.selectedAudio) return removeSound(ed.selectedAudio)
         return deleteSelection()
       }
       // ---- keyframes ----
