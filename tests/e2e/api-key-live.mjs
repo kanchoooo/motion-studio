@@ -80,7 +80,14 @@ try {
 
   // ---- a request on the key ----
   await send('연결 테스트예요. 영상과 파일은 절대 바꾸지 말고, "확인"이라고 한 단어로만 답해 주세요.')
-  check('Claude answers on the key', await until(async () => /확인/.test((await chat()).slice(-80)) && (await state()).status === 'ready', 240000), (await chat()).slice(-200))
+  check('Claude answers', await until(async () => /확인/.test((await chat()).slice(-80)) && (await state()).status === 'ready', 240000), (await chat()).slice(-200))
+  // the key itself may not be usable (no credits on its organization): said plainly, the rest needs a usable key
+  const usable = await win.evaluate(() => window.studio.claudeApi.status())
+  if (usable.fallback) {
+    check(`…on the key (the API refused it: ${usable.fallback.reason} · ${usable.fallback.detail ?? ''}; the subscription answered instead)`, false)
+    throw new Error('이 키로는 Claude를 쓸 수 없어요: 크레딧이 있는 조직의 키인지 Console에서 확인해 주세요.')
+  }
+  check('…on the key', (await state()).auth === 'api')
   const c1 = await cost()
   log(`  this request ${c1.turn.toFixed(4)} $, project ${c1.project.toFixed(4)} $, this month ${c1.month.toFixed(4)} $`)
   check('…and the chat shows what it cost', c1.turn > 0 && (await win.getByTestId('api-usage').innerText()).includes('API 키'), JSON.stringify(c1))
