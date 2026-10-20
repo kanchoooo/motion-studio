@@ -97,7 +97,10 @@ try {
   const sid = (await state()).sessionId
 
   // ---- the key stops working ----
+  // the key Claude Code holds is refused from now (a fresh process asks the app for it)
   writeFileSync(breakFlag, '1')
+  await win.evaluate((id) => window.studio.agent.restart(id), pid)
+  await ready('api')
   await send('두 번째 테스트예요. 영상과 파일은 바꾸지 말고, "두 번째"라고만 답해 주세요.')
   const tBreak = Date.now()
   check('the key is refused: the same conversation moves to the subscription', await ready('subscription', 120000), `${JSON.stringify(await state())} after ${Math.round((Date.now() - tBreak) / 1000)} s`)

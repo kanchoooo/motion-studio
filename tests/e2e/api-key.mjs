@@ -24,7 +24,10 @@ cpSync(proj, join(keep, 'proj'), { recursive: true })
 const meta = JSON.parse(readFileSync(join(proj, 'project.json'), 'utf8'))
 // a conversation of the test's own (the project's stays as it was)
 writeFileSync(join(proj, 'project.json'), JSON.stringify({ ...meta, agentSessionId: undefined }, null, 2))
-for (const f of ['claude-api.json', 'claude-api-usage.json']) rmSync(join(userdata, f), { force: true })
+// a key already saved in this sandbox (the real-key test's) is put aside and back afterwards
+const KEY_FILES = ['claude-api.json', 'claude-api-usage.json']
+for (const f of KEY_FILES) if (existsSync(join(userdata, f))) cpSync(join(userdata, f), join(keep, f))
+for (const f of KEY_FILES) rmSync(join(userdata, f), { force: true })
 
 const key = `sk-ant-api03-${'t'.repeat(36)}abcd`
 const mock = await startMock({ key })
@@ -111,9 +114,19 @@ try {
   const st1 = await win.evaluate(() => window.studio.claudeApi.status())
   check("…and this computer's month adds it up", Math.abs(st1.month.usd - one) < 1e-6 || st1.month.usd >= one, JSON.stringify(st1.month))
 
+  // ---- the designer's choice in the chat: API 키 or 구독 ----
+  const sid = (await state()).sessionId
+  const picker = win.getByTestId('auth-picker').locator('select')
+  check('the chat offers API 키 / 구독 once a key is saved', (await picker.inputValue()) === 'api')
+  await picker.selectOption('subscription')
+  check('구독 picked: the conversation moves to the subscription', await ready('subscription'), JSON.stringify(await state()))
+  check('…the same conversation', (await state()).sessionId === sid)
+  check('…and the key stays saved', (await win.evaluate(() => window.studio.claudeApi.status())).hasKey)
+  await picker.selectOption('api')
+  check('API 키 picked: back on the key, the same conversation', (await ready('api')) && (await state()).sessionId === sid, JSON.stringify(await state()))
+
   // ---- the credits run out mid-conversation ----
   mock.state.mode = 'credit'
-  const sid = (await state()).sessionId
   await send('하나 더 해 주세요.')
   check('the chat says the credits ran out and the subscription takes over', await until(async () => (await chat()).includes('API 키의 크레딧이 다 떨어졌어요. Claude 구독으로 바꿔서 이어서 해요.'), 90000), (await chat()).slice(-300))
   check('the same conversation restarts on the subscription', await ready('subscription'), JSON.stringify(await state()))
@@ -163,8 +176,11 @@ try {
   // the project as it was, no key left behind, the test's own conversation files gone
   rmSync(proj, { recursive: true, force: true })
   cpSync(join(keep, 'proj'), proj, { recursive: true })
+  for (const f of KEY_FILES) {
+    rmSync(join(userdata, f), { force: true })
+    if (existsSync(join(keep, f))) cpSync(join(keep, f), join(userdata, f))
+  }
   rmSync(keep, { recursive: true, force: true })
-  for (const f of ['claude-api.json', 'claude-api-usage.json']) rmSync(join(userdata, f), { force: true })
   const base = join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'projects')
   for (const id of sessionIds) {
     if (id === meta.agentSessionId || !/^[0-9a-f-]{36}$/.test(id)) continue

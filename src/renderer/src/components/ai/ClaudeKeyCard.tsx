@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { Check, ExternalLink, KeyRound, Loader2, RotateCcw, Trash2 } from 'lucide-react'
 import { FAILURE_TEXT, usd, type ClaudeAuthStatus } from '@shared/claudeApi'
 import { studio, useStore } from '../../store'
-import { Toggle } from '../ui'
+import { Segmented } from '../ui'
 
 const KEYS_PAGE = 'https://platform.claude.com/settings/keys'
 const BILLING_PAGE = 'https://platform.claude.com/settings/billing'
@@ -53,13 +53,21 @@ export function ClaudeKeyCard() {
           <span className="tiny faint">API 키를 넣으면 Claude 대화를 이 키로 먼저 해요. 크레딧이 떨어지거나 한도에 닿으면 Claude 구독으로 바꿔 하던 대화를 그대로 이어가요.</span>
         </div>
         {st?.hasKey && (
-          <Toggle
-            on={st.enabled}
-            onChange={async (v) => {
-              setSt(await studio.claudeApi.setEnabled(v))
-              toast(v ? '이제 Claude 대화를 API 키로 먼저 해요. 쉬고 있는 대화는 바로 다시 연결돼요.' : 'API 키를 껐어요. Claude 구독으로 대화해요.', 'success')
-            }}
-          />
+          <div data-testid="claude-key-mode">
+            <Segmented
+              value={st.enabled ? 'api' : 'subscription'}
+              onChange={async (v) => {
+                let next = await studio.claudeApi.setEnabled(v === 'api')
+                if (v === 'api' && next.fallback) next = await studio.claudeApi.retry()
+                setSt(next)
+                toast(v === 'api' ? '이제 Claude 대화를 API 키로 먼저 해요. 쉬고 있는 대화는 바로 다시 연결돼요.' : '이제 Claude 대화를 구독으로만 해요. 키는 저장된 채로 있어요.', 'success')
+              }}
+              options={[
+                { value: 'api', label: 'API 키 먼저' },
+                { value: 'subscription', label: '구독만' },
+              ]}
+            />
+          </div>
         )}
       </div>
 

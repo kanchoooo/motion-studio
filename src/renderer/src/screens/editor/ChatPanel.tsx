@@ -352,6 +352,7 @@ export function ChatPanel({ onFold, mode = 'edit' }: { onFold?(): void; mode?: '
         </div>
         <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
           <ModelPicker />
+          <AuthPicker />
           <PermissionPicker />
           <UsageBadge />
         </div>
@@ -649,6 +650,42 @@ function ModelPicker() {
         ))}
       </select>
       {session.pendingRestart && <span style={{ color: 'var(--warning)' }}>작업 후 적용</span>}
+    </div>
+  )
+}
+
+/** API 키 or the Claude subscription for the conversation (shown once a key is saved); the session moves on its next pause */
+function AuthPicker() {
+  const { toast } = useStore()
+  const [st, setSt] = useState<ClaudeAuthStatus | null>(null)
+  useEffect(() => {
+    void studio.claudeApi.status().then(setSt).catch(() => {})
+    return studio.agent.onEvent((e) => e.type === 'claude-auth' && setSt(e.status))
+  }, [])
+  if (!st?.hasKey) return null
+  const change = async (v: string) => {
+    try {
+      let next = await studio.claudeApi.setEnabled(v === 'api')
+      // picking the key again after it stopped working: tried again from the next request
+      if (v === 'api' && next.fallback) next = await studio.claudeApi.retry()
+      setSt(next)
+      toast(v === 'api' ? '이제 Claude 대화를 API 키로 해요. 대화는 그대로 이어져요.' : '이제 Claude 대화를 구독으로 해요. 대화는 그대로 이어져요.', 'success')
+    } catch (e) {
+      toast(errText(e), 'error')
+    }
+  }
+  return (
+    <div className="row tiny muted" style={{ gap: 6 }} data-testid="auth-picker">
+      <span>대화</span>
+      <select className="select" style={{ height: 24, fontSize: 11, padding: '0 6px', width: 'auto' }} value={st.enabled ? 'api' : 'subscription'} onChange={(e) => void change(e.target.value)} title="Claude 대화를 API 키로 할지 Claude 구독으로 할지 골라요. API 키로 하다가 크레딧이 떨어지면 구독으로 바꿔 이어서 해요.">
+        <option value="api">API 키</option>
+        <option value="subscription">구독</option>
+      </select>
+      {st.enabled && st.fallback && (
+        <span style={{ color: 'var(--warning)' }} title={FAILURE_TEXT[st.fallback.reason]}>
+          지금은 구독
+        </span>
+      )}
     </div>
   )
 }

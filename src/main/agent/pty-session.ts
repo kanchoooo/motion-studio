@@ -39,6 +39,7 @@ import { auditLayers, auditVerdict, tidyAfter, tidyBefore, type LayerAudit } fro
 import { compositionHasVideo } from '../template'
 import { findTranscript, TranscriptTail } from './transcript'
 import { ApiMeter } from './apiMeter'
+import { SdkTerm, type Term } from './sdk-session'
 import { addSpend, authMode, authStatus, markFailed, onAuthChange, sessionAuth } from '../claudeApi'
 import { apiFailure, FAILURE_TEXT, type ApiCostInfo, type ApiFailureReason, type ClaudeAuthMode } from '@shared/claudeApi'
 
@@ -49,6 +50,8 @@ export const pluginDir = () => (isDev ? join(appRoot(), 'resources', 'claude-plu
 /** project default unless the designer picks another in the chat panel: latest Opus, high effort */
 export const DEFAULT_MODEL = 'opus'
 export const DEFAULT_EFFORT = 'high'
+/** Claude Code's tools in a studio session (Agent: the HyperFrames workflows hand planning / building / repairs to subagents) */
+export const SESSION_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Skill', 'Agent', 'Bash', 'WebFetch', 'WebSearch']
 /** longest a studio tool call may run (AI generation waits included) */
 export const STUDIO_TOOL_TIMEOUT_MS = 15 * 60 * 1000
 /** variation re-layouts running at the same time (each is a Claude session of its own) */
@@ -75,7 +78,8 @@ interface Live {
   projectId: string
   dir: string
   sessionId: string
-  term: pty.IPty
+  /** the terminal (subscription) or the Agent SDK session (API key) */
+  term: Term
   buffer: string
   plain: string
   cols: number
@@ -514,7 +518,7 @@ export class SessionManager {
     })
     // the API key first when the designer saved one (claudeApi.ts); otherwise Claude Code's own login
     const auth = sessionAuth(previewBase())
-    const settings = JSON.stringify({
+    const settingsObj = {
       ...auth.settings,
       disableClaudeAiConnectors: true,
       // the next-prompt suggestions of the terminal are never seen in the app: no background request for them
@@ -540,7 +544,8 @@ export class SessionManager {
       },
       // replies and the notes between tool calls in the designer's language
       language: 'Korean',
-    })
+    }
+    const settings = JSON.stringify(settingsObj)
     const name = `모션스튜디오 · ${meta.name}`.slice(0, 60)
     const args = [
       ...(resume ? ['--resume', sessionId] : ['--session-id', sessionId]),
@@ -553,8 +558,7 @@ export class SessionManager {
       // acceptEdits: edits inside the project need no question (the deny rules above still hold);
       // its footer ("shift+tab to cycle") also tells us the input box is drawn
       '--permission-mode', 'acceptEdits',
-      // Agent: the HyperFrames workflows hand planning / building / repairs to subagents
-      '--tools', 'Read,Write,Edit,Glob,Grep,Skill,Agent,Bash,WebFetch,WebSearch',
+      '--tools', SESSION_TOOLS.join(','),
       '--plugin-dir', pluginDir(),
       '--add-dir', pluginDir(),
       '--append-system-prompt-file', promptFile,
@@ -572,7 +576,13 @@ export class SessionManager {
     // MS_LOCAL_TOOLS: where open-source models Claude installs (e.g. a local TTS) live, shared by every project
     const meter = new ApiMeter(sessionId, auth.mode === 'api')
     meter.begin()
-    const term = pty.spawn(claudeBinary(), args, { name: 'xterm-256color', cols, rows, cwd: dir, env: claudeEnv({ PATH: sessionPath(), MS_LOCAL_TOOLS: join(dataDir(), 'local-tools'), ...auth.env }), useConpty: true })
+    const env = claudeEnv({ PATH: sessionPath(), MS_LOCAL_TOOLS: join(dataDir(), 'local-tools'), ...auth.env })
+    // on the API key the same Claude Code runs through the Agent SDK (what the key's promotion credits cover);
+    // the conversation, its tools and rules are the same, only the terminal screen is a plain log
+    const term: Term =
+      auth.mode === 'api'
+        ? new SdkTerm({ binary: claudeBinary(), cwd: dir, sessionId, resume, name: meta.name, settings: settingsObj, mcpConfig, model: meta.agentModel || DEFAULT_MODEL, effort: meta.agentEffort || DEFAULT_EFFORT, tools: SESSION_TOOLS, pluginDir: pluginDir(), promptFile, env })
+        : pty.spawn(claudeBinary(), args, { name: 'xterm-256color', cols, rows, cwd: dir, env, useConpty: true })
 
     const l: Live = {
       projectId,
@@ -603,6 +613,12 @@ export class SessionManager {
 
     // after a restart the killed process may still print or exit: only the current one counts
     const current = () => this.live.get(projectId) === l
+    // a refused key (Claude Code retries it for minutes): the request goes on on the subscription at once
+    if (term instanceof SdkTerm)
+      term.onApiRetry((r) => {
+        if (!current() || this.switching.has(projectId)) return
+        if (r.status === 401 || r.status === 403 || r.error === 'authentication_failed') void this.continueOnSubscription(l, 'auth', `${r.status ?? ''} ${r.error}`.trim(), undefined, true)
+      })
     term.onData((d) => {
       if (!current()) return
       l.buffer = (l.buffer + d).slice(-REPLAY)

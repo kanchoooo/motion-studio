@@ -18,6 +18,9 @@ export function claudeEnv(extra: Record<string, string> = {}): Record<string, st
     if (k === 'CI' || k === 'NO_COLOR' || k === 'TERM_PROGRAM' || k === 'ELECTRON_RUN_AS_NODE') continue
     env[k] = v
   }
+  // the app ships its own Claude Code: it never updates the one installed on the computer (an update
+  // started from a session failed half-way once and left the computer's own `claude` broken)
+  env.DISABLE_AUTOUPDATER = '1'
   env.TERM = 'xterm-256color'
   env.COLORTERM = 'truecolor'
   if (process.platform !== 'win32' && !env.LANG) env.LANG = 'ko_KR.UTF-8'
