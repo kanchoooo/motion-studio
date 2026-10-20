@@ -70,6 +70,8 @@ const cost = () => win.evaluate((id) => window.studio.claudeApi.cost(id), pid)
 
 try {
   await toHome(win)
+  // a fallback left by an earlier run is not this run's
+  await win.evaluate(() => window.studio.claudeApi.retry())
   const st0 = await win.evaluate(() => window.studio.claudeApi.status())
   check('the key entered in AI 연결 is there and used', st0.hasKey && st0.using === 'api', JSON.stringify({ ...st0, hint: undefined }))
   await win.locator('.card').filter({ hasText: '앱 주문 런칭' }).first().click()
@@ -84,6 +86,7 @@ try {
   // the key itself may not be usable (no credits on its organization): said plainly, the rest needs a usable key
   const usable = await win.evaluate(() => window.studio.claudeApi.status())
   if (usable.fallback) {
+    log('  terminal:', (await win.evaluate((id) => window.studio.terminal.snapshot(id), pid).catch(() => '')).replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, '').replace(/\x1b\][^\x07]*\x07/g, '').replace(/\s+/g, ' ').slice(-1500))
     check(`…on the key (the API refused it: ${usable.fallback.reason} · ${usable.fallback.detail ?? ''}; the subscription answered instead)`, false)
     throw new Error('이 키로는 Claude를 쓸 수 없어요: 크레딧이 있는 조직의 키인지 Console에서 확인해 주세요.')
   }
