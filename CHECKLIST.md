@@ -651,6 +651,8 @@
 - [x] 대화창 「대화: API 키 / 구독」, 카드 「API 키 먼저 / 구독만」으로 고르기
 - [x] 앱이 띄운 Claude는 컴퓨터의 claude를 자동 업데이트하지 않음(DISABLE_AUTOUPDATER)
 - [x] 테스트: 단위 claude-api, e2e api-key(가짜 API, 34개), api-key-live(실제 키: 키로 답·금액, 거부 시 9초 만에 구독으로 이어 답, 다시 키로)
+- [x] 회귀: 이번 변경으로 깨진 것 없음(실패한 edit-usability·assets-p10·sound-marks·web-flow 소리·collect-flow AE 항목은 다시 만든 ms-p7 샌드박스 탓으로 beta.10에서도 같음, ae-engine3는 원래 불안정)
+- [x] 관제용 판에만 먼저 적용: 0.5.0-beta.10.1을 이 맥에 `--local --console`로 빌드해 설치(숨김 실행 유지), 일반 판·GitHub 배포는 다음 업데이트 때 함께
 
 ## 작업 기록
 
