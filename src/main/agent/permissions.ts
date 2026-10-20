@@ -22,6 +22,8 @@ export interface PermissionHooks {
   changed(projectId: string, asks: PermissionAsk[], added?: PermissionAsk): void
   /** reasoning effort the running session was started with (the chat panel's setting) */
   effortOf?(projectId: string): string | undefined
+  /** a turn ended with an API error (StopFailure): its type, for the API key → subscription switch */
+  stopFailure?(projectId: string, info: { error?: string; text: string }): void
 }
 
 interface Waiting {
@@ -234,7 +236,26 @@ function sedPrintsRange(f: string[]): boolean {
 /** /hook/<token>/… — true when the request was ours */
 export async function handleHook(req: IncomingMessage, res: ServerResponse, path: string): Promise<boolean> {
   if (/\/pretool$/.test(path)) return handlePreTool(req, res, path)
+  if (/\/stop-failure$/.test(path)) return handleStopFailure(req, res, path)
   return handlePermission(req, res, path)
+}
+
+/** StopFailure: the turn ended with an API error (logged only; Claude Code ignores the answer) */
+async function handleStopFailure(req: IncomingMessage, res: ServerResponse, path: string): Promise<boolean> {
+  const m = path.match(/^\/hook\/([a-f0-9]+)\/stop-failure$/)
+  const projectId = m ? hooks?.projectFor(m[1]) : undefined
+  const body = await readJson(req)
+  res.writeHead(200, { 'Content-Type': 'application/json' }).end('{}')
+  if (!hooks || !projectId) return true
+  const text = [body.error_details, body.last_assistant_message].map((v) => (typeof v === 'string' ? v : v ? JSON.stringify(v) : '')).join(' ')
+  hooks.stopFailure?.(projectId, { error: typeof body.error === 'string' ? body.error : undefined, text })
+  return true
+}
+
+/** a command or a read that would reach the app's API key (its helper address, its file): never */
+export function readsApiKey(tool: string, input: Record<string, unknown>): boolean {
+  const s = tool === 'Bash' ? String(input.command ?? '') : tool === 'Read' ? String(input.file_path ?? '') : ''
+  return /claude-key\b|claude-api(-usage)?\.json/i.test(s)
 }
 
 const REVIEWER = /(^|:)motion-reviewer$/
@@ -250,6 +271,10 @@ async function handlePreTool(req: IncomingMessage, res: ServerResponse, path: st
   const body = await readJson(req)
   const pass = () => res.writeHead(200, { 'Content-Type': 'application/json' }).end('{}')
   const input = (body.tool_input && typeof body.tool_input === 'object' ? body.tool_input : {}) as Record<string, unknown>
+  if (readsApiKey(String(body.tool_name), input)) {
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: "That is the app's API key: it is never read or printed. Leave it and go on with the task." } }))
+    return true
+  }
   if (hooks && projectId && (body.tool_name === 'Edit' || body.tool_name === 'MultiEdit' || body.tool_name === 'Write')) {
     const why = designerLayerEdit(projectId, String(body.tool_name), input)
     if (why) res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: why } }))

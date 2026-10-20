@@ -14,6 +14,7 @@ export const INVOKE: Record<string, string[]> = {
   history: ['list', 'restore', 'restorePartial', 'saveVersion', 'star'],
   renders: ['preflight', 'list', 'start', 'cancel', 'update', 'remove', 'fileUrl', 'exportAe'],
   fonts: ['list'],
+  claudeApi: ['status', 'saveKey', 'removeKey', 'setEnabled', 'retry', 'setBalance', 'cost'],
   ai: ['accounts', 'login', 'cancelLogin', 'setActive', 'rename', 'remove', 'models', 'voices', 'ttsSample', 'browsers', 'settings', 'saveSettings', 'generated', 'audioCandidates', 'searchAudio', 'useAudioCandidate', 'artlistLogin', 'artlistLoginDone', 'generate', 'estimate', 'balance', 'generateVideo', 'candidates', 'discardCandidate', 'keepCandidate', 'reconvert', 'askHelper', 'codexStatus'],
 }
 /** studio.<namespace>.<method>(cb) → the window's events */

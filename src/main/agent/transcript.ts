@@ -6,6 +6,7 @@ import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, s
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { ChatItem } from '@shared/api'
+import { apiFailure, FAILURE_TEXT } from '@shared/claudeApi'
 import { STUDIO_TOOL_LABELS } from './tools'
 
 type Rec = {
@@ -37,8 +38,8 @@ export interface TranscriptEvents {
   item(item: ChatItem): void
   update(item: ChatItem): void
   busy(busy: boolean): void
-  /** how the turn ended: done (Claude finished), stopped (designer pressed 멈추기), failed (API error) */
-  turnEnd(lastText: string, how: 'done' | 'stopped' | 'failed'): void
+  /** how the turn ended: done (Claude finished), stopped (designer pressed 멈추기), failed (API error, with what it said) */
+  turnEnd(lastText: string, how: 'done' | 'stopped' | 'failed', error?: string): void
   remoteUrl(url: string): void
 }
 
@@ -136,8 +137,13 @@ export class TranscriptTail {
       return
     }
     this.setBusy(false)
-    this.ev.turnEnd(this.lastText, this.endHow)
+    this.ev.turnEnd(this.lastText, this.endHow, this.endHow === 'failed' ? this.lastError : undefined)
   }
+
+  /** what the last failed API call said */
+  private lastError = ''
+  /** when the last answer that ended a turn was written (0 while a turn runs) */
+  private endedAt = 0
 
   private cancelEnd() {
     if (this.endTimer) clearTimeout(this.endTimer)
@@ -285,6 +291,12 @@ export class TranscriptTail {
       }
       const t = this.userText(r)
       if (t == null) return
+      // written after the answer that already ended its turn (a very fast reply: Claude Code can write the answer
+      // first): the message is shown, the turn stays over
+      if (!initial && this.endedAt && Date.parse(at) <= this.endedAt && !/^\[Request interrupted by user/.test(t)) {
+        if (!this.takeQueued(t, initial, Date.parse(at))) this.emitItem(this.userItem(r.uuid ?? at, at, t), initial)
+        return
+      }
       if (/^\[Request interrupted by user/.test(t)) {
         this.cancelEnd()
         this.heldAt = 0
@@ -368,10 +380,16 @@ export class TranscriptTail {
         }
       }
       const ended = r.message.stop_reason === 'end_turn' || r.message.stop_reason === 'refusal' || failed
+      if (ended) this.endedAt = Date.parse(at) || 0
+      else if (!synthetic) this.endedAt = 0
       if (failed) {
         const said = content.filter((b) => b.type === 'text').map((b) => b.text ?? '').join(' ')
+        this.lastError = said
+        // the API key cannot go on (credits, its spend limit, a removed key): the app moves the work to the subscription
+        const key = apiFailure(said)
         const limit = /limit|usage|quota/i.test(said)
-        this.emitItem({ id: `${r.uuid}-e`, at, role: 'error', text: limit ? 'Claude 사용량 한도에 도달했어요. 터미널에 표시된 시간 이후에 다시 보내 주세요.' : 'Claude가 응답하지 못했어요. 잠시 뒤 다시 보내 주세요.', detail: said.slice(0, 400) || undefined }, initial)
+        if (key && key.reason !== 'rate') this.emitItem({ id: `${r.uuid}-e`, at, role: 'notice', text: `${FAILURE_TEXT[key.reason]}. Claude 구독으로 바꿔서 이어서 해요.` }, initial)
+        else this.emitItem({ id: `${r.uuid}-e`, at, role: 'error', text: limit ? 'Claude 사용량 한도에 도달했어요. 터미널에 표시된 시간 이후에 다시 보내 주세요.' : 'Claude가 응답하지 못했어요. 잠시 뒤 다시 보내 주세요.', detail: said.slice(0, 400) || undefined }, initial)
       }
       // a synthetic line is no work: Claude Code writes "No response requested." when a session is resumed
       // after a message that never got its answer (a helper's report at quit) — the editor would stay locked

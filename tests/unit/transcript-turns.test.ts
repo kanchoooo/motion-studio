@@ -79,4 +79,24 @@ describe('turn ends', () => {
     const last = added.at(-1)!
     expect(last.role).toBe('status')
   })
+
+  it('a very fast answer written before its question: the turn is over, the question is shown', async () => {
+    say(75, '마쳤어요.', true)
+    await wait(3400)
+    expect(busy).toBe(false)
+    const n = ends.length
+    say(81, '확인했어요.', true)
+    line({ type: 'user', uuid: 'u80', timestamp: t(80), message: { role: 'user', content: '테스트예요. 한 줄로만 답해 주세요.' } })
+    await wait(3400)
+    expect(ends.slice(n)).toEqual(['done:확인했어요.'])
+    expect(busy).toBe(false)
+    expect(added.some((i) => i.role === 'user' && i.text === '테스트예요. 한 줄로만 답해 주세요.')).toBe(true)
+    // the next question (written after) starts a turn as usual
+    line({ type: 'user', uuid: 'u90', timestamp: t(90), message: { role: 'user', content: '하나 더요' } })
+    await wait(900)
+    expect(busy).toBe(true)
+    say(91, '했어요.', true)
+    await wait(3400)
+    expect(busy).toBe(false)
+  }, 15000)
 })

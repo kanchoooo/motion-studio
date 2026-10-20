@@ -52,6 +52,7 @@ const MAX_UPLOAD = 4 * 1024 ** 3
 const MAX_JSON = 64 * 1024 ** 2
 const MAC_ONLY = '로그인은 맥에서 해 주세요. (웹에서는 쓸 수 없어요)'
 const NOT_ON_WEB = '웹에서는 쓸 수 없는 기능이에요.'
+const KEY_HERE = 'API 키는 그 컴퓨터의 앱에서 직접 넣어 주세요. (웹으로는 보내지 않아요)'
 /** channels a browser never calls: Mac dialogs and windows, sign-ins */
 const BLOCKED: Record<string, string> = {
   'app:login': MAC_ONLY,
@@ -63,6 +64,9 @@ const BLOCKED: Record<string, string> = {
   'app:reveal': NOT_ON_WEB,
   'app:openExternal': NOT_ON_WEB,
   'app:capture': NOT_ON_WEB,
+  // the API key is typed on the computer that uses it (it never travels over the web connection)
+  'claudeApi:saveKey': KEY_HERE,
+  'claudeApi:removeKey': KEY_HERE,
 }
 
 let server: Server | null = null

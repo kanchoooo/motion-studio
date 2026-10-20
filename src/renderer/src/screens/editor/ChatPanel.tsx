@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Activity, AlertCircle, ArrowUp, Check, ChevronsLeft, Clapperboard, Cpu, ExternalLink, Film, ImagePlus, Info, Loader2, Mic, Music, Pause, Play, Scissors, ShieldCheck, ShieldQuestion, Square, X, Link2 } from 'lucide-react'
 import type { ClaudeUsage } from '@shared/ai'
+import { FAILURE_TEXT, usd, type ApiCostInfo, type ClaudeAuthStatus } from '@shared/claudeApi'
 import type { AgentEffort, AgentModel, AgentPermission, ChatItem, PermissionAsk, Storyboard } from '@shared/api'
 import type { ReferenceItem } from '@shared/brief'
 import { Markdown } from '../../components/Markdown'
@@ -652,8 +653,65 @@ function ModelPicker() {
   )
 }
 
+/** the conversation on the API key: what the last request and this project cost (estimates), what is left */
+function ApiBadge() {
+  const projectId = useStore((s) => s.project?.meta.id)
+  const [cost, setCost] = useState<ApiCostInfo | null>(null)
+  const [st, setSt] = useState<ClaudeAuthStatus | null>(null)
+  useEffect(() => {
+    if (!projectId) return
+    void studio.claudeApi.cost(projectId).then(setCost).catch(() => {})
+    void studio.claudeApi.status().then(setSt).catch(() => {})
+    return studio.agent.onEvent((e) => {
+      if (e.type === 'api-cost' && e.cost.projectId === projectId) {
+        setCost(e.cost)
+        void studio.claudeApi.status().then(setSt).catch(() => {})
+      } else if (e.type === 'claude-auth') setSt(e.status)
+    })
+  }, [projectId])
+  const left = st?.balance ? Math.max(0, st.balance.usd - st.balance.spentSince) : null
+  const tip = [
+    'Claude 대화를 API 키로 하고 있어요 (금액은 정가로 계산한 추정이에요)',
+    cost && `이번 요청 ${usd(cost.turn)} · 이 프로젝트 ${usd(cost.project)}`,
+    st && `이 컴퓨터 이번 달 ${usd(st.month.usd)}`,
+    left != null ? `남은 크레딧 약 ${usd(left)} (넣은 잔액에서 이 컴퓨터 사용분을 뺀 값)` : '남은 크레딧은 AI 연결 → Claude API 키에서 잔액을 넣으면 보여요',
+    '크레딧이 떨어지면 Claude 구독으로 바꿔 이어서 해요 · 누르면 AI 연결을 열어요',
+  ]
+    .filter(Boolean)
+    .join('\n')
+  return (
+    <button className="btn ghost sm tiny" style={{ height: 24, padding: '0 6px', gap: 4, color: 'var(--text-3)' }} title={tip} onClick={() => useStore.setState({ aiOpen: true })} data-testid="api-usage">
+      <Activity size={11} />
+      API 키
+      <span data-testid="api-usage-turn">이번 요청 {usd(cost?.turn ?? 0)}</span>
+      <span>· 프로젝트 {usd(cost?.project ?? 0)}</span>
+      {left != null && <span style={{ color: left < 2 ? 'var(--warning)' : undefined }}>· 남은 약 {usd(left)}</span>}
+    </button>
+  )
+}
+
+/** the subscription took over from the API key: a short note beside the plan's usage */
+function FallbackNote() {
+  const [st, setSt] = useState<ClaudeAuthStatus | null>(null)
+  useEffect(() => {
+    void studio.claudeApi.status().then(setSt).catch(() => {})
+    return studio.agent.onEvent((e) => e.type === 'claude-auth' && setSt(e.status))
+  }, [])
+  if (!st?.fallback) return null
+  return (
+    <span className="tiny" style={{ color: 'var(--warning)' }} title={`${FAILURE_TEXT[st.fallback.reason]}. Claude 구독으로 대화하고 있어요. AI 연결 → Claude API 키에서 "다시 API 키로"를 누르면 다음 요청부터 키로 해요.`} data-testid="api-fallback">
+      · API 키 → 구독
+    </span>
+  )
+}
+
 /** how much of the Claude plan is used (Claude Code's own /usage), asked again after each turn */
 function UsageBadge() {
+  const auth = useStore((s) => s.session.auth)
+  return auth === 'api' ? <ApiBadge /> : <PlanBadge />
+}
+
+function PlanBadge() {
   const status = useStore((s) => s.session.status)
   const [u, setU] = useState<ClaudeUsage | null>(null)
   const [busy, setBusy] = useState(false)
@@ -690,6 +748,7 @@ function UsageBadge() {
       Claude 사용량
       {u.session && <span style={{ color: tone(u.session.pct) }}>세션 {u.session.pct}%</span>}
       {u.week && <span style={{ color: tone(u.week.pct) }}>· 주간 {u.week.pct}%</span>}
+      <FallbackNote />
     </button>
   )
 }

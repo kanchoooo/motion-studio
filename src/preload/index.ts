@@ -144,6 +144,15 @@ const api: StudioApi & { internal: { previewBase: string } } = {
   fonts: {
     list: () => invoke('fonts:list'),
   },
+  claudeApi: {
+    status: () => invoke('claudeApi:status'),
+    saveKey: (key) => invoke('claudeApi:saveKey', key),
+    removeKey: () => invoke('claudeApi:removeKey'),
+    setEnabled: (enabled) => invoke('claudeApi:setEnabled', enabled),
+    retry: () => invoke('claudeApi:retry'),
+    setBalance: (usd) => invoke('claudeApi:setBalance', usd),
+    cost: (projectId) => invoke('claudeApi:cost', projectId),
+  },
   ai: {
     accounts: () => invoke('ai:accounts'),
     login: (provider, label, opts) => invoke('ai:login', provider, label, opts),

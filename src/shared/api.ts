@@ -2,6 +2,7 @@ import type { Asset, Brief, OutputFormat, OutputQuality, ReferenceItem } from '.
 import type { CharacterInfo, Framing, GenCandidate, GenRequest, VideoGenRequest } from './assetGen'
 import type { AiAccountInfo, AiLoginEvent, AiModelInfo, AiModelList, AiSettings, AiVoiceInfo, VoiceChoice, AudioCandidate, AudioCandidateList, ClaudeUsage, CreditInfo, LoginBrowser, LoginWindow, CodexStatus } from './ai'
 import type { Overrides } from './overrides'
+import type { ApiCostInfo, ClaudeAuthMode, ClaudeAuthStatus } from './claudeApi'
 import type { FeedbackMark, HistoryEntry, ProjectState, ProjectSummary, RenderRecord } from './project'
 
 // ---- chat -------------------------------------------------------------------
@@ -87,6 +88,8 @@ export interface SessionState {
   remoteName?: string
   remoteUrl?: string
   exitCode?: number
+  /** the running process uses the designer's API key or the Claude subscription */
+  auth?: ClaudeAuthMode
 }
 
 export type AgentEvent =
@@ -112,6 +115,10 @@ export type AgentEvent =
   | { type: 'handoff-ready'; projectId: string; markdown: string }
   /** Claude is waiting for the designer's permission (asks: every open question; added: the new one) */
   | { type: 'permissions'; projectId: string; asks: PermissionAsk[]; added?: PermissionAsk }
+  /** the API key was saved / removed / stopped working: what sessions use now */
+  | { type: 'claude-auth'; status: ClaudeAuthStatus }
+  /** a request on the API key finished: what it cost (estimate) */
+  | { type: 'api-cost'; cost: ApiCostInfo }
 
 /** "물어보기": Claude asks in the chat before acting outside its standing permissions; "모두 허용": the app allows */
 export type AgentPermission = 'ask' | 'all'
@@ -504,6 +511,21 @@ export interface StudioApi {
   }
   fonts: {
     list(): Promise<FontFamily[]>
+  }
+  /** 사용자 Claude API 키: used first; the Claude subscription takes over when it stops working */
+  claudeApi: {
+    status(): Promise<ClaudeAuthStatus>
+    /** checks the key with Anthropic (nothing charged), then keeps it on this computer */
+    saveKey(key: string): Promise<ClaudeAuthStatus>
+    removeKey(): Promise<ClaudeAuthStatus>
+    /** off: sessions use the subscription and keep the key */
+    setEnabled(enabled: boolean): Promise<ClaudeAuthStatus>
+    /** after the key stopped working: use it again from the next request */
+    retry(): Promise<ClaudeAuthStatus>
+    /** the balance read in the Console (null clears it) */
+    setBalance(usd: number | null): Promise<ClaudeAuthStatus>
+    /** this project's API spend and the last request's (estimates) */
+    cost(projectId: string): Promise<ApiCostInfo>
   }
   ai: {
     accounts(): Promise<AiAccountInfo[]>

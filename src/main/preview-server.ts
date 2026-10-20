@@ -8,6 +8,7 @@ import { dirname, join, normalize, sep } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { handleMcp } from './agent/mcp-http'
 import { handleHook } from './agent/permissions'
+import { HELPER_PATH, keyForHelper } from './claudeApi'
 import { hyperframes, runtimeFiles } from './paths'
 import { mimeOf } from './media'
 
@@ -71,6 +72,13 @@ function serve(req: IncomingMessage, res: ServerResponse): void {
   }
   if (path.startsWith('/hook/')) {
     void handleHook(req, res, path)
+    return
+  }
+  // the Claude session's apiKeyHelper (claudeApi.ts): never for a page (a browser sends Origin / Sec-Fetch-*)
+  if (path.startsWith(HELPER_PATH)) {
+    const key = req.headers.origin || req.headers['sec-fetch-mode'] ? null : keyForHelper(path.slice(HELPER_PATH.length))
+    if (!key) res.writeHead(404).end()
+    else res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' }).end(key)
     return
   }
   if (path === '/__ms/player.js') return sendFile(req, res, hyperframes.playerScript())

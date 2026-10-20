@@ -37,6 +37,7 @@ import { answerPermission, askingFor, setPermissionHooks, type PermissionAnswer 
 import { projectForToken } from './agent/mcp-http'
 import { balanceOf, discardCandidate, estimateImage, generateCandidate, listCandidates, reconvert, writeCandidates } from './ai/generate'
 import { claudeUsage } from './claudeUsage'
+import * as claudeApi from './claudeApi'
 import { estimateVideo, generateVideoCandidate } from './ai/generateVideo'
 import { askHelper } from './ai/promptHelper'
 import type { Framing, GenRequest, VideoGenRequest } from '@shared/assetGen'
@@ -328,6 +329,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
     mode: (id) => (projects.state(id).meta.agentPermission === 'all' ? 'all' : 'ask'),
     dirOf: (id) => projects.pathOf(id),
     effortOf: (id) => agent.state(id).effort,
+    stopFailure: (id, info) => agent.stopFailure(id, info),
     changed: (id, asks, added) => {
       send('agent:event', { type: 'permissions', projectId: id, asks, added } satisfies AgentEvent)
       // the designer may be in another app while Claude waits
@@ -512,6 +514,14 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
   })
   handle('ai:balance', async (provider: 'higgsfield' | 'magnific') => (await balanceOf(provider).catch(() => null)) ?? null)
   handle('app:claudeUsage', (force?: boolean) => claudeUsage(!!force))
+  // ---- 사용자 Claude API 키 (claudeApi.ts; sessions follow through its change listener) ----
+  handle('claudeApi:status', () => claudeApi.authStatus())
+  handle('claudeApi:saveKey', (key: string) => claudeApi.saveKey(String(key ?? '').slice(0, 400)))
+  handle('claudeApi:removeKey', () => claudeApi.removeKey())
+  handle('claudeApi:setEnabled', (enabled: boolean) => claudeApi.setEnabled(!!enabled))
+  handle('claudeApi:retry', () => claudeApi.retryApi())
+  handle('claudeApi:setBalance', (v: number | null) => claudeApi.setBalance(v == null ? null : Number(v)))
+  handle('claudeApi:cost', (id: string) => agent.apiCost(id))
   handle('ai:generateVideo', (id: string, req: VideoGenRequest) => generateVideoCandidate(projects.pathOf(id), req))
   handle('ai:candidates', (id: string) => listCandidates(projects.pathOf(id)))
   handle('ai:discardCandidate', (id: string, cid: string) => {

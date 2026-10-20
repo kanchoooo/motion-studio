@@ -38,6 +38,9 @@ import { repairCompositionHead } from '../headFix'
 import { auditLayers, auditVerdict, tidyAfter, tidyBefore, type LayerAudit } from '../tidy'
 import { compositionHasVideo } from '../template'
 import { findTranscript, TranscriptTail } from './transcript'
+import { ApiMeter } from './apiMeter'
+import { addSpend, authMode, authStatus, markFailed, onAuthChange, sessionAuth } from '../claudeApi'
+import { apiFailure, FAILURE_TEXT, type ApiCostInfo, type ApiFailureReason, type ClaudeAuthMode } from '@shared/claudeApi'
 
 type Emit = (e: AgentEvent) => void
 
@@ -60,6 +63,9 @@ const ATTENTION: { id: NonNullable<SessionState['attention']>; re: RegExp }[] = 
   { id: 'login', re: /Selectloginmethod|Pleaserun\/login|InvalidAPIkey|OAuthtokenhasexpired|notloggedin/i },
   { id: 'usage', re: /You'vehityour|You'vereachedyour|You'reoutofusage|usagelimitreached/i },
 ]
+// a session on the API key whose requests the API refuses (key removed or wrong): Claude Code retries
+// for minutes ("401 invalid x-api-key · Retrying in 3s · attempt 3/10") — the subscription takes over at once
+const KEY_REFUSED = /(401|403)(invalidx-api-key|authentication_error|permission_error|InvalidAPIkey)/i
 // the welcome banner, or the input box footer (always drawn in our acceptEdits sessions): after --resume
 // of a long conversation the banner scrolls far up, the footer is redrawn at the bottom
 const BANNER = /ClaudeCodev\d|don'taskon|shift\+tabtocycle/
@@ -78,7 +84,35 @@ interface Live {
   tail: TranscriptTail
   appItems: ChatItem[]
   compositionMtime: number
+  /** what this process runs on: the API key or the subscription (fixed until it restarts) */
+  auth: ClaudeAuthMode
+  /** the API key's spend of this process */
+  meter: ApiMeter
 }
+
+/** a project's API spend so far (estimate), in .studio/api-cost.json */
+function projectSpend(dir: string, add = 0): number {
+  const f = join(dir, '.studio', 'api-cost.json')
+  let usd = 0
+  try {
+    usd = Number((JSON.parse(readFileSync(f, 'utf8')) as { usd?: number }).usd) || 0
+  } catch {
+    /* none yet */
+  }
+  if (add > 0) {
+    usd += add
+    try {
+      writeText(f, JSON.stringify({ usd }))
+    } catch {
+      /* the folder went away */
+    }
+  }
+  return usd
+}
+
+/** what Claude is told when the work moves from the API key to the subscription mid-request */
+const CONTINUE_DETAIL = (why: string) =>
+  `The last request stopped with an API error: the app's API key cannot be used any more (${why}). The app restarted this same conversation on the designer's Claude subscription. Continue the designer's last request from where it stopped. Do not redo work that is already done — check the files first when unsure. If the request was already finished, reply with one short line saying so.`
 
 /**
  * a mark's attached files (a video: its middle still to look at, <file>.jpg); what they are for is in
@@ -140,6 +174,10 @@ export class SessionManager {
   private naming = new Map<string, number>()
   /** text layers already asked to be split from their box (not asked again every turn) */
   private askedSplit = new Map<string, Set<string>>()
+  /** the last StopFailure hook per project (its error type tells a billing error from others) */
+  private stopFailures = new Map<string, { error?: string; text: string; at: number }>()
+  /** projects moving from the API key to the subscription right now (their restart is not a failed re-layout) */
+  private switching = new Set<string>()
 
   constructor(private emit: Emit) {
     setToolHooks({
@@ -163,7 +201,46 @@ export class SessionManager {
         if (l) this.addApp(l, { id: newId(), at: nowIso(), role: 'notice', text })
       },
     })
+    // the API key was saved, removed, switched off or stopped working (or may be used again):
+    // sessions on the other one restart now when idle, else after their turn (--resume keeps the conversation)
+    onAuthChange(() => {
+      this.emit({ type: 'claude-auth', status: authStatus() })
+      const want = authMode()
+      for (const [id, l] of [...this.live]) {
+        if (id.startsWith('__') || l.auth === want || this.switching.has(id)) continue
+        // (a session on the key that stopped at a sign-in screen restarts too)
+        const stuck = l.auth === 'api' && l.state.attention === 'login'
+        if (l.state.status === 'ready' || (l.state.status === 'starting' && (!l.state.attention || stuck))) this.restart(id)
+        else if (l.state.status === 'busy') {
+          this.pendingRestart.add(id)
+          this.setState(l, { pendingRestart: true })
+        }
+      }
+    })
   }
+
+  /** a turn ended with an API error (StopFailure hook) */
+  stopFailure(projectId: string, info: { error?: string; text: string }) {
+    this.stopFailures.set(projectId, { ...info, at: Date.now() })
+  }
+
+  /** reads the API key's spend of a process since the last look: this computer's month and the project add it */
+  private meterRead(l: Live): number {
+    const usd = l.meter.read()
+    if (usd > 0) {
+      addSpend(usd)
+      projectSpend(l.dir, usd)
+    }
+    return usd
+  }
+
+  /** the API spend shown in the chat (also when no session runs) */
+  apiCost(projectId: string): ApiCostInfo {
+    const l = this.live.get(projectId)
+    if (l) this.meterRead(l)
+    return { projectId, turn: this.lastTurnCost.get(projectId) ?? 0, project: projectSpend(projects.pathOf(projectId)), month: authStatus().month.usd, at: nowIso() }
+  }
+  private lastTurnCost = new Map<string, number>()
 
   /** a card in the chat for media Claude generated (the designer keeps, discards or applies it) */
   /** automated tests: a sound candidate card in the chat */
@@ -316,7 +393,7 @@ export class SessionManager {
       env: claudeEnv(),
       useConpty: true,
     })
-    const l = { projectId: id, dir: projectsDir(), sessionId: '', term, buffer: '', plain: '', cols: 100, rows: 26, state: { status: 'starting' } as SessionState, tail: { stop() {}, items: [], busy: false } as unknown as TranscriptTail, appItems: [], compositionMtime: 0 }
+    const l = { projectId: id, dir: projectsDir(), sessionId: '', term, buffer: '', plain: '', cols: 100, rows: 26, state: { status: 'starting' } as SessionState, tail: { stop() {}, items: [], busy: false } as unknown as TranscriptTail, appItems: [], compositionMtime: 0, auth: 'subscription' as ClaudeAuthMode, meter: new ApiMeter('', false) }
     this.live.set(id, l)
     term.onData((d) => {
       l.buffer = (l.buffer + d).slice(-REPLAY)
@@ -350,7 +427,7 @@ export class SessionManager {
       env: claudeEnv(),
       useConpty: true,
     })
-    const l = { projectId: id, dir: projectsDir(), sessionId: '', term, buffer: '', plain: '', cols: 100, rows: 28, state: { status: 'starting' } as SessionState, tail: { stop() {}, items: [], busy: false } as unknown as TranscriptTail, appItems: [], compositionMtime: 0 }
+    const l = { projectId: id, dir: projectsDir(), sessionId: '', term, buffer: '', plain: '', cols: 100, rows: 28, state: { status: 'starting' } as SessionState, tail: { stop() {}, items: [], busy: false } as unknown as TranscriptTail, appItems: [], compositionMtime: 0, auth: 'subscription' as ClaudeAuthMode, meter: new ApiMeter('', false) }
     this.live.set(id, l)
     let opened = false
     term.onData((d) => {
@@ -382,7 +459,7 @@ export class SessionManager {
     const id = '__login__'
     this.kill(id)
     const term = pty.spawn(claudeBinary(), ['auth', 'login', '--claudeai'], { name: 'xterm-256color', cols: 100, rows: 24, cwd: projectsDir(), env: claudeEnv(), useConpty: true })
-    const l = { projectId: id, dir: projectsDir(), sessionId: '', term, buffer: '', plain: '', cols: 100, rows: 24, state: { status: 'starting' } as SessionState, tail: { stop() {}, items: [], busy: false } as unknown as TranscriptTail, appItems: [], compositionMtime: 0 }
+    const l = { projectId: id, dir: projectsDir(), sessionId: '', term, buffer: '', plain: '', cols: 100, rows: 24, state: { status: 'starting' } as SessionState, tail: { stop() {}, items: [], busy: false } as unknown as TranscriptTail, appItems: [], compositionMtime: 0, auth: 'subscription' as ClaudeAuthMode, meter: new ApiMeter('', false) }
     this.live.set(id, l)
     term.onData((d) => {
       l.buffer = (l.buffer + d).slice(-REPLAY)
@@ -435,8 +512,13 @@ export class SessionManager {
         ...(artlist ? { artlist: { type: 'http', url: AI_PROVIDERS.artlist.url } } : {}),
       },
     })
+    // the API key first when the designer saved one (claudeApi.ts); otherwise Claude Code's own login
+    const auth = sessionAuth(previewBase())
     const settings = JSON.stringify({
+      ...auth.settings,
       disableClaudeAiConnectors: true,
+      // the next-prompt suggestions of the terminal are never seen in the app: no background request for them
+      promptSuggestionEnabled: false,
       permissions: {
         // Read(path) covers every file-reading tool (Glob, Grep), Edit(path) every writing tool
         // the HyperFrames CLI (check, snapshot, add <block> …) runs without asking: it only works inside the project
@@ -451,7 +533,10 @@ export class SessionManager {
         PermissionRequest: [{ matcher: '*', hooks: [{ type: 'http', url: `${previewBase()}/hook/${mcpTokenFor(projectId)}/permission`, timeout: 900 }] }],
         // no quality gates: the reviewer agent (when the designer asks for a review) gets the session's reasoning effort
         // edits of the composition: a layer the designer edited by hand changes only when asked (designerGuard.ts)
-        PreToolUse: [{ matcher: 'Agent|Edit|MultiEdit|Write', hooks: [{ type: 'http', url: `${previewBase()}/hook/${mcpTokenFor(projectId)}/pretool`, timeout: 30 }] }],
+        // Bash / Read: the app's API key is never read (permissions.ts readsApiKey)
+        PreToolUse: [{ matcher: 'Agent|Edit|MultiEdit|Write|Bash|Read', hooks: [{ type: 'http', url: `${previewBase()}/hook/${mcpTokenFor(projectId)}/pretool`, timeout: 30 }] }],
+        // a turn that ended with an API error: its type (billing_error …) tells when the subscription takes over
+        StopFailure: [{ matcher: '*', hooks: [{ type: 'http', url: `${previewBase()}/hook/${mcpTokenFor(projectId)}/stop-failure`, timeout: 10 }] }],
       },
       // replies and the notes between tool calls in the designer's language
       language: 'Korean',
@@ -459,7 +544,8 @@ export class SessionManager {
     const name = `모션스튜디오 · ${meta.name}`.slice(0, 60)
     const args = [
       ...(resume ? ['--resume', sessionId] : ['--session-id', sessionId]),
-      '--remote-control', name,
+      // Remote Control needs the claude.ai login: a session on the API key goes without it
+      ...(auth.mode === 'subscription' ? ['--remote-control', name] : []),
       '--name', meta.name,
       '--setting-sources', '',
       '--settings', settings,
@@ -484,7 +570,9 @@ export class SessionManager {
     const rows = existing?.rows ?? kept?.rows ?? 34
     // PATH: `hyperframes` / `npx hyperframes` reach the CLI inside the app (no Node needed on this computer)
     // MS_LOCAL_TOOLS: where open-source models Claude installs (e.g. a local TTS) live, shared by every project
-    const term = pty.spawn(claudeBinary(), args, { name: 'xterm-256color', cols, rows, cwd: dir, env: claudeEnv({ PATH: sessionPath(), MS_LOCAL_TOOLS: join(dataDir(), 'local-tools') }), useConpty: true })
+    const meter = new ApiMeter(sessionId, auth.mode === 'api')
+    meter.begin()
+    const term = pty.spawn(claudeBinary(), args, { name: 'xterm-256color', cols, rows, cwd: dir, env: claudeEnv({ PATH: sessionPath(), MS_LOCAL_TOOLS: join(dataDir(), 'local-tools'), ...auth.env }), useConpty: true })
 
     const l: Live = {
       projectId,
@@ -495,17 +583,20 @@ export class SessionManager {
       plain: '',
       cols,
       rows,
-      state: { status: 'starting', sessionId, remoteName: name, model: meta.agentModel || DEFAULT_MODEL, effort: meta.agentEffort || DEFAULT_EFFORT },
+      state: { status: 'starting', sessionId, remoteName: auth.mode === 'subscription' ? name : undefined, model: meta.agentModel || DEFAULT_MODEL, effort: meta.agentEffort || DEFAULT_EFFORT, auth: auth.mode },
       tail: undefined as unknown as TranscriptTail,
       appItems: projects.readChat<ChatItem>(projectId),
       compositionMtime: this.compMtime(dir),
+      auth: auth.mode,
+      meter,
     }
     l.tail = new TranscriptTail(sessionId, dir, {
       item: (item) => this.emit({ type: 'item', projectId, item }),
       update: (item) => this.emit({ type: 'item-update', projectId, item }),
       busy: (busy) => this.setState(l, { status: busy ? 'busy' : 'ready' }),
-      turnEnd: (lastText, how) => void this.onTurnEnd(l, lastText, how),
-      remoteUrl: (url) => l.state.remoteUrl !== url && this.setState(l, { remoteUrl: url }),
+      turnEnd: (lastText, how, error) => void this.onTurnEnd(l, lastText, how, error),
+      // (a session on the API key has no Remote Control: an address the transcript kept from before is not shown)
+      remoteUrl: (url) => l.auth !== 'api' && l.state.remoteUrl !== url && this.setState(l, { remoteUrl: url }),
     })
     this.live.set(projectId, l)
     this.setState(l, l.state)
@@ -521,6 +612,7 @@ export class SessionManager {
     })
     term.onExit(({ exitCode }) => {
       l.tail.stop()
+      this.meterRead(l)
       if (!current()) return
       endPermissions(projectId)
       this.pendingRestart.delete(projectId) // a fresh start picks the new model/effort anyway
@@ -565,6 +657,11 @@ export class SessionManager {
       return
     }
     if (attention !== (l.state.attention ?? null)) this.setState(l, { attention })
+    if (l.auth !== 'api' || this.live.get(l.projectId) !== l || l.projectId.startsWith('__') || this.switching.has(l.projectId)) return
+    // a session on the API key that Claude Code asks to sign in: the key did not work — the subscription takes over
+    if (attention === 'login') markFailed('auth', 'Claude Code가 API 키로 로그인하지 못했어요')
+    // …or one retrying a refused key mid-request: the request goes on on the subscription
+    else if (KEY_REFUSED.test(text.slice(-1500))) void this.continueOnSubscription(l, 'auth', '401 invalid x-api-key', undefined, true)
   }
 
   enqueueAdaptations(items: { projectId: string; text: string }[]) {
@@ -630,7 +727,20 @@ export class SessionManager {
     return this.restart(projectId)
   }
 
-  private async onTurnEnd(l: Live, lastText: string, how: 'done' | 'stopped' | 'failed' = 'done') {
+  private async onTurnEnd(l: Live, lastText: string, how: 'done' | 'stopped' | 'failed' = 'done', error?: string) {
+    // what the request cost on the API key
+    if (l.auth === 'api') {
+      const usd = this.meterRead(l)
+      this.lastTurnCost.set(l.projectId, usd)
+      this.emit({ type: 'api-cost', cost: { projectId: l.projectId, turn: usd, project: projectSpend(l.dir), month: authStatus().month.usd, at: nowIso() } })
+    }
+    // the API key cannot go on: the same conversation continues on the subscription
+    if (how === 'failed' && l.auth === 'api' && this.live.get(l.projectId) === l) {
+      const hook = this.stopFailures.get(l.projectId)
+      const fresh = hook && Date.now() - hook.at < 60_000 ? hook : undefined
+      const f = apiFailure(`${error ?? ''} ${fresh?.text ?? ''}`, fresh?.error)
+      if (f) return this.continueOnSubscription(l, f.reason, error ?? fresh?.text, f.retryAt)
+    }
     // a stopped or failed re-layout is not a finished variation
     if (this.adapting.has(l.projectId)) this.endAdaptation(l.projectId, how === 'done' ? 'done' : 'error')
     if (this.pendingRestart.has(l.projectId)) {
@@ -647,6 +757,41 @@ export class SessionManager {
       await this.afterTurn(l, lastText, how)
     } catch {
       /* the project folder was moved or deleted: nothing to record */
+    }
+  }
+
+  /**
+   * The API key stopped working mid-request: the subscription takes over (every session on the key
+   * restarts), and this conversation goes on from where it stopped — a re-layout keeps its slot.
+   */
+  private async continueOnSubscription(l: Live, reason: ApiFailureReason, detail?: string, retryAt?: string, say = false) {
+    const id = l.projectId
+    const adapting = this.adapting.has(id)
+    this.switching.add(id)
+    // seen in the terminal (the transcript has no failed turn to show it): the chat says it
+    if (say) this.addApp(l, { id: newId(), at: nowIso(), role: 'notice', text: `${FAILURE_TEXT[reason]}. Claude 구독으로 바꿔서 이어서 해요.` })
+    try {
+      markFailed(reason, detail, retryAt)
+      // another project's failure may have switched first: this one still runs on the key
+      if (this.live.get(id) === l) this.restart(id)
+      const now = () => this.live.get(id)
+      for (let i = 0; i < 240 && now()?.state.status === 'starting' && !now()?.state.attention; i++) await new Promise((r) => setTimeout(r, 250))
+    } finally {
+      this.switching.delete(id)
+    }
+    const cur = this.live.get(id)
+    if (!cur || cur.auth === 'api') return
+    // automated tests: the message is not sent (it would spend the subscription)
+    if (process.env.MS_TEST_HOLD_CONTINUE) {
+      this.addApp(cur, { id: newId(), at: nowIso(), role: 'notice', text: '(테스트) 구독으로 이어서 할 메시지를 보내지 않았어요.' })
+      if (adapting) this.endAdaptation(id, 'error')
+      return
+    }
+    try {
+      await this.deliver({ projectId: id, fromApp: true, approveAll: adapting || undefined, text: '구독으로 바꿨어요. 하던 작업을 이어서 해 주세요.', detail: CONTINUE_DETAIL(FAILURE_TEXT[reason]) })
+    } catch (e) {
+      if (adapting) this.endAdaptation(id, 'error')
+      this.addApp(cur, { id: newId(), at: nowIso(), role: 'error', text: '구독으로 이어서 하지 못했어요. 메시지를 다시 보내 주세요.', detail: e instanceof Error ? e.message : String(e) })
     }
   }
 
@@ -880,14 +1025,19 @@ export class SessionManager {
       this.start(projectId)
       l = this.live.get(projectId)!
     }
+    // the key can be used again (its retry time passed) or no longer: an idle session moves first (--resume keeps the conversation)
+    if (!projectId.startsWith('__') && l.auth !== authMode() && l.state.status === 'ready' && !this.switching.has(projectId)) {
+      this.restart(projectId)
+      l = this.live.get(projectId)!
+    }
     if (l.state.attention === 'trust') throw new Error('먼저 터미널에서 이 프로젝트 폴더를 신뢰한다고 선택해 주세요.')
-    if (l.state.attention === 'login') throw new Error('Claude 로그인이 필요해요. 환경 점검에서 로그인해 주세요.')
+    if (l.state.attention === 'login' && l.auth !== 'api') throw new Error('Claude 로그인이 필요해요. 환경 점검에서 로그인해 주세요.')
     // wait for the input box after a cold start
     for (let i = 0; i < 60 && l.state.status === 'starting' && !l.state.attention; i++) await new Promise((r) => setTimeout(r, 250))
     // never type into a prompt (folder trust, login) or a session that is not up
     const now = this.state(projectId)
     if (now.attention === 'trust') throw new Error('먼저 터미널에서 이 프로젝트 폴더를 신뢰한다고 선택해 주세요.')
-    if (now.attention === 'login') throw new Error('Claude 로그인이 필요해요. 환경 점검에서 로그인해 주세요.')
+    if (now.attention === 'login') throw new Error(now.auth === 'api' ? 'API 키로 연결하지 못해서 Claude 구독으로 바꾸고 있어요. 잠시 뒤 다시 보내 주세요.' : 'Claude 로그인이 필요해요. 환경 점검에서 로그인해 주세요.')
     if (now.status === 'starting') throw new Error('Claude가 아직 준비 중이에요. 잠시 뒤 다시 보내 주세요.')
     if (now.status === 'exited') throw new Error('Claude가 종료됐어요. 터미널의 "다시 시작"을 누른 뒤 보내 주세요.')
     // which of the designer's own layers this request lets Claude change (designerGuard.ts)
@@ -956,6 +1106,8 @@ export class SessionManager {
     // the session may have been restarted while we waited (model change): type into the current one
     const cur = this.live.get(projectId)
     if (!cur || cur.state.status === 'exited') throw new Error('Claude가 다시 연결되는 중이에요. 잠시 뒤 다시 보내 주세요.')
+    // spend before this request belongs to the one before (the next turn end reads this one's)
+    if (cur.auth === 'api') this.meterRead(cur)
     cur.term.write(line)
     await new Promise((r) => setTimeout(r, ENTER_DELAY))
     cur.term.write('\r')
@@ -995,9 +1147,11 @@ export class SessionManager {
   kill(projectId: string) {
     const l = this.live.get(projectId)
     // its exit is no longer heard (it is not the current session): a re-layout running here ends now
-    if (this.adapting.has(projectId)) this.endAdaptation(projectId, 'error')
+    // (unless the work only moves from the API key to the subscription and goes on)
+    if (this.adapting.has(projectId) && !this.switching.has(projectId)) this.endAdaptation(projectId, 'error')
     if (!l) return
     l.tail.stop()
+    this.meterRead(l)
     try {
       l.term.kill()
     } catch {

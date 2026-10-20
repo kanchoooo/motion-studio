@@ -6,6 +6,7 @@ import { AI_PROVIDERS, type AiAccountInfo, type AiConnectProvider, type AiSettin
 import { studio, useStore } from '../../store'
 import { XTerm } from '../XTerm'
 import { Modal, Segmented, Toggle } from '../ui'
+import { ClaudeKeyCard } from './ClaudeKeyCard'
 
 const CAN_LABEL = { image: '이미지', video: '영상', tts: '음성(TTS)', music: '음악', sfx: '효과음' } as const
 
@@ -172,6 +173,7 @@ export function ConnectionsModal({ onClose }: { onClose(): void }) {
       <div className="small muted" style={{ lineHeight: 1.6, marginTop: -4 }}>
         이미지·영상·음성 생성 서비스에 로그인하면 Claude가 대화나 브리프에 맞춰 소재를 만들어요. 서비스마다 회사·개인 계정을 여러 개 저장해 두고 골라 쓸 수 있어요. 사용량(크레딧)은 고른 계정에서 차감돼요.
       </div>
+      <ClaudeKeyCard />
       {windowPicker}
 
       {(['higgsfield', 'magnific'] as const).map((p) => {

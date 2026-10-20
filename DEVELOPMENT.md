@@ -59,6 +59,7 @@ npm run dev        # 개발 모드 실행
 | `node tests/e2e/edit-requests-live.mjs` | 실제 Claude(앱 기본 opus·high)로 편집 요청 확인: 배경 따로 떼기, 이름 없는 내용 → 이름 붙이기 요청, 새 요소 이름, 파일을 붙인 핀(교체·스타일·참고). 폴더 신뢰 질문은 테스트가 답하지 않으므로 이미 신뢰된 샌드박스 프로젝트를 쓰고, 백업했다가 되돌린다 (`MS_SANDBOX=<신뢰된 「앱 주문 런칭」 폴더가 있는 샌드박스>`, 사용량 소모) |
 | `npm run dist:mac` (`dist:mac-arm64`, `dist:mac-x64`) | Mac 설치 파일: 서명·공증 (`release/`, 6장 참고). `--release`는 관제용 판(Intel)도 함께 올린다 (5-7장) |
 | `node tests/e2e/runtime-text.mjs` | 런타임: 안에 요소가 있는 글자의 단어를 바꿔도 구조·크기 유지, 새 줄바꿈, 드래그한 부분만 색(그 자리, 꾸밈 걸침), 단어 강조(모든 곳) |
+| `node tests/e2e/api-key.mjs` | 사용자 Claude API 키: 키 확인·저장, 키로 대화와 금액 표시, 크레딧 부족·거부된 키에서 같은 대화를 구독으로 이어가기, 다시 키로, 키 지우기 (가짜 API, 요금 없음. `MS_SANDBOX=<신뢰한 ms-p6 샌드박스>`, 프로젝트는 백업 후 되돌림) |
 | `node tests/e2e/feedback-4.mjs` | 사용 피드백 4차: 글자 일부만 색(편집 화면), 상자 글자 수정, 다른 쪽 변경이 다음 편집에 지워지지 않음, 대화창 소리 카드 재생·실패 안내, 글꼴 블록 (`MS_SANDBOX=<「앱 주문 런칭」 샌드박스>`, 사본에서) |
 | `node tests/e2e/collect-flow.mjs` | 관제용 판: 결과물 모음 — console.json 없으면 아무 일 없음, 지난 결과물 채우기(clone), 관제에서 지우기 요청 → 앱에서도 지움, 새 내보내기·앱에서 지우기 따라가기 (`MS_CONSOLE=1 npx electron-vite build` 뒤, `MS_SANDBOX=<「앱 주문 런칭」 샌드박스>`, 사본에서) |
 | `node tests/e2e/web-flow.mjs` | 관제용 판: 웹 연결 — console.json으로 켜고 끄기, 숨은 시작, 토큰·CSP·막는 요청, 업로드·내려받기, 미리보기 중계(샌드박스·글꼴·소리), 관제 같은 중계를 거친 브라우저에서 화면·편집 저장·파일 올리기·내려받기, 종료 → 다시 연결 (`MS_CONSOLE=1` 빌드 뒤, `MS_SANDBOX=<「앱 주문 런칭」 샌드박스>`, 이 맥의 Chrome 사용) |
@@ -261,6 +262,21 @@ poc/               Phase 0 기술 검증 기록 (RESULTS.md)
   - 드래그로 고른 부분의 색은 `highlights[].nth`(그 자리, 띄어쓰기 무시)로 저장해요.
 - **소리 후보**: `saveListeningCopy`가 미리듣기를 `composition/assets/candidates/`에 받아요(앞부분 바이트로 소리 파일인지 확인). 공유 파일에서는 빠져요.
 
+## 5-9. 사용자 Claude API 키 (beta.11 예정)
+- **무엇**: AI 연결 → 「Claude API 키」에 키(예: 프로모션 크레딧)를 넣으면 Claude 대화를 그 키로 먼저 해요. 키를 더 쓸 수 없으면 Claude 구독(Claude Code 로그인)으로 같은 대화를 이어가요.
+- **보관**(`claudeApi.ts`): 다른 서비스 토큰과 같은 방식이에요. 앱 데이터 폴더의 `claude-api.json`(0600)에 두고, Windows는 DPAPI로 봉해요. 맥 키체인은 쓰지 않아요. 저장 전에 `GET /v1/models`로 키를 확인해요(요금 없음). 웹 연결로는 키를 넣거나 지울 수 없어요(`web.ts` BLOCKED).
+- **세션에 넘기는 방법**: 환경변수가 아니라 세션 설정의 `apiKeyHelper`(`curl -fsS <미리보기 서버>/claude-key/<실행마다 바뀌는 비밀값>`)예요.
+  - 환경변수로 넘기면 Claude가 실행하는 명령이 키를 물려받고, Claude Code가 "이 키를 쓸까요?"를 물어요. helper는 둘 다 없어요.
+  - helper는 구독 로그인보다 우선이라, 구독으로 열 때는 아예 넣지 않아요.
+  - 미리보기 서버는 브라우저 요청(Origin·Sec-Fetch 헤더)에는 키를 주지 않아요. PreToolUse 훅(Bash·Read)이 helper 주소나 키 파일을 읽으려는 명령을 막아요(`readsApiKey`).
+  - API 키 세션은 원격 제어(`--remote-control`) 없이 열어요(claude.ai 로그인이 필요한 기능).
+- **구독으로 넘기기**(`pty-session.ts` `continueOnSubscription`)
+  - 감지: 실패한 턴의 문구(`shared/claudeApi.ts` `apiFailure`: 크레딧 부족, Console 사용 한도, 거부된 키, 요청 과다)와 StopFailure 훅의 오류 종류. 거부된 키는 Claude Code가 몇 분씩 다시 시도해서, 터미널의 "401 invalid x-api-key · Retrying" 문구를 보고 바로 넘겨요.
+  - 넘기면 `markFailed` → 키로 돌던 세션은 쉬고 있으면 바로, 작업 중이면 턴이 끝난 뒤 `--resume`으로 다시 열려요(대화 그대로). 막힌 세션은 "구독으로 바꿨어요. 하던 작업을 이어서 해 주세요."를 보내 이어가요(베리에이션 재구성 칸은 유지).
+  - 돌아오기: Console 사용 한도는 풀리는 시각, 요청 과다는 15분 뒤 다음 요청부터 키로 돌아와요. 크레딧·거부된 키는 「다시 API 키로」를 눌러야 해요.
+- **금액**(`agent/apiMeter.ts`): 키로 돈 프로세스가 대화 기록(본 대화 + subagents)에 쓴 응답의 토큰을 정가로 계산해요(중복 줄은 한 번만). 요청마다·프로젝트(`.studio/api-cost.json`)·이 컴퓨터의 달(`claude-api-usage.json`)로 모아요. 잔액은 API로 알 수 없어서, Console에서 본 잔액을 넣으면 그 뒤 이 컴퓨터 사용분을 빼서 보여줘요. 터미널의 다음 프롬프트 제안(`promptSuggestionEnabled`)은 꺼서 보이지 않는 요청을 줄였어요.
+- **테스트**: `tests/e2e/mock-anthropic.mjs`(가짜 API: 성공, 크레딧 부족, 거부된 키)로 `api-key.mjs`가 요금 없이 전체 흐름을 확인해요. 실제 키 확인은 `MS_TEST_BREAK_KEY=<파일>`(그 파일이 생기면 helper가 망가진 키를 줘요)로 해요.
+
 ## 5-1. AI 서비스 연결
 
 | 서비스 | 연결 방식 | 로그인 |
@@ -342,6 +358,7 @@ poc/               Phase 0 기술 검증 기록 (RESULTS.md)
 - 앱이 실행하는 모든 Claude 프로세스는 `claude-env.ts`의 환경을 쓴다.
   - `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` 등은 **넘기지 않는다**.
   - 장기 토큰이 키체인 로그인을 덮어쓰면 리모트 컨트롤이 잠기기 때문이다(관제센터에서 겪은 문제).
+  - 디자이너가 넣은 API 키는 이 경로가 아니라 세션 설정의 `apiKeyHelper`로만 넘긴다(5-9).
 - 환경 점검이 확인하는 것:
   - 키체인 잠김
   - 로그인 방식이 claude.ai가 아닌 경우
