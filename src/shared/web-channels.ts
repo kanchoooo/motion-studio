@@ -3,7 +3,7 @@
 
 /** studio.<namespace>.<method>() → invoke('<namespace>:<method>') */
 export const INVOKE: Record<string, string[]> = {
-  app: ['checkUpdate', 'downloadUpdate', 'installUpdate', 'hasAccess', 'unlock', 'info', 'doctor', 'login', 'cancelLogin', 'installBrowser', 'openExternal', 'reveal', 'pickFiles', 'claudeUsage', 'pickFolder', 'trustWorkspace', 'capture', 'setTheme'],
+  app: ['checkUpdate', 'downloadUpdate', 'installUpdate', 'hasAccess', 'unlock', 'info', 'doctor', 'login', 'cancelLogin', 'installBrowser', 'setupClaude', 'openExternal', 'reveal', 'pickFiles', 'claudeUsage', 'pickFolder', 'trustWorkspace', 'capture', 'setTheme'],
   projects: ['list', 'handoff', 'exportShare', 'importShare', 'renameAt', 'webFonts', 'create', 'move', 'replaceAssetFile', 'open', 'state', 'rename', 'remove', 'saveBrief', 'importAssets', 'saveOverrides', 'previewUrl', 'check', 'reportElements', 'audio', 'sfxLibrary', 'useSfx', 'fileUrl', 'addFeedbackImage', 'addToLibrary', 'addAssets', 'removeAsset', 'replaceAsset', 'saveOutput', 'diskUsage', 'clearCache'],
   templates: ['list', 'detect', 'create', 'rename', 'remove', 'createProject', 'slots', 'apply'],
   folders: ['list', 'create', 'rename', 'remove'],

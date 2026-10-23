@@ -1,4 +1,5 @@
-// Auto-update from the GitHub releases of kanchoooo/motion-studio (electron-updater).
+// Auto-update from the GitHub releases of kanchoooo/motion-studio-releases (electron-updater) — the
+// public releases repository; the source repository (kanchoooo/motion-studio) goes private.
 // Checked at every launch before anything else: if a newer version exists it is
 // downloaded and installed, and the app restarts — the designer only starts
 // working once that is done. Offline or a failed check never blocks the app.
@@ -19,7 +20,7 @@ function setup() {
   // 관제용 판: its own update file on the newest release (console-mac.yml, the Intel build for the
   // console's Mac); the regular builds read latest-mac.yml / latest.yml as before
   if (__MS_CONSOLE__) {
-    autoUpdater.setFeedURL({ provider: 'generic', url: 'https://github.com/kanchoooo/motion-studio/releases/latest/download', channel: 'console' })
+    autoUpdater.setFeedURL({ provider: 'generic', url: 'https://github.com/kanchoooo/motion-studio-releases/releases/latest/download', channel: 'console' })
     autoUpdater.allowDowngrade = false
   }
 }

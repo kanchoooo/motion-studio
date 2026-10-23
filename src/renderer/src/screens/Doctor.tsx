@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, XCircle } from 'lucide-react'
-import type { DoctorItem } from '@shared/api'
+import type { DoctorItem, SetupAction } from '@shared/api'
+
+const SETUP: string[] = ['install-claude', 'fix-claude-path', 'install-git', 'fix-git-bash'] satisfies SetupAction[]
 import { AppVersion } from '../components/AppVersion'
 import { XTerm } from '../components/XTerm'
 import { Modal } from '../components/ui'
@@ -72,6 +74,10 @@ export function Doctor({ embedded }: { embedded?: boolean }) {
         return
       }
       else if (item.action.id === 'install-browser') setMsg((await studio.app.installBrowser()).message)
+      else if (SETUP.includes(item.action.id)) {
+        setMsg(item.action.id.startsWith('install') ? '설치하는 중이에요. 몇 분 걸릴 수 있어요…' : null)
+        setMsg((await studio.app.setupClaude(item.action.id as SetupAction)).message)
+      }
       else if (item.action.id === 'rescan-fonts') await studio.fonts.list()
     } finally {
       setBusy(null)

@@ -1,6 +1,8 @@
 // 모션스튜디오 맥 설치 파일: Developer ID 서명 + 공증 (M칩용·Intel용 각각)
 // 사용법: node scripts/build-mac.mjs [--arch arm64|x64|both] [--release [--notes "변경 내용"]]   (npm run dist:mac)
-//   --release: 빌드가 끝나면 GitHub Releases(kanchoooo/motion-studio)에 v<버전>으로 올린다 → 설치된 앱이 다음 실행 때 자동 업데이트
+//   --release: 빌드가 끝나면 공개 릴리즈 저장소(kanchoooo/motion-studio-releases)에 v<버전>으로 올린다 → 설치된 앱이 다음 실행 때 자동 업데이트
+//            소스 저장소(kanchoooo/motion-studio)에는 태그만 올려 윈도우 빌드(CI)를 돌리고, 그 설치 파일을 릴리즈 저장소로 옮긴다(mirror-windows.mjs)
+//   --also-source: 같은 파일을 소스 저장소 릴리스에도 올린다(1.0.0: 그 저장소를 보던 이전 판들이 1.0.0으로 넘어오게)
 //   --local: 개발 중 빠른 확인용. 이 맥의 CPU용 앱만 서명해서 만들고(공증·dmg·zip 없음, 이 맥에서 만든 앱이라 격리 표시가 없음)
 //            /Applications/MotionStudio.app 에 덮어써 설치한다. 열려 있던 앱은 정상 종료 후 다시 연다.
 //   --local --no-install: 빌드만 한다(테스트 중인 앱을 끄지 않게). 앱은 release/mac(-arm64)/MotionStudio.app
@@ -47,6 +49,9 @@ if (consoleOnly && release) throw new Error('--console 과 --release 는 같이 
 const arches = archArg === 'both' ? ['arm64', 'x64'] : [archArg]
 if (!arches.every((a) => a === 'arm64' || a === 'x64')) throw new Error(`--arch 는 arm64, x64, both 중 하나예요: ${archArg}`)
 const LOCK = join(homedir(), '.minimi-signing', '.build.lock')
+/** the public repository the apps update from (1.0.0~), and the source repository (private later) */
+const RELEASE_REPO = 'kanchoooo/motion-studio-releases'
+const SOURCE_REPO = 'kanchoooo/motion-studio'
 
 if (!existsSync(p12) || !existsSync(pwFile)) {
   throw new Error(`서명 인증서가 없어요: ${p12} (DEVELOPMENT.md "코드 서명과 공증" 참고)`)
@@ -373,16 +378,28 @@ function publishRelease() {
     if (!yml || String(yaml.load(readFileSync(yml, 'utf8')).version) !== version) throw new Error('release/console/console-mac.yml 이 이 버전이 아니에요')
     assets.push(...con)
   }
-  const repo = 'kanchoooo/motion-studio'
-  let exists = true
-  try {
-    execFileSync('gh', ['release', 'view', tag, '--repo', repo], { stdio: 'ignore' })
-  } catch {
-    exists = false
+  const upload = (repo) => {
+    let exists = true
+    try {
+      execFileSync('gh', ['release', 'view', tag, '--repo', repo], { stdio: 'ignore' })
+    } catch {
+      exists = false
+    }
+    if (exists) execFileSync('gh', ['release', 'upload', tag, ...assets, '--repo', repo, '--clobber'], { stdio: 'inherit' })
+    else execFileSync('gh', ['release', 'create', tag, ...assets, '--repo', repo, '--title', `모션스튜디오 ${version}`, '--notes', notes, '--latest', ...(repo === SOURCE_REPO ? ['--verify-tag'] : [])], { stdio: 'inherit' })
+    console.log(`\n▶ 맥 배포 완료: https://github.com/${repo}/releases/tag/${tag}`)
   }
-  if (exists) execFileSync('gh', ['release', 'upload', tag, ...assets, '--repo', repo, '--clobber'], { stdio: 'inherit' })
-  else execFileSync('gh', ['release', 'create', tag, ...assets, '--repo', repo, '--title', `모션스튜디오 ${version}`, '--notes', notes, '--latest'], { stdio: 'inherit' })
-  console.log(`\n▶ 배포 완료: https://github.com/${repo}/releases/tag/${tag}`)
+  upload(RELEASE_REPO)
+  // the tag in the source repository starts the Windows build there (.github/workflows/build.yml)
+  try {
+    execFileSync('git', ['rev-parse', '-q', '--verify', `refs/tags/${tag}`], { stdio: 'ignore' })
+  } catch {
+    execFileSync('git', ['tag', tag], { stdio: 'inherit' })
+  }
+  execFileSync('git', ['push', 'origin', tag], { stdio: 'inherit' })
+  if (process.argv.includes('--also-source')) upload(SOURCE_REPO)
+  // the Windows installer CI builds from the tag → the releases repository too
+  execFileSync('node', ['scripts/mirror-windows.mjs', version], { stdio: 'inherit' })
 }
 
 /**
@@ -391,7 +408,6 @@ function publishRelease() {
  */
 function pruneOldBuilds() {
   const version = JSON.parse(readFileSync('package.json', 'utf8')).version
-  const repo = 'kanchoooo/motion-studio'
   const byVersion = new Map()
   const here = ['release', 'release/console'].filter((d) => existsSync(d)).flatMap((d) => readdirSync(d).map((f) => join(d, f).slice('release/'.length)))
   for (const f of here) {
@@ -402,9 +418,15 @@ function pruneOldBuilds() {
   }
   for (const [v, files] of byVersion) {
     let uploaded
-    try {
-      uploaded = JSON.parse(execFileSync('gh', ['release', 'view', `v${v}`, '--repo', repo, '--json', 'assets'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })).assets
-    } catch {
+    for (const repo of [RELEASE_REPO, SOURCE_REPO]) {
+      try {
+        uploaded = JSON.parse(execFileSync('gh', ['release', 'view', `v${v}`, '--repo', repo, '--json', 'assets'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })).assets
+        break
+      } catch {
+        /* not in this one */
+      }
+    }
+    if (!uploaded) {
       console.log(`▶ 이전 빌드 ${v}: GitHub 릴리스가 없어서 남겨 둬요`)
       continue
     }

@@ -37,6 +37,7 @@ import { answerPermission, askingFor, setPermissionHooks, type PermissionAnswer 
 import { projectForToken } from './agent/mcp-http'
 import { balanceOf, discardCandidate, estimateImage, generateCandidate, listCandidates, reconvert, writeCandidates } from './ai/generate'
 import { claudeUsage } from './claudeUsage'
+import { fixClaudePath, fixGitBash, installClaude, installGit } from './claudeSetup'
 import * as claudeApi from './claudeApi'
 import { estimateVideo, generateVideoCandidate } from './ai/generateVideo'
 import { askHelper } from './ai/promptHelper'
@@ -76,6 +77,9 @@ export function registerIpc(getWindow: () => BrowserWindow | null): SessionManag
   handle('app:login', () => agent.startLogin())
   handle('app:cancelLogin', () => agent.kill('__login__'))
   handle('app:installBrowser', () => installBrowser())
+  handle('app:setupClaude', (action: string) =>
+    action === 'install-claude' ? installClaude() : action === 'fix-claude-path' ? fixClaudePath() : action === 'install-git' ? installGit() : action === 'fix-git-bash' ? fixGitBash() : { ok: false, message: '알 수 없는 작업이에요.' },
+  )
   handle('app:trustWorkspace', () => agent.startWorkspaceTrust())
   handle('app:openExternal', (url: string) => {
     if (/^https:\/\//.test(url)) return shell.openExternal(url)

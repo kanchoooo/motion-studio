@@ -654,6 +654,11 @@
 - [x] 회귀: 이번 변경으로 깨진 것 없음(실패한 edit-usability·assets-p10·sound-marks·web-flow 소리·collect-flow AE 항목은 다시 만든 ms-p7 샌드박스 탓으로 beta.10에서도 같음, ae-engine3는 원래 불안정)
 - [x] 관제용 판에만 먼저 적용: 0.5.0-beta.10.1을 이 맥에 `--local --console`로 빌드해 설치(숨김 실행 유지), 일반 판·GitHub 배포는 다음 업데이트 때 함께
 
+## Phase 19 — 1.0.0 정식판 (2026-10-24)
+- [x] 환경 점검: Claude Code가 없으면 자동 설치(공식 설치 프로그램), 터미널이 못 찾으면 환경변수(PATH) 설정, 윈도우는 Git Bash 설치·CLAUDE_CODE_GIT_BASH_PATH 설정
+- [x] 공개 릴리즈 저장소 kanchoooo/motion-studio-releases 생성, 자동 업데이트 경로 이전(일반 판·관제용 판), 윈도우 설치 파일은 CI 뒤 mirror-windows.mjs로 옮김
+- [x] 1.0.0은 소스 저장소와 릴리즈 저장소 둘 다에 배포(이전 판 업데이트 경로 유지), 베타 종료
+
 ## 작업 기록
 
 | 날짜 | 단계 | 내용 |

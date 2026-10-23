@@ -65,6 +65,8 @@ const BLOCKED: Record<string, string> = {
   'app:openExternal': NOT_ON_WEB,
   'app:capture': NOT_ON_WEB,
   // the API key is typed on the computer that uses it (it never travels over the web connection)
+  // installs programs and changes the computer's environment variables: only at the computer
+  'app:setupClaude': NOT_ON_WEB,
   'claudeApi:saveKey': KEY_HERE,
   'claudeApi:removeKey': KEY_HERE,
 }

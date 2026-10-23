@@ -285,6 +285,15 @@ poc/               Phase 0 기술 검증 기록 (RESULTS.md)
 - **자동 업데이트 끔**(`claude-env.ts` `DISABLE_AUTOUPDATER`): 앱은 자기 Claude Code를 가지고 다녀요. 세션 안의 자동 업데이트가 컴퓨터에 설치된 `claude`(npm 전역)를 고치다 실패해 망가뜨린 일이 있어 막았어요.
 - **테스트**: `tests/e2e/mock-anthropic.mjs`(가짜 API: 성공, 크레딧 부족, 거부된 키)로 `api-key.mjs`가 요금 없이 전체 흐름을 확인해요. 실제 키 확인은 `MS_TEST_BREAK_KEY=<파일>`(그 파일이 생기면 helper가 망가진 키를 줘요)로 해요.
 
+## 5-10. 1.0.0: Claude Code 설치·환경변수 점검, 공개 릴리즈 저장소
+- **환경 점검 「Claude Code (이 컴퓨터)」**(`claudeSetup.ts`): 앱은 자기 Claude Code로 돌지만, 컴퓨터에 Claude Code가 없거나 터미널이 못 찾으면(PATH) 여기서 고쳐요.
+  - 없음 → 「자동 설치」: Anthropic 공식 설치 프로그램(맥 `curl -fsSL https://claude.ai/install.sh | bash`, 윈도우 `irm https://claude.ai/install.ps1 | iex`), 끝나면 PATH까지 설정.
+  - 있는데 터미널이 못 찾음 → 「환경변수 설정」: 맥은 `~/.zshrc`·`~/.zprofile`(bash면 `~/.bash_profile`)에 `export PATH=…` 한 줄, 윈도우는 사용자 Path에 추가. 실행 중인 앱의 환경에도 바로 넣어요.
+  - 윈도우 「Git Bash」(Claude Code에 필요): 없음 → winget으로 Git 설치, Git이 PATH에 없거나 `CLAUDE_CODE_GIT_BASH_PATH`가 틀림 → 그 변수를 bash.exe로 설정.
+  - 웹 연결로는 못 부름(`app:setupClaude`, 프로그램 설치·환경변수 변경).
+- **공개 릴리즈 저장소** `kanchoooo/motion-studio-releases`(1.0.0~): 앱은 여기서 업데이트해요(electron-builder.yml publish, 관제용 판 console-mac.yml 주소). 소스 저장소 `kanchoooo/motion-studio`는 비공개로 바꿀 예정.
+  - `build-mac.mjs --release`: 맥 파일을 릴리즈 저장소에 올리고, 소스 저장소에 태그를 올려 윈도우 빌드(CI)를 돌린 뒤 `scripts/mirror-windows.mjs`가 그 설치 파일을 릴리즈 저장소로 옮겨요. 1.0.0만 `--also-source`로 소스 저장소에도 올렸어요(이전 판들이 거기서 1.0.0으로 넘어와 새 주소를 보게).
+
 ## 5-1. AI 서비스 연결
 
 | 서비스 | 연결 방식 | 로그인 |

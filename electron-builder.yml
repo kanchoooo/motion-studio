@@ -55,11 +55,11 @@ extraResources:
     filter: ['offline-fetch.mjs', 'mirror.json', 'mirror/**', 'previews/**']
 
 # ELECTRON_RUN_AS_NODE must stay enabled: HyperFrames runs on the app's own Node
-# auto-update: the app reads releases of this (public) repository
+# auto-update: the app reads releases of the public releases repository (1.0.0~; the source repository goes private)
 publish:
   provider: github
   owner: kanchoooo
-  repo: motion-studio
+  repo: motion-studio-releases
   releaseType: release
 
 electronFuses:

@@ -23,6 +23,7 @@ const api: StudioApi & { internal: { previewBase: string } } = {
     login: () => invoke('app:login'),
     cancelLogin: () => invoke('app:cancelLogin'),
     installBrowser: () => invoke('app:installBrowser'),
+    setupClaude: (action) => invoke('app:setupClaude', action),
     openExternal: (url) => invoke('app:openExternal', url),
     reveal: (path) => invoke('app:reveal', path),
     pickFiles: (kind) => invoke('app:pickFiles', kind),

@@ -240,12 +240,14 @@ export type TemplateValues = Record<string, { text?: string; file?: string; scri
 
 export type CheckStatus = 'ok' | 'warn' | 'error' | 'checking'
 export interface DoctorItem {
-  id: 'claude' | 'workspace' | 'browser' | 'ffmpeg' | 'fonts' | 'disk'
+  id: 'claude' | 'claude-code' | 'git-bash' | 'workspace' | 'browser' | 'ffmpeg' | 'fonts' | 'disk'
   label: string
   status: CheckStatus
   detail: string
-  action?: { id: 'login' | 'install-browser' | 'rescan-fonts' | 'trust-workspace'; label: string }
+  action?: { id: 'login' | 'install-browser' | 'rescan-fonts' | 'trust-workspace' | SetupAction; label: string }
 }
+/** 환경 점검: Claude Code on this computer (install, PATH) and Git Bash on Windows */
+export type SetupAction = 'install-claude' | 'fix-claude-path' | 'install-git' | 'fix-git-bash'
 export interface DoctorReport {
   items: DoctorItem[]
   ready: boolean
@@ -345,6 +347,8 @@ export interface StudioApi {
     login(): Promise<SessionState>
     cancelLogin(): Promise<void>
     installBrowser(): Promise<{ ok: boolean; message: string }>
+    /** installs Claude Code / Git Bash or sets their environment variables (환경 점검 buttons) */
+    setupClaude(action: SetupAction): Promise<{ ok: boolean; message: string }>
     openExternal(url: string): Promise<void>
     reveal(path: string): Promise<void>
     pickFiles(kind: 'assets' | 'images' | 'media' | 'any'): Promise<string[]>

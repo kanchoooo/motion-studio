@@ -75,5 +75,5 @@ module.exports = {
 if (process.env.MS_CONSOLE === '1') {
   module.exports.artifactName = 'MotionStudio-Console-${version}-${os}-${arch}.${ext}'
   module.exports.directories = { ...base.directories, output: 'release/console' }
-  module.exports.publish = { provider: 'generic', url: 'https://github.com/kanchoooo/motion-studio/releases/latest/download', channel: 'console' }
+  module.exports.publish = { provider: 'generic', url: 'https://github.com/kanchoooo/motion-studio-releases/releases/latest/download', channel: 'console' }
 }
