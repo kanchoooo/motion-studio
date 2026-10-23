@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { bashFromGit, cliCandidates, findClaudeCli, pathHasDir, profileLine } from '../../src/main/claudeSetup'
 
@@ -12,11 +13,12 @@ describe('claude setup', () => {
   it('writes the profile line with $HOME, finds bash next to git, knows where installers put claude', () => {
     expect(profileLine('/Users/a/.local/bin', '/Users/a')).toBe('export PATH="$HOME/.local/bin:$PATH"')
     expect(profileLine('/opt/homebrew/bin', '/Users/a')).toBe('export PATH="/opt/homebrew/bin:$PATH"')
-    expect(bashFromGit('C:\\Program Files\\Git\\cmd\\git.exe'.replace(/\\/g, '/'))).toBe('C:/Program Files/Git/bin/bash.exe')
+    expect(bashFromGit('C:/Program Files/Git/cmd/git.exe').replace(/\\/g, '/')).toBe('C:/Program Files/Git/bin/bash.exe')
     expect(cliCandidates('/Users/a', false)[0]).toBe('/Users/a/.local/bin/claude')
     expect(cliCandidates('C:/Users/a', true, {})[0]).toMatch(/\.local[\\/]bin[\\/]claude\.exe$/)
   })
-  it.skipIf(process.platform !== 'darwin')('finds the claude of this Mac', async () => {
+  // only where a claude is installed (not on CI machines)
+  it.skipIf(process.platform !== 'darwin' || !cliCandidates().some((p) => existsSync(p)))('finds the claude of this Mac', async () => {
     const c = await findClaudeCli()
     expect(c.path).toBeTruthy()
     expect(c.version).toMatch(/\d+\.\d+/)
