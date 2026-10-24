@@ -4,7 +4,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
-const MARKS = ['web-endpoint.json', 'x-ms-token', 'delete-requests', 'hidden-restart', 'web-uploads', 'ms-web-lost', 'web-file:', 'console.json', 'console-mode', 'console-bridge']
+const MARKS = ['web-endpoint.json', 'x-ms-token', 'delete-requests', 'hidden-restart', 'web-uploads', 'ms-web-lost', 'web-file:', 'console.json', 'console-mode', 'console-bridge', 'get_reels_performance', 'consoleInsta', 'X-Console-Token']
 const out = join(import.meta.dirname, '..', 'out')
 
 function* files(dir) {

@@ -1143,6 +1143,26 @@ export function buildStudioServer(projectId: string, hooks: ToolHooks): McpServe
     },
   )
 
+  // 관제용 판 only: the console's Instagram Reels performance, for planning reels from what worked
+  if (__MS_CONSOLE__) {
+    server.registerTool(
+      'get_reels_performance',
+      {
+        description:
+          "How this account's recent Instagram Reels performed (from the console on this Mac): per reel its caption, date, link and numbers (views, reach, likes, comments, shares, saved, total interactions), plus account totals when given. Use it when planning a reel or when the designer asks to plan from past performance: find what the strong reels share (length, the first seconds, hook text, format, topic) against the weak ones, and say in Korean which reels you based the plan on. Read-only.",
+        inputSchema: { limit: z.number().int().min(1).max(50).optional().describe('how many recent reels (default 20)') },
+      },
+      async ({ limit }) => {
+        const { reelsPerformance } = await import('../consoleInsta')
+        try {
+          return text(JSON.stringify(await reelsPerformance(limit ?? 20), null, 1))
+        } catch (e) {
+          return text(e instanceof Error ? e.message : String(e))
+        }
+      },
+    )
+  }
+
   return server
 }
 
