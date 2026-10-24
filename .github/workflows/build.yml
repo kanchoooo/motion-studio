@@ -3,10 +3,9 @@
 # `node scripts/build-mac.mjs --release` (DEVELOPMENT.md §6); creating that release
 # pushes the v<version> tag, which runs this and adds the Windows installer to it.
 name: build
+# (배포는 release.yml이 해요. 이건 손으로 돌리는 서명 없는 확인용 빌드예요.)
 on:
   workflow_dispatch:
-  push:
-    tags: ['v*']
 
 permissions:
   contents: write
