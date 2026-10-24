@@ -11,6 +11,10 @@ import { delimiter, dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 
 const run = promisify(execFile)
+/** PowerShell writes in the system code page (CP949 on Korean Windows) unless told otherwise: a 김광조 folder would come back broken */
+const PS_UTF8 = '[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; '
+const ps = (command: string, opts: Parameters<typeof execFile>[2] = {}) =>
+  run('powershell', ['-NoProfile', '-NonInteractive', '-Command', PS_UTF8 + command], { timeout: 30_000, windowsHide: true, encoding: 'utf8', ...opts } as never) as unknown as Promise<{ stdout: string; stderr: string }>
 const WIN = process.platform === 'win32'
 const home = () => homedir()
 
@@ -75,7 +79,7 @@ async function works(p: string): Promise<string | null> {
 export async function terminalPath(): Promise<string> {
   if (WIN) {
     try {
-      const { stdout } = await run('powershell', ['-NoProfile', '-Command', "[Environment]::GetEnvironmentVariable('Path','User') + ';' + [Environment]::GetEnvironmentVariable('Path','Machine')"], { timeout: 20_000, windowsHide: true })
+      const { stdout } = await ps("[Environment]::GetEnvironmentVariable('Path','User') + ';' + [Environment]::GetEnvironmentVariable('Path','Machine')")
       return stdout.trim().replace(/%([^%]+)%/g, (all, k: string) => process.env[k] ?? all)
     } catch {
       return process.env.Path ?? process.env.PATH ?? ''
@@ -114,7 +118,7 @@ export async function findGitBash(): Promise<GitBash> {
   const local = process.env.LOCALAPPDATA ?? join(home(), 'AppData', 'Local')
   let gitOnPath: string | null = null
   try {
-    const { stdout } = await run('where', ['git'], { timeout: 10_000, windowsHide: true })
+    const { stdout } = await ps('(Get-Command git -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source')
     gitOnPath = stdout.split(/\r?\n/).map((s) => s.trim()).find((s) => /git\.exe$/i.test(s)) ?? null
   } catch {
     /* git is not on PATH */
@@ -129,7 +133,7 @@ export async function findGitBash(): Promise<GitBash> {
 /** a folder on the user's PATH from now on (Mac: the shell profile; Windows: the user environment) and in this app */
 export async function addToPath(dir: string): Promise<void> {
   if (WIN) {
-    await run('powershell', ['-NoProfile', '-Command', "$d=$env:MS_DIR; $p=[Environment]::GetEnvironmentVariable('Path','User'); if (-not $p) { $p='' }; if (-not (($p -split ';') | Where-Object { $_.TrimEnd('\\') -ieq $d.TrimEnd('\\') })) { [Environment]::SetEnvironmentVariable('Path', ($p.TrimEnd(';') + ';' + $d).TrimStart(';'), 'User') }"], { timeout: 30_000, windowsHide: true, env: { ...process.env, MS_DIR: dir } })
+    await ps("$d=$env:MS_DIR; $p=[Environment]::GetEnvironmentVariable('Path','User'); if (-not $p) { $p='' }; if (-not (($p -split ';') | Where-Object { $_.TrimEnd('\\') -ieq $d.TrimEnd('\\') })) { [Environment]::SetEnvironmentVariable('Path', ($p.TrimEnd(';') + ';' + $d).TrimStart(';'), 'User') }", { env: { ...process.env, MS_DIR: dir } })
     const cur = process.env.Path ?? process.env.PATH ?? ''
     if (!pathHasDir(cur, dir)) process.env.Path = process.env.PATH = `${cur.replace(/;$/, '')};${dir}`
     return
@@ -148,7 +152,7 @@ export async function addToPath(dir: string): Promise<void> {
 
 /** a variable for the user's account from now on, and for this app (Windows) */
 async function setUserVar(name: string, value: string): Promise<void> {
-  await run('powershell', ['-NoProfile', '-Command', `[Environment]::SetEnvironmentVariable('${name}', $env:MS_VALUE, 'User')`], { timeout: 30_000, windowsHide: true, env: { ...process.env, MS_VALUE: value } })
+  await ps(`[Environment]::SetEnvironmentVariable('${name}', $env:MS_VALUE, 'User')`, { env: { ...process.env, MS_VALUE: value } })
   process.env[name] = value
 }
 
