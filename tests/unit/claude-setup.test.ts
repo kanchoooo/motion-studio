@@ -14,7 +14,7 @@ describe('claude setup', () => {
     expect(profileLine('/Users/a/.local/bin', '/Users/a')).toBe('export PATH="$HOME/.local/bin:$PATH"')
     expect(profileLine('/opt/homebrew/bin', '/Users/a')).toBe('export PATH="/opt/homebrew/bin:$PATH"')
     expect(bashFromGit('C:/Program Files/Git/cmd/git.exe').replace(/\\/g, '/')).toBe('C:/Program Files/Git/bin/bash.exe')
-    expect(cliCandidates('/Users/a', false)[0]).toBe('/Users/a/.local/bin/claude')
+    expect(cliCandidates('/Users/a', false)[0].replace(/\\/g, '/')).toBe('/Users/a/.local/bin/claude')
     expect(cliCandidates('C:/Users/a', true, {})[0]).toMatch(/\.local[\\/]bin[\\/]claude\.exe$/)
   })
   // only where a claude is installed (not on CI machines)
