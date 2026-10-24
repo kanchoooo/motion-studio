@@ -38,9 +38,13 @@ const pwFile = join(dir, 'p12-password')
 const profile = process.env.APPLE_KEYCHAIN_PROFILE ?? 'minimi-notary'
 const local = process.argv.includes('--local')
 const release = process.argv.includes('--release')
+// --ci: GitHub Actions (.github/workflows/release.yml) — everything --release builds, nothing uploaded here
+// (the workflow publishes), notarized with an App Store Connect API key (APPLE_API_KEY/_KEY_ID/_ISSUER)
+const ci = process.argv.includes('--ci')
+const apiKey = !!(process.env.APPLE_API_KEY && process.env.APPLE_API_KEY_ID && process.env.APPLE_API_ISSUER)
 // 관제용 판: --console alone builds only it; a release builds it after the regular ones
 const consoleOnly = process.argv.includes('--console')
-const withConsole = consoleOnly || (release && !process.argv.includes('--no-console'))
+const withConsole = consoleOnly || ((release || ci) && !process.argv.includes('--no-console'))
 const CONSOLE_ARCH = 'x64'
 const ai = process.argv.indexOf('--arch')
 const archArg = ai > 0 ? process.argv[ai + 1] : consoleOnly ? CONSOLE_ARCH : local ? (process.arch === 'arm64' ? 'arm64' : 'x64') : 'both'
@@ -57,7 +61,7 @@ if (!existsSync(p12) || !existsSync(pwFile)) {
   throw new Error(`서명 인증서가 없어요: ${p12} (DEVELOPMENT.md "코드 서명과 공증" 참고)`)
 }
 let notarize = !local
-if (notarize) {
+if (notarize && !apiKey) {
   try {
     execSync(`xcrun notarytool history --keychain-profile ${profile}`, { stdio: 'ignore' })
   } catch {
@@ -242,8 +246,10 @@ const env = {
   ...process.env,
   CSC_KEYCHAIN: keychain,
   CSC_NAME: IDENTITY,
-  ...(notarize ? { APPLE_KEYCHAIN_PROFILE: profile } : {})
+  ...(notarize && !apiKey ? { APPLE_KEYCHAIN_PROFILE: profile } : {})
 }
+// API-key notarization (CI): electron-builder reads APPLE_API_KEY / APPLE_API_KEY_ID / APPLE_API_ISSUER itself
+if (!notarize) for (const k of ['APPLE_API_KEY', 'APPLE_API_KEY_ID', 'APPLE_API_ISSUER']) delete env[k]
 delete env.CSC_LINK
 delete env.CSC_KEY_PASSWORD
 if (!notarize) delete env.APPLE_KEYCHAIN_PROFILE
@@ -297,8 +303,8 @@ try {
   cleanup()
 }
 
-if (release) publishRelease()
-pruneOldBuilds()
+if (release && !ci) publishRelease()
+if (!ci) pruneOldBuilds()
 const builtApp = `release/${consoleOnly ? 'console/' : ''}${arches[0] === 'arm64' ? 'mac-arm64' : 'mac'}/MotionStudio.app`
 if (local && !process.argv.includes('--no-install')) installLocal()
 else if (local) console.log(`\n▶ 빌드만 했어요(설치 안 함): ${builtApp}`)

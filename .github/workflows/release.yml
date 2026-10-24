@@ -1,0 +1,138 @@
+# 배포: GitHub에서 맥(M칩·Intel, 서명·공증, 관제용 판)과 윈도우를 빌드해 공개 릴리즈 저장소
+# kanchoooo/motion-studio-releases 에 v<package.json 버전>으로 올린다 (설치된 앱이 그 릴리스로 자동 업데이트).
+# 실행: gh workflow run release.yml -f notes="변경 내용"   (Actions 탭 → release → Run workflow 도 같음)
+#
+# 비밀값 (Settings → Secrets and variables → Actions, 화면·기록에 나오지 않음):
+#   MAC_CERT_P12      Developer ID Application 인증서 .p12 (base64)
+#   MAC_CERT_PASSWORD 그 .p12 비밀번호
+#   ASC_KEY_P8        App Store Connect API 키 .p8 내용 (공증)
+#   ASC_KEY_ID        그 키 ID
+#   ASC_ISSUER_ID     발급자(Issuer) ID
+#   RELEASES_TOKEN    motion-studio-releases 에만 Contents 읽기·쓰기 권한이 있는 fine-grained 토큰
+# 서명 재료는 맥 작업의 임시 폴더에만 풀고, 작업이 끝나면(실패해도) 지운다.
+name: release
+on:
+  workflow_dispatch:
+    inputs:
+      notes:
+        description: 이번 버전의 변경 내용 (릴리스 설명)
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  RELEASE_REPO: kanchoooo/motion-studio-releases
+
+jobs:
+  mac:
+    runs-on: macos-15
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - uses: actions/cache@v4
+        with:
+          path: resources/hf-registry
+          key: hf-registry-${{ hashFiles('package-lock.json', 'scripts/fetch-registry.mjs') }}
+      - name: Signing material (this job's temp folder only)
+        env:
+          P12_B64: ${{ secrets.MAC_CERT_P12 }}
+          P12_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          set +x
+          d="$RUNNER_TEMP/sign"
+          mkdir -p -m 700 "$d"
+          printf '%s' "$P12_B64" | base64 --decode > "$d/DeveloperID_Application.p12"
+          printf '%s' "$P12_PASSWORD" > "$d/p12-password"
+          printf '%s' "$ASC_KEY_P8" > "$d/AuthKey.p8"
+          chmod 600 "$d"/*
+      - name: Build, sign and notarize (M-chip, Intel, 관제용 판)
+        env:
+          MINIMI_SIGNING_DIR: ${{ runner.temp }}/sign
+          APPLE_API_KEY: ${{ runner.temp }}/sign/AuthKey.p8
+          APPLE_API_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.ASC_ISSUER_ID }}
+        run: node scripts/build-mac.mjs --ci
+      - name: Remove signing material
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/sign"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac
+          if-no-files-found: error
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/*.blockmap
+            release/latest-mac.yml
+            release/console/*.zip
+            release/console/*.blockmap
+            release/console/console-mac.yml
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - uses: actions/cache@v4
+        with:
+          path: resources/hf-registry
+          key: hf-registry-${{ hashFiles('package-lock.json', 'scripts/fetch-registry.mjs') }}
+      - run: node scripts/fetch-registry.mjs
+      - run: npm run build
+      - run: node scripts/check-regular-build.mjs
+      - run: node scripts/prepare-target.mjs --target win32-x64
+      - run: node scripts/fetch-binaries.mjs --target win32-x64
+      - run: npx electron-builder --config electron-builder.config.cjs --win --x64 --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          if-no-files-found: error
+          path: |
+            release/*.exe
+            release/*.exe.blockmap
+            release/latest.yml
+
+  publish:
+    needs: [mac, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Release on the public releases repository
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          NOTES: ${{ inputs.notes }}
+        run: |
+          v=$(node -p "require('./package.json').version")
+          ls -la dist
+          # only this version's files (and the three update files)
+          files=$(ls dist/* | grep -E "(-$v-|Setup-$v-|latest-mac\.yml$|latest\.yml$|console-mac\.yml$)")
+          if gh release view "v$v" --repo "$RELEASE_REPO" >/dev/null 2>&1; then
+            gh release upload "v$v" $files --repo "$RELEASE_REPO" --clobber
+          else
+            gh release create "v$v" $files --repo "$RELEASE_REPO" --title "모션스튜디오 $v" --notes "$NOTES" --latest
+          fi
+          echo "https://github.com/$RELEASE_REPO/releases/tag/v$v"
+      - name: Tag this source
+        run: |
+          v=$(node -p "require('./package.json').version")
+          git tag "v$v" && git push origin "v$v" || echo "tag v$v already there"

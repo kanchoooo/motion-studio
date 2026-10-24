@@ -292,7 +292,8 @@ poc/               Phase 0 기술 검증 기록 (RESULTS.md)
   - 윈도우 「Git Bash」(Claude Code에 필요): 없음 → winget으로 Git 설치, Git이 PATH에 없거나 `CLAUDE_CODE_GIT_BASH_PATH`가 틀림 → 그 변수를 bash.exe로 설정.
   - 웹 연결로는 못 부름(`app:setupClaude`, 프로그램 설치·환경변수 변경).
 - **공개 릴리즈 저장소** `kanchoooo/motion-studio-releases`(1.0.0~): 앱은 여기서 업데이트해요(electron-builder.yml publish, 관제용 판 console-mac.yml 주소). 소스 저장소 `kanchoooo/motion-studio`는 비공개로 바꿀 예정.
-  - `build-mac.mjs --release`: 맥 파일을 릴리즈 저장소에 올리고, 소스 저장소에 태그를 올려 윈도우 빌드(CI)를 돌린 뒤 `scripts/mirror-windows.mjs`가 그 설치 파일을 릴리즈 저장소로 옮겨요. 1.0.0만 `--also-source`로 소스 저장소에도 올렸어요(이전 판들이 거기서 1.0.0으로 넘어와 새 주소를 보게).
+  - **배포는 GitHub에서**(`.github/workflows/release.yml`, 1.0.1~): `gh workflow run release.yml -f notes="…"` → 맥(서명·공증·관제용 판, `build-mac.mjs --ci`, API 키 공증)과 윈도우를 빌드해 릴리즈 저장소에 올리고 소스 저장소에 태그를 남겨요. 비밀값: MAC_CERT_P12·MAC_CERT_PASSWORD(인증서), ASC_KEY_P8·ASC_KEY_ID·ASC_ISSUER_ID(공증 API 키 9G9D5TUDB4), RELEASES_TOKEN(릴리즈 저장소만 Contents 쓰기 권한인 fine-grained 토큰, 사용자가 만들어 등록). 서명 재료는 맥 작업의 임시 폴더에만 풀고 끝나면 지워요.
+  - (예전 방식, 이 맥에서) `build-mac.mjs --release`: 맥 파일을 릴리즈 저장소에 올리고, 소스 저장소에 태그를 올려 윈도우 빌드(CI)를 돌린 뒤 `scripts/mirror-windows.mjs`가 그 설치 파일을 릴리즈 저장소로 옮겨요. 1.0.0만 `--also-source`로 소스 저장소에도 올렸어요(이전 판들이 거기서 1.0.0으로 넘어와 새 주소를 보게).
 
 ## 5-1. AI 서비스 연결
 
